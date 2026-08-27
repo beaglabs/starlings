@@ -2,8 +2,8 @@
 """Stage 3F.0 controlled-emergence runner for llama.cpp.
 
 Five model-backed workers coordinate over a deterministic ring to make Worker 1
-recover all five distributed facts. The Python runner owns transport and prompt
-delivery; the Zig summary independently replays the recorded interactions and
+recover all five distributed facts. Environment rotation and model sampling are
+independent experimental factors. Zig independently replays the raw record and
 is authoritative for outcome and communication metrics.
 """
 
@@ -24,7 +24,7 @@ FULL_MASK = (1 << FACT_COUNT) - 1
 TYPED = "typed_unconstrained"
 CONSTRAINED = "cfg_constrained"
 BACKEND_ERROR = "__BACKEND_ERROR__"
-RUNNER_VERSION = 1
+RUNNER_VERSION = 2
 
 PROTOCOL_SPEC = """You are one operator in a five-worker distributed coordination experiment.
 
@@ -54,8 +54,8 @@ def fact_bit(index: int) -> int:
     return 1 << index
 
 
-def initial_knowledge(seed: int) -> list[int]:
-    offset = seed % FACT_COUNT
+def initial_knowledge(environment_seed: int) -> list[int]:
+    offset = environment_seed % FACT_COUNT
     return [
         fact_bit((worker + offset) % FACT_COUNT)
         | fact_bit((worker + 1 + offset) % FACT_COUNT)
@@ -63,9 +63,9 @@ def initial_knowledge(seed: int) -> list[int]:
     ]
 
 
-def generation_seed(run_seed: int, round_number: int, worker: int) -> int:
+def generation_seed(sampling_seed: int, round_number: int, worker: int) -> int:
     mixed = (
-        (run_seed * 1_000_003)
+        (sampling_seed * 1_000_003)
         + (round_number * 101)
         + worker
     ) & ((1 << 64) - 1)
@@ -154,16 +154,15 @@ def apply_round(knowledge: list[int], completions: list[str]) -> list[int]:
                 next_state[recipient] |= facts
             continue
 
-        if kind == "query_evidence":
-            for recipient in neighbors:
-                if snapshot[recipient] & facts:
-                    next_state[sender] |= facts
+        for recipient in neighbors:
+            if snapshot[recipient] & facts:
+                next_state[sender] |= facts
 
     return next_state
 
 
-def mode_order(seed: int) -> tuple[str, str]:
-    if seed & 1:
+def mode_order(environment_seed: int, sampling_seed: int) -> tuple[str, str]:
+    if (environment_seed + sampling_seed) & 1:
         return CONSTRAINED, TYPED
     return TYPED, CONSTRAINED
 
@@ -258,7 +257,8 @@ def run_completion(
 def write_record(
     handle,
     *,
-    run_seed: int,
+    environment_seed: int,
+    sampling_seed: int,
     mode: str,
     round_number: int,
     worker: int,
@@ -269,8 +269,8 @@ def write_record(
     completion: str,
 ) -> None:
     handle.write(
-        f"{run_seed}\t{mode}\t{round_number}\t{worker}\t{knowledge_before}\t"
-        f"{model_seed}\t{completion_tokens}\t{latency_us}\t"
+        f"{environment_seed}\t{sampling_seed}\t{mode}\t{round_number}\t{worker}\t"
+        f"{knowledge_before}\t{model_seed}\t{completion_tokens}\t{latency_us}\t"
         f"{escape_completion(completion)}\n"
     )
     handle.flush()
@@ -283,19 +283,24 @@ def write_metadata(
     grammar: str,
     args: argparse.Namespace,
 ) -> None:
+    population_runs = args.environments * args.sampling_seeds * 2
     metadata = {
         "stage": "3F.0",
         "runner_version": RUNNER_VERSION,
+        "record_schema_version": 2,
         "model": model,
         "base_url": args.base_url,
-        "first_seed": args.first_seed,
-        "seeds": args.seeds,
+        "first_environment_seed": args.first_environment_seed,
+        "environments": args.environments,
+        "first_sampling_seed": args.first_sampling_seed,
+        "sampling_seeds": args.sampling_seeds,
+        "population_runs": population_runs,
         "worker_count": WORKER_COUNT,
         "fact_count": FACT_COUNT,
         "collector_worker": 1,
         "topology": "ring",
         "max_rounds": args.max_rounds,
-        "max_generations": args.seeds * 2 * args.max_rounds * WORKER_COUNT,
+        "max_generations": population_runs * args.max_rounds * WORKER_COUNT,
         "temperature": args.temperature,
         "top_p": args.top_p,
         "top_k": args.top_k,
@@ -319,6 +324,8 @@ def self_test() -> None:
     assert initial_knowledge(0) == [3, 6, 12, 24, 17]
     assert initial_knowledge(5) == initial_knowledge(0)
     assert generation_seed(0, 1, 1) == 102
+    assert generation_seed(7, 1, 1) == generation_seed(7, 1, 1)
+    assert generation_seed(7, 1, 1) != generation_seed(8, 1, 1)
     assert parse_action("CLAIM A,C,E") == ("claim", 0b10101)
     assert parse_action("QUERY EVIDENCE D") == ("query_evidence", 0b01000)
     assert parse_action("I think CLAIM A") is None
@@ -371,6 +378,8 @@ def self_test() -> None:
     constrained_without_grammar = dict(constrained)
     assert constrained_without_grammar.pop("grammar") == grammar
     assert typed == constrained_without_grammar
+    assert mode_order(0, 0) == (TYPED, CONSTRAINED)
+    assert mode_order(0, 1) == (CONSTRAINED, TYPED)
     print("stage3f0 runner self-test passed")
 
 
@@ -380,9 +389,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default=None)
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--grammar", default="grammars/stage3f0.gbnf")
-    parser.add_argument("--output", default="trials/stage3f0.tsv")
-    parser.add_argument("--first-seed", type=int, default=0)
-    parser.add_argument("--seeds", type=int, default=5)
+    parser.add_argument("--output", default="trials/stage3f0-v2.tsv")
+    parser.add_argument("--first-environment-seed", type=int, default=0)
+    parser.add_argument("--environments", type=int, default=5)
+    parser.add_argument("--first-sampling-seed", type=int, default=0)
+    parser.add_argument("--sampling-seeds", type=int, default=4)
     parser.add_argument("--max-rounds", type=int, default=10)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-p", type=float, default=0.9)
@@ -399,8 +410,10 @@ def main() -> int:
     if args.self_test:
         self_test()
         return 0
-    if args.seeds <= 0:
-        raise SystemExit("--seeds must be > 0")
+    if args.environments <= 0:
+        raise SystemExit("--environments must be > 0")
+    if args.sampling_seeds <= 0:
+        raise SystemExit("--sampling-seeds must be > 0")
     if args.max_rounds <= 0:
         raise SystemExit("--max-rounds must be > 0")
 
@@ -408,8 +421,10 @@ def main() -> int:
     output_path = pathlib.Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    max_generations = args.seeds * 2 * args.max_rounds * WORKER_COUNT
+    population_runs = args.environments * args.sampling_seeds * 2
+    max_generations = population_runs * args.max_rounds * WORKER_COUNT
     if args.dry_run:
+        print(f"{population_runs} population runs")
         print(f"up to {max_generations} model generations")
         return 0
 
@@ -417,7 +432,8 @@ def main() -> int:
     write_metadata(output_path=output_path, model=model, grammar=grammar, args=args)
 
     print(
-        f"Stage 3F.0: model={model!r}, seeds={args.seeds}, "
+        f"Stage 3F.0 v2: model={model!r}, environments={args.environments}, "
+        f"sampling_seeds={args.sampling_seeds}, population_runs={population_runs}, "
         f"max_rounds={args.max_rounds}, max_generations={max_generations}, "
         f"output={output_path}",
         file=sys.stderr,
@@ -425,83 +441,97 @@ def main() -> int:
 
     emitted = 0
     with output_path.open("w", encoding="utf-8", newline="") as handle:
-        for run_seed in range(args.first_seed, args.first_seed + args.seeds):
-            private = initial_knowledge(run_seed)
+        for environment_seed in range(
+            args.first_environment_seed,
+            args.first_environment_seed + args.environments,
+        ):
+            private = initial_knowledge(environment_seed)
 
-            for mode in mode_order(run_seed):
-                knowledge = list(private)
+            for sampling_seed in range(
+                args.first_sampling_seed,
+                args.first_sampling_seed + args.sampling_seeds,
+            ):
+                for mode in mode_order(environment_seed, sampling_seed):
+                    knowledge = list(private)
 
-                for round_number in range(1, args.max_rounds + 1):
-                    snapshot = list(knowledge)
-                    completions: list[str] = []
+                    for round_number in range(1, args.max_rounds + 1):
+                        snapshot = list(knowledge)
+                        completions: list[str] = []
 
-                    for worker_index in range(WORKER_COUNT):
-                        worker = worker_index + 1
-                        model_seed = generation_seed(run_seed, round_number, worker)
-                        prompt = build_prompt(
-                            worker=worker,
-                            round_number=round_number,
-                            private_facts=private[worker_index],
-                            current_knowledge=snapshot[worker_index],
-                        )
-                        payload = build_payload(
-                            model=model,
-                            prompt=prompt,
-                            seed=model_seed,
-                            mode=mode,
-                            grammar=grammar,
-                            temperature=args.temperature,
-                            top_p=args.top_p,
-                            top_k=args.top_k,
-                            max_tokens=args.max_tokens,
-                        )
-
-                        try:
-                            completion, tokens, latency_us = run_completion(
-                                base_url=args.base_url,
-                                api_key=args.api_key,
-                                timeout=args.timeout,
-                                payload=payload,
+                        for worker_index in range(WORKER_COUNT):
+                            worker = worker_index + 1
+                            model_seed = generation_seed(
+                                sampling_seed,
+                                round_number,
+                                worker,
                             )
-                        except (
-                            urllib.error.URLError,
-                            urllib.error.HTTPError,
-                            TimeoutError,
-                            RuntimeError,
-                            ValueError,
-                        ) as exc:
-                            print(
-                                f"backend error seed={run_seed} mode={mode} "
-                                f"round={round_number} worker={worker}: {exc}",
-                                file=sys.stderr,
+                            prompt = build_prompt(
+                                worker=worker,
+                                round_number=round_number,
+                                private_facts=private[worker_index],
+                                current_knowledge=snapshot[worker_index],
                             )
-                            completion, tokens, latency_us = BACKEND_ERROR, 0, 0
+                            payload = build_payload(
+                                model=model,
+                                prompt=prompt,
+                                seed=model_seed,
+                                mode=mode,
+                                grammar=grammar,
+                                temperature=args.temperature,
+                                top_p=args.top_p,
+                                top_k=args.top_k,
+                                max_tokens=args.max_tokens,
+                            )
 
-                        write_record(
-                            handle,
-                            run_seed=run_seed,
-                            mode=mode,
-                            round_number=round_number,
-                            worker=worker,
-                            knowledge_before=snapshot[worker_index],
-                            model_seed=model_seed,
-                            completion_tokens=tokens,
-                            latency_us=latency_us,
-                            completion=completion,
-                        )
-                        completions.append(completion)
-                        emitted += 1
+                            try:
+                                completion, tokens, latency_us = run_completion(
+                                    base_url=args.base_url,
+                                    api_key=args.api_key,
+                                    timeout=args.timeout,
+                                    payload=payload,
+                                )
+                            except (
+                                urllib.error.URLError,
+                                urllib.error.HTTPError,
+                                TimeoutError,
+                                RuntimeError,
+                                ValueError,
+                            ) as exc:
+                                print(
+                                    f"backend error environment={environment_seed} "
+                                    f"sampling={sampling_seed} mode={mode} "
+                                    f"round={round_number} worker={worker}: {exc}",
+                                    file=sys.stderr,
+                                )
+                                completion, tokens, latency_us = BACKEND_ERROR, 0, 0
 
-                    knowledge = apply_round(knowledge, completions)
-                    if knowledge[0] == FULL_MASK:
-                        break
+                            write_record(
+                                handle,
+                                environment_seed=environment_seed,
+                                sampling_seed=sampling_seed,
+                                mode=mode,
+                                round_number=round_number,
+                                worker=worker,
+                                knowledge_before=snapshot[worker_index],
+                                model_seed=model_seed,
+                                completion_tokens=tokens,
+                                latency_us=latency_us,
+                                completion=completion,
+                            )
+                            completions.append(completion)
+                            emitted += 1
 
-                print(
-                    f"seed={run_seed} mode={mode} rounds={round_number} "
-                    f"collector={mask_text(knowledge[0])} "
-                    f"success={knowledge[0] == FULL_MASK}",
-                    file=sys.stderr,
-                )
+                        knowledge = apply_round(knowledge, completions)
+                        if knowledge[0] == FULL_MASK:
+                            break
+
+                    print(
+                        f"environment={environment_seed} sampling={sampling_seed} "
+                        f"mode={mode} rounds={round_number} "
+                        f"collector={mask_text(knowledge[0])} "
+                        f"success={knowledge[0] == FULL_MASK}",
+                        file=sys.stderr,
+                    )
 
     print(f"done: emitted={emitted}", file=sys.stderr)
     return 0
