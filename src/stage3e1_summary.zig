@@ -78,7 +78,7 @@ fn usage() !void {
 
 fn writeHeader(out: *std.fs.File) !void {
     try out.writeAll(
-        "mode                 trials  first-valid  task-success  grammar-rej  backend-err  tokens  bytes  avg-latency-us\n",
+        "mode\ttrials\tfirst-valid\ttask-success\tgrammar-rej\tbackend-err\ttokens\tbytes\tavg-latency-us\n",
     );
 }
 
@@ -86,7 +86,7 @@ fn writeMetrics(out: *std.fs.File, name: []const u8, metrics: model_eval.ModeMet
     const avg_latency = if (metrics.trials == 0) 0 else metrics.latency_us / metrics.trials;
     try writeLine(
         out,
-        "{s: <20} {d: >6}  {d: >4}.{d}%       {d: >4}.{d}%        {d: >6}       {d: >6}  {d: >6}  {d: >5}  {d: >14}\n",
+        "{s}\t{d}\t{d}.{d}%\t{d}.{d}%\t{d}\t{d}\t{d}\t{d}\t{d}\n",
         .{
             name,
             metrics.trials,
