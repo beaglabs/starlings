@@ -35,6 +35,35 @@ The constrained request adds exactly one treatment field:
 
 The unconstrained request does not contain a `grammar` field.
 
+Both modes receive the same explicit protocol specification in the prompt:
+
+```text
+You communicate using only this protocol vocabulary:
+OBSERVE
+QUERY
+CLAIM
+EVIDENCE
+PROPOSE
+ACCEPT
+REJECT
+CHALLENGE
+RETRACT
+DELEGATE
+
+Valid interaction forms are:
+OBSERVE CLAIM
+QUERY EVIDENCE
+PROPOSE ACCEPT
+PROPOSE REJECT
+CHALLENGE RETRACT
+DELEGATE QUERY EVIDENCE EVIDENCE
+...
+Task:
+<workflow-specific task>
+```
+
+This removes a confound discovered in the first smoke run: previously the constrained decoder implicitly knew the terminal vocabulary through the grammar while the unconstrained model prompt did not.
+
 The runner uses llama.cpp's OpenAI-compatible:
 
 ```text
@@ -115,6 +144,12 @@ because:
 ```text
 100 seeds × 6 workflows × 2 modes = 1,200
 ```
+
+## Smoke-run versioning
+
+The original 24-generation Gemma smoke run was produced with runner version 1, before the shared protocol specification was added to the prompt. It is useful as evidence that the grammar transport worked, but it is **not comparable** to post-fix Stage 3E.1 results.
+
+Runner version 2 records a prompt-suite SHA-256 in the metadata sidecar. Use a new TSV filename for the rerun; do not append to or resume the original smoke file.
 
 ## Run the live experiment
 
