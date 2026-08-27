@@ -824,3 +824,43 @@ test "empty completion remains a protocol-invalid record, not malformed TSV" {
     const record = try parseRawLine(line);
     try std.testing.expectEqual(@as(usize, 0), record.escaped_completion.len);
 }
+
+
+test "same environment can contain multiple successful sampling trajectories" {
+    var summary = Summary{};
+    summary.runs[0] = .{
+        .key = .{ .environment_seed = 2, .sampling_seed = 10 },
+        .mode = .typed_unconstrained,
+        .success = true,
+        .model_calls = 10,
+        .protocol_actions = 10,
+        .invalid_actions = 0,
+        .backend_errors = 0,
+        .semantic_violations = 0,
+        .rounds = 2,
+        .network_messages = 20,
+        .useful_fact_deliveries = 8,
+        .duplicate_fact_transmissions = 10,
+        .completion_tokens = 30,
+        .generated_bytes = 60,
+        .latency_us = 1000,
+        .trajectory_hash = 111,
+    };
+    summary.runs[1] = summary.runs[0];
+    summary.runs[1].key.sampling_seed = 11;
+    summary.runs[1].trajectory_hash = 222;
+    summary.runs[2] = summary.runs[0];
+    summary.runs[2].key.environment_seed = 3;
+    summary.runs[2].key.sampling_seed = 10;
+    summary.runs[2].trajectory_hash = 333;
+    summary.run_count = 3;
+
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        countUniqueSuccessfulTrajectories(&summary, .typed_unconstrained, 2),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        countUniqueSuccessfulTrajectories(&summary, .typed_unconstrained, 3),
+    );
+}
