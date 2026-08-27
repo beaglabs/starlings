@@ -24,7 +24,7 @@ W1 — W2 — W3 — W4 — W5
 
 There are five facts: \`A,B,C,D,E\`.
 
-For seed 0, private knowledge is:
+For environment seed 0, private knowledge is:
 
 \`\`\`text
 W1: A,B
@@ -193,6 +193,12 @@ A successful trajectory is not required to match any predefined conversation.
 Two different interaction sequences that both make Worker 1 recover the full
 fact set are both successes.
 
+## Same-state trajectory diversity
+
+Trajectory diversity is evaluated **within a fixed environment seed** across multiple sampling seeds. This avoids confusing a different initial fact rotation with a genuinely different emergent solution path.
+
+For each environment, the Zig summary reports successful-run count and unique successful trajectory hashes separately for typed and CFG modes.
+
 ## Why trajectory diversity matters
 
 Stage 3F.0 is looking for:
@@ -239,18 +245,19 @@ The default five-seed smoke has a maximum of:
 Runs terminate immediately when Worker 1 reaches the complete fact set, so
 the actual generation count can be lower.
 
-## Run the first smoke experiment
+## Run the replication experiment
 
 Use a fresh result path:
 
 \`\`\`sh
 python3 tools/stage3f0_llama_cpp.py \
   --base-url http://127.0.0.1:8080 \
-  --seeds 5 \
-  --output trials/stage3f0-gemma4-e2b-smoke.tsv
+  --environments 5 \
+  --sampling-seeds 4 \
+  --output trials/stage3f0-gemma4-e2b-v2.tsv
 \`\`\`
 
-Stage 3F.0 intentionally does not support resume in v1. Closed-loop prompts
+Stage 3F.0 intentionally does not support resume in v2. Closed-loop prompts
 depend on prior generated actions, so an interrupted smoke run should be
 restarted rather than partially reconstructed by the transport layer.
 
@@ -258,21 +265,22 @@ restarted rather than partially reconstructed by the transport layer.
 
 \`\`\`sh
 zig run src/stage3f0_summary.zig -- \
-  trials/stage3f0-gemma4-e2b-smoke.tsv
+  trials/stage3f0-gemma4-e2b-v2.tsv
 \`\`\`
 
-The summary refuses to treat malformed, unreplayable, or unbalanced run sets
-as experimental evidence.
+The summary refuses to treat malformed, unreplayable, or unbalanced run sets as experimental evidence. It also prints:
 
-## First gate
+- a paired row for every `(environment_seed, sampling_seed)` A/B comparison;
+- same-environment successful trajectory diversity;
+- retained invalid completion examples with environment, sampling seed, round, and worker coordinates.
 
-The first smoke is not a CFG promotion test.
+## Replication gate
+
+The 40-population replication is still not by itself a CFG promotion test.
 
 The Stage 3F.0 gate is:
 
-> At least one autonomous population can solve the distributed-information
-> task, and successful runs can occur without requiring a canonical interaction
-> trajectory.
+> Autonomous populations preserve high collective success across repeated sampling seeds, and at least one fixed environment admits multiple successful interaction trajectories.
 
 If the harness behaves correctly, the next step is a larger seed set and then
 harder environments:
@@ -288,3 +296,10 @@ harder environments:
 CFG becomes promotable only if constrained communication preserves collective
 success while materially improving protocol reliability or communication
 efficiency across these controlled-emergence tasks.
+
+
+## Result versioning
+
+The original five-run smoke used Stage 3F.0 runner/schema version 1, where one seed controlled both environment rotation and model sampling.
+
+Runner version 2 intentionally breaks that coupling. Do not append v2 rows to the original smoke TSV or compare trajectory-diversity counts across the two schemas as if they were the same experimental design. Use a fresh v2 result file.
