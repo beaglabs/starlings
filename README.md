@@ -2,7 +2,7 @@
 
 Experimental infrastructure for evidence-backed mathematical agent communication and collective coordination, implemented in Zig.
 
-## Current scope: Stage 0–2
+## Current scope: Stage 0–3E
 
 The foundation contains the machinery needed to run reproducible experiments and compare coordination strategies:
 
@@ -21,6 +21,10 @@ The foundation contains the machinery needed to run reproducible experiments and
 - deterministic per-message loss injection
 - whole-worker failure injection
 - aggregate benchmark summaries across seed ranges
+- deterministic protocol trace corpora and workflow-diversity experiments
+- candidate CFG parsing, malformed-sequence rejection, and encoding benchmarks
+- CFG stress/generalization tests over exhaustive and seeded unseen compositions
+- provider-agnostic model-backed A/B evaluation for unconstrained vs CFG-constrained decoding
 
 Stage 1 uses five workers and a verifier. The partitioned task assigns one independent fact to each worker, while the overlapping task gives each worker two facts so that every fact exists at two workers. This lets the harness distinguish raw communication efficiency from resilience under information loss.
 
@@ -47,7 +51,7 @@ version:u8
 
 See `docs/adr/0001-content-addressed-provenance.md` for the architectural decision.
 
-Formal grammars, executable semantics, dynamic flocking topologies, VSAs, category-theoretic models, effect systems, and differential-geometric models remain candidate architectural components. They should be integrated only after their hypotheses are experimentally validated; once validated, they become architectural commitments rather than optional features.
+Formal grammars remain a candidate architectural component under active Stage 3 validation: deterministic corpus, composition, stress, and encoding gates have passed locally, while model-backed constrained-generation evidence is still pending. Executable semantics, dynamic flocking topologies, VSAs, category-theoretic models, effect systems, and differential-geometric models also remain candidate components. Candidates should be integrated only after their hypotheses are experimentally validated; once validated, they become architectural commitments rather than optional features.
 
 ## Test
 
@@ -57,4 +61,4 @@ Using Zig 0.16.0 or a compatible newer compiler:
 zig test src/root.zig
 ```
 
-The suite covers deterministic runtime behavior, Stage 1 coordination benchmarks, provenance validation, duplicate-heavy provenance histories, fork/merge causal closure, replica divergence, and content identity sensitivity.
+The suite covers deterministic runtime behavior, Stage 1 coordination benchmarks, provenance validation, duplicate-heavy provenance histories, fork/merge causal closure, replica divergence, content identity sensitivity, protocol trace analysis, deterministic workflow diversity, CFG parsing/encoding, CFG stress/generalization, and the Stage 3E model-evaluation machinery.
