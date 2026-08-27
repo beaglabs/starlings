@@ -1,5 +1,6 @@
 const std = @import("std");
 
+pub const content_id = @import("content_id.zig");
 pub const message = @import("message.zig");
 pub const operator = @import("operator.zig");
 pub const runtime = @import("runtime.zig");
@@ -10,6 +11,7 @@ pub const provenance_validation = @import("provenance_validation.zig");
 pub const provenance_stress = @import("provenance_stress.zig");
 
 test {
+    _ = content_id;
     _ = benchmark;
     _ = provenance;
     _ = provenance_validation;
@@ -23,12 +25,15 @@ test "messages route deterministically and update operator state" {
     try rt.addOperator(.{ .id = 1, .transition = operator.echo });
     try rt.addOperator(.{ .id = 2, .transition = operator.accumulator });
 
+    var causal = content_id.zero;
+    causal[0] = 99;
+
     try rt.enqueue(.{
         .sender = 2,
         .recipient = 1,
         .kind = .query,
         .payload = 7,
-        .causal_ref = 99,
+        .causal_ref = causal,
     });
     try rt.run();
 
@@ -38,7 +43,8 @@ test "messages route deterministically and update operator state" {
     try std.testing.expectEqual(@as(u64, 1), rt.trace[0].sequence);
     try std.testing.expectEqual(@as(u64, 2), rt.trace[1].sequence);
     try std.testing.expectEqual(message.Kind.evidence, rt.trace[1].message.kind);
-    try std.testing.expectEqual(@as(?u64, 99), rt.trace[1].message.causal_ref);
+    try std.testing.expect(rt.trace[1].message.causal_ref != null);
+    try std.testing.expect(content_id.eql(causal, rt.trace[1].message.causal_ref.?));
 }
 
 test "same seed produces the same experimental entropy" {

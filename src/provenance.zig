@@ -1,6 +1,9 @@
 const std = @import("std");
+const content_id = @import("content_id.zig");
 
-pub const ContentId = u64;
+pub const ContentId = content_id.ContentId;
+pub const zero_id = content_id.zero;
+pub const canonical_version: u8 = 1;
 
 pub const EventKind = enum(u8) {
     observe,
@@ -12,7 +15,7 @@ pub const EventKind = enum(u8) {
 pub const Event = struct {
     kind: EventKind,
     payload: u64,
-    parents: [2]ContentId = .{ 0, 0 },
+    parents: [2]ContentId = .{ zero_id, zero_id },
     parent_count: u2 = 0,
 };
 
@@ -80,7 +83,7 @@ pub fn MerkleDag(comptime capacity: usize) type {
         pub fn find(self: *const Self, id: ContentId) ?usize {
             var i: usize = 0;
             while (i < self.len) : (i += 1) {
-                if (self.nodes[i].id == id) return i;
+                if (content_id.eql(self.nodes[i].id, id)) return i;
             }
             return null;
         }
@@ -94,7 +97,7 @@ pub fn MerkleDag(comptime capacity: usize) type {
 
         pub fn ancestorCount(self: *const Self, head: ContentId) !usize {
             if (self.find(head) == null) return error.UnknownNode;
-            var seen: [capacity]ContentId = [_]ContentId{0} ** capacity;
+            var seen: [capacity]ContentId = [_]ContentId{zero_id} ** capacity;
             var seen_len: usize = 0;
             var stack: [capacity]ContentId = undefined;
             var stack_len: usize = 1;
@@ -132,60 +135,64 @@ pub fn MerkleDag(comptime capacity: usize) type {
 }
 
 fn contains(values: []const ContentId, value: ContentId) bool {
-    for (values) |candidate| if (candidate == value) return true;
+    for (values) |candidate| if (content_id.eql(candidate, value)) return true;
     return false;
 }
 
-/// Stable experimental content identifier. This is deliberately not presented
-/// as a cryptographic commitment. If the DAG hypothesis validates, the digest
-/// implementation can be replaced by SHA-256/BLAKE3 without changing DAG semantics.
+/// Canonical event identity for Starlings provenance.
+///
+/// Encoding v1 is hashed incrementally as:
+///   version:u8 || kind:u8 || payload:u64-le || parent_count:u8 || parents[0..count]
+///
+/// Parent order is significant because it is part of the causal expression.
+/// Changing this encoding requires incrementing `canonical_version`.
 pub fn contentId(event: Event) ContentId {
-    var h: u64 = 0xcbf29ce484222325;
-    h = mix(h, @intFromEnum(event.kind));
-    h = mix64(h, event.payload);
-    h = mix(h, event.parent_count);
+    var hasher = std.crypto.hash.Blake3.init(.{});
+    const header = [_]u8{ canonical_version, @intFromEnum(event.kind) };
+    hasher.update(&header);
+
+    var payload_bytes: [8]u8 = undefined;
+    encodeU64Le(event.payload, &payload_bytes);
+    hasher.update(&payload_bytes);
+
+    const parent_count = [_]u8{@intCast(event.parent_count)};
+    hasher.update(&parent_count);
 
     var i: usize = 0;
-    while (i < event.parent_count) : (i += 1) h = mix64(h, event.parents[i]);
-    return avalanche(h);
+    while (i < event.parent_count) : (i += 1) hasher.update(&event.parents[i]);
+
+    var digest: ContentId = undefined;
+    hasher.final(&digest);
+    return digest;
 }
 
-fn mix(h_in: u64, byte: anytype) u64 {
-    var h = h_in;
-    h ^= @as(u64, @intCast(byte));
-    return h *% 0x100000001b3;
-}
-
-fn mix64(h_in: u64, value: u64) u64 {
-    var h = h_in;
-    var byte_index: usize = 0;
-    while (byte_index < 8) : (byte_index += 1) {
-        const shift: u6 = @intCast(byte_index * 8);
-        h = mix(h, @as(u8, @truncate(value >> shift)));
+fn encodeU64Le(value: u64, out: *[8]u8) void {
+    var i: usize = 0;
+    while (i < 8) : (i += 1) {
+        const shift: u6 = @intCast(i * 8);
+        out[i] = @truncate(value >> shift);
     }
-    return h;
-}
-
-fn avalanche(value: u64) u64 {
-    var x = value;
-    x ^= x >> 33;
-    x *%= 0xff51afd7ed558ccd;
-    x ^= x >> 33;
-    x *%= 0xc4ceb9fe1a85ec53;
-    x ^= x >> 33;
-    return x;
 }
 
 test "content identity is stable and sensitive to causal parents" {
     const parent_a = contentId(.{ .kind = .observe, .payload = 1 });
     const parent_b = contentId(.{ .kind = .observe, .payload = 2 });
 
-    const a = contentId(.{ .kind = .claim, .payload = 4, .parents = .{ parent_a, 0 }, .parent_count = 1 });
-    const b = contentId(.{ .kind = .claim, .payload = 4, .parents = .{ parent_a, 0 }, .parent_count = 1 });
-    const c = contentId(.{ .kind = .claim, .payload = 4, .parents = .{ parent_b, 0 }, .parent_count = 1 });
+    const a = contentId(.{ .kind = .claim, .payload = 4, .parents = .{ parent_a, zero_id }, .parent_count = 1 });
+    const b = contentId(.{ .kind = .claim, .payload = 4, .parents = .{ parent_a, zero_id }, .parent_count = 1 });
+    const c = contentId(.{ .kind = .claim, .payload = 4, .parents = .{ parent_b, zero_id }, .parent_count = 1 });
 
-    try std.testing.expectEqual(a, b);
-    try std.testing.expect(a != c);
+    try std.testing.expect(content_id.eql(a, b));
+    try std.testing.expect(!content_id.eql(a, c));
+}
+
+test "canonical encoding is versioned and parent order is significant" {
+    const left = contentId(.{ .kind = .observe, .payload = 1 });
+    const right = contentId(.{ .kind = .observe, .payload = 2 });
+    const ab = contentId(.{ .kind = .decision, .payload = 3, .parents = .{ left, right }, .parent_count = 2 });
+    const ba = contentId(.{ .kind = .decision, .payload = 3, .parents = .{ right, left }, .parent_count = 2 });
+    try std.testing.expectEqual(@as(u8, 1), canonical_version);
+    try std.testing.expect(!content_id.eql(ab, ba));
 }
 
 test "merkle dag deduplicates identical causal events" {
@@ -195,15 +202,15 @@ test "merkle dag deduplicates identical causal events" {
     const second = try dag.insert(event);
     try std.testing.expect(first.inserted);
     try std.testing.expect(!second.inserted);
-    try std.testing.expectEqual(first.id, second.id);
+    try std.testing.expect(content_id.eql(first.id, second.id));
     try std.testing.expectEqual(@as(usize, 1), dag.len);
 }
 
 test "causal ancestry is reconstructable" {
     var dag = MerkleDag(8){};
     const root = try dag.insert(.{ .kind = .observe, .payload = 1 });
-    const middle = try dag.insert(.{ .kind = .claim, .payload = 2, .parents = .{ root.id, 0 }, .parent_count = 1 });
-    const head = try dag.insert(.{ .kind = .decision, .payload = 4, .parents = .{ middle.id, 0 }, .parent_count = 1 });
+    const middle = try dag.insert(.{ .kind = .claim, .payload = 2, .parents = .{ root.id, zero_id }, .parent_count = 1 });
+    const head = try dag.insert(.{ .kind = .decision, .payload = 4, .parents = .{ middle.id, zero_id }, .parent_count = 1 });
     try std.testing.expectEqual(@as(usize, 3), try dag.ancestorCount(head.id));
 }
 
@@ -211,7 +218,7 @@ test "reconciliation counts only missing content" {
     var remote = MerkleDag(8){};
     var local = MerkleDag(8){};
     const a = try remote.insert(.{ .kind = .observe, .payload = 1 });
-    _ = try remote.insert(.{ .kind = .claim, .payload = 2, .parents = .{ a.id, 0 }, .parent_count = 1 });
+    _ = try remote.insert(.{ .kind = .claim, .payload = 2, .parents = .{ a.id, zero_id }, .parent_count = 1 });
     _ = try local.insert(.{ .kind = .observe, .payload = 1 });
     try std.testing.expectEqual(@as(usize, 1), remote.missingCount(&local));
 }

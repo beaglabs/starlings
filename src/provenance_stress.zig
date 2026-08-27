@@ -1,5 +1,6 @@
 const std = @import("std");
 const provenance = @import("provenance.zig");
+const content_id = @import("content_id.zig");
 
 pub const StressResult = struct {
     append_records: usize,
@@ -24,7 +25,7 @@ pub fn runDuplicateHeavy() !StressResult {
         const repeated: provenance.Event = .{
             .kind = .claim,
             .payload = 2,
-            .parents = .{ root.id, 0 },
+            .parents = .{ root.id, provenance.zero_id },
             .parent_count = 1,
         };
         _ = try log.append(repeated);
@@ -39,7 +40,7 @@ pub fn runDuplicateHeavy() !StressResult {
         .causal_nodes = try dag.ancestorCount(provenance.contentId(.{
             .kind = .claim,
             .payload = 2,
-            .parents = .{ root.id, 0 },
+            .parents = .{ root.id, provenance.zero_id },
             .parent_count = 1,
         })),
         .reconciliation_missing = 0,
@@ -55,8 +56,8 @@ pub fn runForkMerge() !StressResult {
     const root = try dag.insert(root_event);
     _ = try log.append(root_event);
 
-    const left_event: provenance.Event = .{ .kind = .claim, .payload = 2, .parents = .{ root.id, 0 }, .parent_count = 1 };
-    const right_event: provenance.Event = .{ .kind = .claim, .payload = 4, .parents = .{ root.id, 0 }, .parent_count = 1 };
+    const left_event: provenance.Event = .{ .kind = .claim, .payload = 2, .parents = .{ root.id, provenance.zero_id }, .parent_count = 1 };
+    const right_event: provenance.Event = .{ .kind = .claim, .payload = 4, .parents = .{ root.id, provenance.zero_id }, .parent_count = 1 };
     const left = try dag.insert(left_event);
     const right = try dag.insert(right_event);
     _ = try log.append(left_event);
@@ -84,14 +85,14 @@ pub fn runReplicaDivergence() !StressResult {
     const root_event: provenance.Event = .{ .kind = .observe, .payload = 1 };
     const remote_root = try remote.insert(root_event);
     const local_root = try local.insert(root_event);
-    try std.testing.expectEqual(remote_root.id, local_root.id);
+    try std.testing.expect(content_id.eql(remote_root.id, local_root.id));
 
-    const shared_event: provenance.Event = .{ .kind = .claim, .payload = 2, .parents = .{ remote_root.id, 0 }, .parent_count = 1 };
+    const shared_event: provenance.Event = .{ .kind = .claim, .payload = 2, .parents = .{ remote_root.id, provenance.zero_id }, .parent_count = 1 };
     _ = try remote.insert(shared_event);
     _ = try local.insert(shared_event);
 
-    const remote_only_a: provenance.Event = .{ .kind = .claim, .payload = 4, .parents = .{ remote_root.id, 0 }, .parent_count = 1 };
-    const remote_only_b: provenance.Event = .{ .kind = .evidence, .payload = 8, .parents = .{ remote_root.id, 0 }, .parent_count = 1 };
+    const remote_only_a: provenance.Event = .{ .kind = .claim, .payload = 4, .parents = .{ remote_root.id, provenance.zero_id }, .parent_count = 1 };
+    const remote_only_b: provenance.Event = .{ .kind = .evidence, .payload = 8, .parents = .{ remote_root.id, provenance.zero_id }, .parent_count = 1 };
     _ = try remote.insert(remote_only_a);
     _ = try remote.insert(remote_only_b);
 
@@ -121,7 +122,7 @@ pub fn runTamperCheck() !StressResult {
         .replay_equal = true,
         .causal_nodes = 1,
         .reconciliation_missing = 0,
-        .tamper_detected = inserted.id != tampered_id,
+        .tamper_detected = !content_id.eql(inserted.id, tampered_id),
     };
 }
 
