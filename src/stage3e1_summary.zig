@@ -2,41 +2,39 @@ const std = @import("std");
 const model_eval = @import("protocol_model_eval.zig");
 const model_summary = @import("protocol_model_summary.zig");
 
-pub fn main() !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.gpa;
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
 
-    var args = try std.process.argsWithAllocator(allocator);
-    defer args.deinit();
-
-    _ = args.next();
-    const path = args.next() orelse {
-        try usage();
-        std.process.exit(2);
-    };
-    if (args.next() != null) {
-        try usage();
+    if (args.len != 2) {
+        try usage(io);
         std.process.exit(2);
     }
 
-    const tsv = try std.fs.cwd().readFileAlloc(allocator, path, 32 * 1024 * 1024);
+    const tsv = try std.Io.Dir.cwd().readFileAlloc(
+        io,
+        args[1],
+        allocator,
+        .limited(32 * 1024 * 1024),
+    );
     defer allocator.free(tsv);
 
     const result = model_summary.summarizeTsv(tsv);
-    var out = std.fs.File.stdout();
+    const out = std.Io.File.stdout();
 
-    try writeLine(&out, "Stage 3E.1 llama.cpp live-trial summary\n", .{});
-    try writeLine(&out, "records: {d}\n", .{result.records});
-    try writeLine(&out, "malformed_records: {d}\n", .{result.malformed_records});
-    try writeLine(&out, "balanced_pairs: {s}\n\n", .{if (result.balanced()) "yes" else "no"});
+    try writeLine(io, out, "Stage 3E.1 llama.cpp live-trial summary\n", .{});
+    try writeLine(io, out, "records: {d}\n", .{result.records});
+    try writeLine(io, out, "malformed_records: {d}\n", .{result.malformed_records});
+    try writeLine(io, out, "balanced_pairs: {s}\n\n", .{if (result.balanced()) "yes" else "no"});
 
-    try writeHeader(&out);
-    try writeMetrics(&out, "typed_unconstrained", result.overall.typed);
-    try writeMetrics(&out, "cfg_constrained", result.overall.constrained);
+    try writeHeader(io, out);
+    try writeMetrics(io, out, "typed_unconstrained", result.overall.typed);
+    try writeMetrics(io, out, "cfg_constrained", result.overall.constrained);
 
     try writeLine(
-        &out,
+        io,
+        out,
         "\ndeltas (constrained - typed): first_valid={d} permille, task_success={d} permille\n",
         .{ result.overall.validityDeltaPermille(), result.overall.taskSuccessDeltaPermille() },
     );
@@ -50,18 +48,19 @@ pub fn main() !void {
         "delegation",
     };
 
-    try writeLine(&out, "\nby workflow\n", .{});
+    try writeLine(io, out, "\nby workflow\n", .{});
     var i: usize = 0;
     while (i < workflow_names.len) : (i += 1) {
-        try writeLine(&out, "\n{s}\n", .{workflow_names[i]});
-        try writeHeader(&out);
-        try writeMetrics(&out, "typed_unconstrained", result.by_workflow[i].typed);
-        try writeMetrics(&out, "cfg_constrained", result.by_workflow[i].constrained);
+        try writeLine(io, out, "\n{s}\n", .{workflow_names[i]});
+        try writeHeader(io, out);
+        try writeMetrics(io, out, "typed_unconstrained", result.by_workflow[i].typed);
+        try writeMetrics(io, out, "cfg_constrained", result.by_workflow[i].constrained);
     }
 
     if (result.malformed_records != 0 or !result.balanced()) {
         try writeLine(
-            &out,
+            io,
+            out,
             "\nWARNING: malformed or unbalanced trial data; do not use this file for a promotion decision.\n",
             .{},
         );
@@ -69,22 +68,24 @@ pub fn main() !void {
     }
 }
 
-fn usage() !void {
-    var out = std.fs.File.stderr();
-    try out.writeAll(
+fn usage(io: std.Io) !void {
+    try std.Io.File.stderr().writeStreamingAll(
+        io,
         "usage: zig run src/stage3e1_summary.zig -- <trials.tsv>\n",
     );
 }
 
-fn writeHeader(out: *std.fs.File) !void {
-    try out.writeAll(
+fn writeHeader(io: std.Io, out: std.Io.File) !void {
+    try out.writeStreamingAll(
+        io,
         "mode\ttrials\tfirst-valid\ttask-success\tgrammar-rej\tbackend-err\ttokens\tbytes\tavg-latency-us\n",
     );
 }
 
-fn writeMetrics(out: *std.fs.File, name: []const u8, metrics: model_eval.ModeMetrics) !void {
+fn writeMetrics(io: std.Io, out: std.Io.File, name: []const u8, metrics: model_eval.ModeMetrics) !void {
     const avg_latency = if (metrics.trials == 0) 0 else metrics.latency_us / metrics.trials;
     try writeLine(
+        io,
         out,
         "{s}\t{d}\t{d}.{d}%\t{d}.{d}%\t{d}\t{d}\t{d}\t{d}\t{d}\n",
         .{
@@ -103,8 +104,8 @@ fn writeMetrics(out: *std.fs.File, name: []const u8, metrics: model_eval.ModeMet
     );
 }
 
-fn writeLine(out: *std.fs.File, comptime format: []const u8, args: anytype) !void {
+fn writeLine(io: std.Io, out: std.Io.File, comptime format: []const u8, args: anytype) !void {
     var buffer: [1024]u8 = undefined;
     const line = try std.fmt.bufPrint(&buffer, format, args);
-    try out.writeAll(line);
+    try out.writeStreamingAll(io, line);
 }
