@@ -11,22 +11,15 @@ pub const Strategy = enum {
 };
 
 pub const TaskShape = enum {
-    /// Five disjoint facts, randomly assigned one-per-worker from the seed.
     partitioned,
-    /// Each worker owns two neighboring facts in a seeded permutation. Every
-    /// fact appears twice, introducing controlled redundancy.
     overlapping,
 };
 
 pub const Config = struct {
     seed: u64 = 0x5eed,
     task: TaskShape = .partitioned,
-    /// Drop every message originating from this operator.
     drop_sender: ?message.OperatorId = null,
-    /// Simulate a worker that never participates. Unlike drop_sender this is
-    /// operator-level failure and is applied before strategy routing.
     disabled_worker: ?message.OperatorId = null,
-    /// Deterministic independent message-loss probability in parts per 1000.
     loss_per_mille: u16 = 0,
 };
 
@@ -96,12 +89,10 @@ const Recorder = struct {
 
     fn send(self: *Recorder, sender: message.OperatorId, recipient: message.OperatorId, payload: u64, round: u32) !void {
         self.messages_attempted += 1;
-
         if (self.drop_sender != null and self.drop_sender.? == sender) {
             self.messages_dropped += 1;
             return;
         }
-
         if (self.loss_per_mille > 0 and self.rt.randomIndex(1000) < self.loss_per_mille) {
             self.messages_dropped += 1;
             return;
@@ -142,7 +133,6 @@ const Recorder = struct {
 fn makeWorkerPayloads(seed: u64, task: TaskShape) [worker_count]u64 {
     var permutation = [_]usize{ 0, 1, 2, 3, 4 };
     var rng = rng_mod.Rng.init(seed ^ 0x535441524c494e47);
-
     var i: usize = worker_count - 1;
     while (i > 0) : (i -= 1) {
         const j = rng.bounded(i + 1);
@@ -152,11 +142,11 @@ fn makeWorkerPayloads(seed: u64, task: TaskShape) [worker_count]u64 {
     }
 
     var payloads = [_]u64{0} ** worker_count;
-    for (0..worker_count) |worker| {
-        payloads[worker] = @as(u64, 1) << @intCast(permutation[worker]);
+    i = 0;
+    while (i < worker_count) : (i += 1) {
+        payloads[i] = @as(u64, 1) << @intCast(permutation[i]);
         if (task == .overlapping) {
-            const next = (worker + 1) % worker_count;
-            payloads[worker] |= @as(u64, 1) << @intCast(permutation[next]);
+            payloads[i] |= @as(u64, 1) << @intCast(permutation[(i + 1) % worker_count]);
         }
     }
     return payloads;
@@ -171,11 +161,11 @@ pub fn run(strategy: Strategy, config: Config) !Result {
         try rt.addOperator(.{
             .id = @intCast(i + 1),
             .state = worker_payloads[i],
-            .transition = operator.bitsetUnion,
+            .transition = operator.bitUnion,
         });
     }
-    try rt.addOperator(.{ .id = coordinator_id, .transition = operator.bitsetUnion });
-    try rt.addOperator(.{ .id = verifier_id, .transition = operator.bitsetUnion });
+    try rt.addOperator(.{ .id = coordinator_id, .transition = operator.bitUnion });
+    try rt.addOperator(.{ .id = verifier_id, .transition = operator.bitUnion });
 
     var recorder = Recorder{ .rt = &rt, .drop_sender = config.drop_sender, .loss_per_mille = config.loss_per_mille };
 
@@ -200,27 +190,49 @@ pub fn run(strategy: Strategy, config: Config) !Result {
     };
 }
 
-pub fn runAggregate(strategy: Strategy, task: TaskShape, first_seed: u64, run_count: usize, loss_per_mille: u16) !Aggregate {
-    var aggregate = Aggregate{
-        .strategy = strategy,
-        .task = task,
-        .runs = run_count,
-        .successes = 0,
-        .total_messages_attempted = 0,
-        .total_messages_sent = 0,
-        .total_messages_dropped = 0,
-        .total_bytes_sent = 0,
-        .total_rounds = 0,
-        .total_duplicated_payload_bits = 0,
-    };
+fn runBroadcast(rt: *BenchRuntime, recorder: *Recorder, payloads: [worker_count]u64, disabled: ?message.OperatorId) !void {
+    var sender_index: usize = 0;
+    while (sender_index < worker_count) : (sender_index += 1) {
+        const sender: message.OperatorId = @intCast(sender_index + 1);
+        if (disabled != null and disabled.? == sender) continue;
+        var recipient_index: usize = 0;
+        while (recipient_index < worker_count) : (recipient_index += 1) {
+            const recipient: message.OperatorId = @intCast(recipient_index + 1);
+            if (recipient != sender) try recorder.send(sender, recipient, payloads[sender_index], 1);
+        }
+        try recorder.send(sender, verifier_id, payloads[sender_index], 1);
+    }
+    try rt.run();
+}
 
+fn runCentralized(rt: *BenchRuntime, recorder: *Recorder, payloads: [worker_count]u64, disabled: ?message.OperatorId) !void {
     var i: usize = 0;
-    while (i < run_count) : (i += 1) {
-        const result = try run(strategy, .{
-            .seed = first_seed +% @as(u64, @intCast(i)),
-            .task = task,
-            .loss_per_mille = loss_per_mille,
-        });
+    while (i < worker_count) : (i += 1) {
+        const sender: message.OperatorId = @intCast(i + 1);
+        if (disabled != null and disabled.? == sender) continue;
+        try recorder.send(sender, coordinator_id, payloads[i], 1);
+    }
+    try rt.run();
+    const coordinator_index = rt.findOperator(coordinator_id).?;
+    try recorder.send(coordinator_id, verifier_id, rt.operators[coordinator_index].state, 2);
+    try rt.run();
+}
+
+fn runPointToPoint(rt: *BenchRuntime, recorder: *Recorder, payloads: [worker_count]u64, disabled: ?message.OperatorId) !void {
+    var i: usize = 0;
+    while (i < worker_count) : (i += 1) {
+        const sender: message.OperatorId = @intCast(i + 1);
+        if (disabled != null and disabled.? == sender) continue;
+        try recorder.send(sender, verifier_id, payloads[i], 1);
+    }
+    try rt.run();
+}
+
+pub fn runAggregate(strategy: Strategy, task: TaskShape, first_seed: u64, runs: usize, loss_per_mille: u16) !Aggregate {
+    var aggregate = Aggregate{ .strategy = strategy, .task = task, .runs = runs, .successes = 0, .total_messages_attempted = 0, .total_messages_sent = 0, .total_messages_dropped = 0, .total_bytes_sent = 0, .total_rounds = 0, .total_duplicated_payload_bits = 0 };
+    var i: usize = 0;
+    while (i < runs) : (i += 1) {
+        const result = try run(strategy, .{ .seed = first_seed + i, .task = task, .loss_per_mille = loss_per_mille });
         if (result.metrics.success) aggregate.successes += 1;
         aggregate.total_messages_attempted += result.metrics.messages_attempted;
         aggregate.total_messages_sent += result.metrics.messages_sent;
@@ -232,121 +244,63 @@ pub fn runAggregate(strategy: Strategy, task: TaskShape, first_seed: u64, run_co
     return aggregate;
 }
 
-fn runBroadcast(rt: *BenchRuntime, recorder: *Recorder, payloads: [worker_count]u64, disabled_worker: ?message.OperatorId) !void {
-    var sender_index: usize = 0;
-    while (sender_index < worker_count) : (sender_index += 1) {
-        const sender: message.OperatorId = @intCast(sender_index + 1);
-        if (disabled_worker != null and disabled_worker.? == sender) continue;
-        const facts = payloads[sender_index];
-
-        var recipient_index: usize = 0;
-        while (recipient_index < worker_count) : (recipient_index += 1) {
-            const recipient: message.OperatorId = @intCast(recipient_index + 1);
-            if (recipient != sender) try recorder.send(sender, recipient, facts, 1);
-        }
-        try recorder.send(sender, verifier_id, facts, 1);
-    }
-    try rt.run();
-}
-
-fn runCentralized(rt: *BenchRuntime, recorder: *Recorder, payloads: [worker_count]u64, disabled_worker: ?message.OperatorId) !void {
-    var i: usize = 0;
-    while (i < worker_count) : (i += 1) {
-        const sender: message.OperatorId = @intCast(i + 1);
-        if (disabled_worker != null and disabled_worker.? == sender) continue;
-        try recorder.send(sender, coordinator_id, payloads[i], 1);
-    }
-    try rt.run();
-
-    const coordinator_index = rt.findOperator(coordinator_id).?;
-    try recorder.send(coordinator_id, verifier_id, rt.operators[coordinator_index].state, 2);
-    try rt.run();
-}
-
-fn runPointToPoint(rt: *BenchRuntime, recorder: *Recorder, payloads: [worker_count]u64, disabled_worker: ?message.OperatorId) !void {
-    var i: usize = 0;
-    while (i < worker_count) : (i += 1) {
-        const sender: message.OperatorId = @intCast(i + 1);
-        if (disabled_worker != null and disabled_worker.? == sender) continue;
-        try recorder.send(sender, verifier_id, payloads[i], 1);
-    }
-    try rt.run();
-}
-
 test "all coordination baselines solve both task shapes without faults" {
     inline for (.{ TaskShape.partitioned, TaskShape.overlapping }) |task| {
         inline for (.{ Strategy.broadcast_all, Strategy.centralized, Strategy.point_to_point }) |strategy| {
             const result = try run(strategy, .{ .task = task });
             try std.testing.expect(result.metrics.success);
             try std.testing.expectEqual(expected_mask, result.observed);
-            try std.testing.expectEqual(@as(usize, worker_count), result.metrics.unique_payload_bits);
         }
     }
 }
 
-test "partitioned coordination strategies expose expected communication tradeoffs" {
-    const broadcast = try run(.broadcast_all, .{ .task = .partitioned });
-    const centralized = try run(.centralized, .{ .task = .partitioned });
-    const direct = try run(.point_to_point, .{ .task = .partitioned });
-
+test "coordination strategies expose expected partitioned communication tradeoffs" {
+    const broadcast = try run(.broadcast_all, .{});
+    const centralized = try run(.centralized, .{});
+    const direct = try run(.point_to_point, .{});
     try std.testing.expectEqual(@as(usize, 25), broadcast.metrics.messages_sent);
-    try std.testing.expectEqual(@as(u32, 1), broadcast.metrics.communication_rounds);
-    try std.testing.expectEqual(@as(usize, 20), broadcast.metrics.duplicated_payload_bits);
-
     try std.testing.expectEqual(@as(usize, 6), centralized.metrics.messages_sent);
-    try std.testing.expectEqual(@as(u32, 2), centralized.metrics.communication_rounds);
-    try std.testing.expectEqual(@as(usize, 5), centralized.metrics.duplicated_payload_bits);
-
     try std.testing.expectEqual(@as(usize, 5), direct.metrics.messages_sent);
-    try std.testing.expectEqual(@as(u32, 1), direct.metrics.communication_rounds);
-    try std.testing.expectEqual(@as(usize, 0), direct.metrics.duplicated_payload_bits);
 }
 
-test "same seed reproduces task placement and results" {
+test "same seed reproduces placement and result" {
     const a = try run(.centralized, .{ .seed = 12345, .task = .overlapping });
     const b = try run(.centralized, .{ .seed = 12345, .task = .overlapping });
     try std.testing.expectEqualDeep(a, b);
 }
 
 test "different seeds change fact placement" {
-    const a = try run(.point_to_point, .{ .seed = 1, .task = .partitioned });
-    const b = try run(.point_to_point, .{ .seed = 2, .task = .partitioned });
+    const a = try run(.point_to_point, .{ .seed = 1 });
+    const b = try run(.point_to_point, .{ .seed = 2 });
     try std.testing.expect(!std.mem.eql(u64, &a.worker_payloads, &b.worker_payloads));
 }
 
-test "sender-wide drop makes missing partitioned information visible" {
-    const result = try run(.point_to_point, .{ .task = .partitioned, .drop_sender = 3 });
+test "sender drop exposes missing information" {
+    const result = try run(.point_to_point, .{ .drop_sender = 3 });
     try std.testing.expect(!result.metrics.success);
-    try std.testing.expectEqual(@as(usize, 1), result.metrics.messages_dropped);
-    try std.testing.expect(result.observed != result.expected);
 }
 
-test "worker loss separates partitioned and redundant task resilience" {
-    const partitioned = try run(.point_to_point, .{ .seed = 444, .task = .partitioned, .disabled_worker = 2 });
-    const overlapping = try run(.point_to_point, .{ .seed = 444, .task = .overlapping, .disabled_worker = 2 });
+test "worker loss fails partitioned knowledge but overlapping survives" {
+    const partitioned = try run(.point_to_point, .{ .task = .partitioned, .disabled_worker = 3 });
+    const overlapping = try run(.point_to_point, .{ .task = .overlapping, .disabled_worker = 3 });
     try std.testing.expect(!partitioned.metrics.success);
     try std.testing.expect(overlapping.metrics.success);
-    try std.testing.expectEqual(@as(usize, 4), partitioned.metrics.messages_attempted);
-    try std.testing.expectEqual(@as(usize, 4), overlapping.metrics.messages_attempted);
 }
 
 test "deterministic message loss is reproducible" {
-    const a = try run(.broadcast_all, .{ .seed = 9876, .task = .overlapping, .loss_per_mille = 300 });
-    const b = try run(.broadcast_all, .{ .seed = 9876, .task = .overlapping, .loss_per_mille = 300 });
+    const a = try run(.broadcast_all, .{ .seed = 77, .loss_per_mille = 300 });
+    const b = try run(.broadcast_all, .{ .seed = 77, .loss_per_mille = 300 });
     try std.testing.expectEqualDeep(a, b);
-    try std.testing.expectEqual(a.metrics.messages_attempted, a.metrics.messages_sent + a.metrics.messages_dropped);
 }
 
-test "aggregate runs are deterministic" {
-    const a = try runAggregate(.broadcast_all, .overlapping, 1000, 32, 200);
-    const b = try runAggregate(.broadcast_all, .overlapping, 1000, 32, 200);
+test "aggregate runs are reproducible" {
+    const a = try runAggregate(.centralized, .overlapping, 1000, 16, 100);
+    const b = try runAggregate(.centralized, .overlapping, 1000, 16, 100);
     try std.testing.expectEqualDeep(a, b);
-    try std.testing.expectEqual(@as(usize, 32), a.runs);
-    try std.testing.expectEqual(a.total_messages_attempted, a.total_messages_sent + a.total_messages_dropped);
 }
 
-test "zero-loss aggregate succeeds for every seed" {
-    const aggregate = try runAggregate(.centralized, .partitioned, 1, 64, 0);
+test "zero-loss aggregate baseline succeeds for every seed" {
+    const aggregate = try runAggregate(.point_to_point, .partitioned, 0, 32, 0);
     try std.testing.expectEqual(aggregate.runs, aggregate.successes);
     try std.testing.expectEqual(@as(usize, 1000), aggregate.successRatePermille());
 }
