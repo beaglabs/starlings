@@ -16,37 +16,65 @@ import time
 import urllib.error
 import urllib.request
 
+PROTOCOL_SPEC = """You communicate using only this protocol vocabulary:
+OBSERVE
+QUERY
+CLAIM
+EVIDENCE
+PROPOSE
+ACCEPT
+REJECT
+CHALLENGE
+RETRACT
+DELEGATE
+
+Valid interaction forms are:
+OBSERVE CLAIM
+QUERY EVIDENCE
+PROPOSE ACCEPT
+PROPOSE REJECT
+CHALLENGE RETRACT
+DELEGATE QUERY EVIDENCE EVIDENCE
+CLAIM may repeat one or more times as a claim batch.
+A session may contain one or more valid interactions.
+
+Return only the protocol terminal sequence required by the task.
+Do not include explanations, punctuation, prose, or code fences.
+
+Task:
+"""
+
 WORKFLOWS = (
     (
         "observe_claim",
-        "Return only protocol terminal names. A coordinator gives an observation to an analyst; the analyst must state the resulting claim.",
+        "A coordinator gives an observation to an analyst; the analyst must state the resulting claim.",
     ),
     (
         "query_evidence",
-        "Return only protocol terminal names. A coordinator requests a known fact from a worker; the worker must return supporting evidence.",
+        "A coordinator requests a known fact from a worker; the worker must return supporting evidence.",
     ),
     (
         "proposal_accept",
-        "Return only protocol terminal names. A coordinator proposes an allowed action; the evaluator must accept it.",
+        "A coordinator proposes an allowed action; the evaluator must accept it.",
     ),
     (
         "proposal_reject",
-        "Return only protocol terminal names. A coordinator proposes an action outside the allowed set; the evaluator must reject it.",
+        "A coordinator proposes an action outside the allowed set; the evaluator must reject it.",
     ),
     (
         "challenge_retract",
-        "Return only protocol terminal names. A coordinator challenges an active claim; the claimant must retract the challenged claim.",
+        "A coordinator challenges an active claim; the claimant must retract the challenged claim.",
     ),
     (
         "delegation",
-        "Return only protocol terminal names. A coordinator delegates an information request to a worker; the worker queries a specialist, receives evidence, and forwards evidence to the coordinator.",
+        "A coordinator delegates an information request to a worker; the worker queries a specialist, receives evidence, and forwards evidence to the coordinator.",
     ),
 )
 
 TYPED = "typed_unconstrained"
 CONSTRAINED = "cfg_constrained"
 BACKEND_ERROR = "__BACKEND_ERROR__"
-RUNNER_VERSION = 1
+RUNNER_VERSION = 2
 
 
 def escape_completion(text: str) -> str:
@@ -60,6 +88,9 @@ def escape_completion(text: str) -> str:
 
 def record_key(workflow: str, seed: int, mode: str, attempt: int) -> tuple[str, int, str, int]:
     return workflow, seed, mode, attempt
+
+def task_prompt(task: str) -> str:
+    return PROTOCOL_SPEC + task
 
 
 def mode_order(seed: int, workflow_index: int) -> tuple[str, str]:
@@ -200,6 +231,9 @@ def write_metadata(
         "first_seed": args.first_seed,
         "seeds": args.seeds,
         "workflows": [name for name, _ in WORKFLOWS],
+        "prompt_suite_sha256": hashlib.sha256(
+            "\n\0\n".join(task_prompt(task) for _, task in WORKFLOWS).encode("utf-8")
+        ).hexdigest(),
         "base_generations": args.seeds * len(WORKFLOWS) * 2,
         "temperature": args.temperature,
         "top_p": args.top_p,
@@ -254,6 +288,30 @@ def self_test() -> None:
     assert typed["max_tokens"] == constrained["max_tokens"]
     assert "grammar" not in typed
     assert constrained["grammar"] == grammar
+    for terminal in (
+        "OBSERVE",
+        "QUERY",
+        "CLAIM",
+        "EVIDENCE",
+        "PROPOSE",
+        "ACCEPT",
+        "REJECT",
+        "CHALLENGE",
+        "RETRACT",
+        "DELEGATE",
+    ):
+        assert terminal in PROTOCOL_SPEC
+    for interaction in (
+        "OBSERVE CLAIM",
+        "QUERY EVIDENCE",
+        "PROPOSE ACCEPT",
+        "PROPOSE REJECT",
+        "CHALLENGE RETRACT",
+        "DELEGATE QUERY EVIDENCE EVIDENCE",
+    ):
+        assert interaction in PROTOCOL_SPEC
+    for _, task in WORKFLOWS:
+        assert task_prompt(task).startswith(PROTOCOL_SPEC)
     assert mode_order(0, 0) == (TYPED, CONSTRAINED)
     assert mode_order(1, 0) == (CONSTRAINED, TYPED)
     assert escape_completion("A\tB\nC\\D") == "A\\tB\\nC\\\\D"
@@ -313,7 +371,8 @@ def main() -> int:
     skipped = 0
     with output_path.open(file_mode, encoding="utf-8", newline="") as handle:
         for seed in range(args.first_seed, args.first_seed + args.seeds):
-            for workflow_index, (workflow, prompt) in enumerate(WORKFLOWS):
+            for workflow_index, (workflow, task) in enumerate(WORKFLOWS):
+                prompt = task_prompt(task)
                 for mode in mode_order(seed, workflow_index):
                     key = record_key(workflow, seed, mode, 0)
                     if key in completed:
