@@ -5,9 +5,13 @@ pub const operator = @import("operator.zig");
 pub const runtime = @import("runtime.zig");
 pub const rng = @import("rng.zig");
 pub const benchmark = @import("benchmark.zig");
+pub const provenance = @import("provenance.zig");
+pub const provenance_validation = @import("provenance_validation.zig");
 
 test {
     _ = benchmark;
+    _ = provenance;
+    _ = provenance_validation;
 }
 
 test "messages route deterministically and update operator state" {
