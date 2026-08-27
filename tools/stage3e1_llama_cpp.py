@@ -8,6 +8,7 @@ protocol parsing, task scoring, and experiment summaries.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib
 import sys
@@ -45,6 +46,7 @@ WORKFLOWS = (
 TYPED = "typed_unconstrained"
 CONSTRAINED = "cfg_constrained"
 BACKEND_ERROR = "__BACKEND_ERROR__"
+RUNNER_VERSION = 1
 
 
 def escape_completion(text: str) -> str:
