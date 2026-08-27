@@ -50,12 +50,7 @@ and sends `cache_prompt: false` in both modes.
 ```text
 root ::= session
 session ::= interaction (" " interaction)*
-interaction ::= claim-batch
-              | observe-claim
-              | query-evidence
-              | propose-decision
-              | challenge-retract
-              | delegation
+interaction ::= claim-batch | observe-claim | query-evidence | propose-decision | challenge-retract | delegation
 claim-batch ::= "CLAIM" (" CLAIM")*
 observe-claim ::= "OBSERVE CLAIM"
 query-evidence ::= "QUERY EVIDENCE"
