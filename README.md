@@ -2,7 +2,7 @@
 
 Experimental infrastructure for evidence-backed mathematical agent communication and collective coordination, implemented in Zig.
 
-## Current scope: Stage 0–3E.1
+## Current scope: Stage 0–3F.0
 
 The foundation contains the machinery needed to run reproducible experiments and compare coordination strategies:
 
@@ -25,6 +25,7 @@ The foundation contains the machinery needed to run reproducible experiments and
 - candidate CFG parsing, malformed-sequence rejection, and encoding benchmarks
 - CFG stress/generalization tests over exhaustive and seeded unseen compositions
 - provider-agnostic model-backed A/B evaluation for unconstrained vs CFG-constrained decoding
+- outcome-scored controlled-emergence experiments over distributed local knowledge
 
 Stage 1 uses five workers and a verifier. The partitioned task assigns one independent fact to each worker, while the overlapping task gives each worker two facts so that every fact exists at two workers. This lets the harness distinguish raw communication efficiency from resilience under information loss.
 
@@ -51,7 +52,7 @@ version:u8
 
 See `docs/adr/0001-content-addressed-provenance.md` for the architectural decision.
 
-Formal grammars remain a candidate architectural component under active Stage 3 validation: deterministic corpus, composition, stress, and encoding gates have passed locally, while model-backed constrained-generation evidence is still pending. Executable semantics, dynamic flocking topologies, VSAs, category-theoretic models, effect systems, and differential-geometric models also remain candidate components. Candidates should be integrated only after their hypotheses are experimentally validated; once validated, they become architectural commitments rather than optional features.
+Formal grammars remain a candidate architectural component under active Stage 3 validation: deterministic corpus, composition, stress, and encoding gates have passed locally; Stage 3E established live constrained-generation plumbing, and Stage 3F now tests whether formal control preserves autonomous collective coordination. Executable semantics, dynamic flocking topologies, VSAs, category-theoretic models, effect systems, and differential-geometric models also remain candidate components. Candidates should be integrated only after their hypotheses are experimentally validated; once validated, they become architectural commitments rather than optional features.
 
 ## Test
 
@@ -76,3 +77,28 @@ zig run src/stage3e1_summary.zig -- trials/stage3e1.tsv
 ```
 
 See `docs/stage-3e1-llama-cpp.md` for the experimental controls and runbook.
+
+
+## Stage 3F.0 distributed fact convergence
+
+Stage 3F.0 replaces canonical workflow matching with an outcome-scored
+controlled-emergence benchmark. Five model-backed workers start with overlapping
+local facts on a ring and autonomously choose factual protocol interactions
+until Worker 1 reconstructs the global fact set or the round budget is exhausted.
+
+Validate and run the five-seed smoke experiment:
+
+```sh
+python3 tools/stage3f0_llama_cpp.py --self-test
+python3 tools/stage3f0_llama_cpp.py --dry-run
+python3 tools/stage3f0_llama_cpp.py \
+  --base-url http://127.0.0.1:8080 \
+  --seeds 5 \
+  --output trials/stage3f0-gemma4-e2b-smoke.tsv
+
+zig run src/stage3f0_summary.zig -- \
+  trials/stage3f0-gemma4-e2b-smoke.tsv
+```
+
+See `docs/stage-3f0-distributed-fact-convergence.md` for the environment,
+A/B controls, replay invariants, metrics, and progression gates.
