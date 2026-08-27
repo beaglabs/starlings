@@ -12,7 +12,7 @@ pub fn isZero(id: ContentId) bool {
 }
 
 test "content ids compare by all 256 bits" {
-    var a = zero;
+    const a = zero;
     var b = zero;
     try std.testing.expect(eql(a, b));
     b[31] = 1;
