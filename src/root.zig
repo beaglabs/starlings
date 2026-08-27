@@ -4,6 +4,11 @@ pub const message = @import("message.zig");
 pub const operator = @import("operator.zig");
 pub const runtime = @import("runtime.zig");
 pub const rng = @import("rng.zig");
+pub const benchmark = @import("benchmark.zig");
+
+test {
+    _ = benchmark;
+}
 
 test "messages route deterministically and update operator state" {
     const TestRuntime = runtime.Runtime(8, 32, 32);
