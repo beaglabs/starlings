@@ -9,6 +9,7 @@ pub const benchmark = @import("benchmark.zig");
 pub const provenance = @import("provenance.zig");
 pub const provenance_validation = @import("provenance_validation.zig");
 pub const provenance_stress = @import("provenance_stress.zig");
+pub const protocol_workflow = @import("protocol_workflow.zig");
 pub const protocol_trace = @import("protocol_trace.zig");
 
 test {
@@ -17,6 +18,7 @@ test {
     _ = provenance;
     _ = provenance_validation;
     _ = provenance_stress;
+    _ = protocol_workflow;
     _ = protocol_trace;
 }
 
