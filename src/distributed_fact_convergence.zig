@@ -171,12 +171,12 @@ test "seed rotations preserve overlapping ring facts and global truth" {
     var seed: u64 = 0;
     while (seed < 5) : (seed += 1) {
         const knowledge = initialKnowledge(seed);
-        var union: u8 = 0;
+        var fact_union: u8 = 0;
         for (knowledge) |facts| {
             try std.testing.expectEqual(@as(usize, 2), @as(usize, @intCast(@popCount(facts))));
-            union |= facts;
+            fact_union |= facts;
         }
-        try std.testing.expectEqual(full_mask, union);
+        try std.testing.expectEqual(full_mask, fact_union);
     }
 
     try std.testing.expectEqualDeep(
