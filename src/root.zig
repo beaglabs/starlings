@@ -11,6 +11,7 @@ pub const provenance_validation = @import("provenance_validation.zig");
 pub const provenance_stress = @import("provenance_stress.zig");
 pub const protocol_workflow = @import("protocol_workflow.zig");
 pub const protocol_trace = @import("protocol_trace.zig");
+pub const protocol_cfg = @import("protocol_cfg.zig");
 
 test {
     _ = content_id;
@@ -20,6 +21,7 @@ test {
     _ = provenance_stress;
     _ = protocol_workflow;
     _ = protocol_trace;
+    _ = protocol_cfg;
 }
 
 test "messages route deterministically and update operator state" {
