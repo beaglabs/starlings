@@ -96,10 +96,11 @@ All five model calls in a round see the same pre-round snapshot.
 Their interactions are applied only after all five calls complete. This avoids
 worker-order effects in the state visible to the model.
 
-Each raw record includes:
+Each v2 raw record includes:
 
 \`\`\`text
-run_seed
+environment_seed
+sampling_seed
 mode
 round
 worker
@@ -109,6 +110,8 @@ completion_tokens
 latency_us
 completion
 \`\`\`
+
+The environment seed determines only initial fact placement. The sampling seed determines only the deterministic per-turn model seed.
 
 The Zig replayer independently reconstructs the state and rejects records when
 \`knowledge_before\` or \`generation_seed\` disagrees with deterministic
@@ -236,10 +239,16 @@ python3 tools/stage3f0_llama_cpp.py --self-test
 python3 tools/stage3f0_llama_cpp.py --dry-run
 \`\`\`
 
-The default five-seed smoke has a maximum of:
+The default v2 replication contains:
 
 \`\`\`text
-5 seeds × 2 modes × 10 rounds × 5 workers = 500 model generations
+5 environments × 4 sampling seeds × 2 modes = 40 population runs
+\`\`\`
+
+with a maximum of:
+
+\`\`\`text
+40 population runs × 10 rounds × 5 workers = 2,000 model generations
 \`\`\`
 
 Runs terminate immediately when Worker 1 reaches the complete fact set, so
