@@ -45,7 +45,7 @@ pub fn summarizeTsv(tsv: []const u8) Summary {
     var lines = std.mem.splitScalar(u8, tsv, '\n');
 
     while (lines.next()) |raw_line| {
-        const line = std.mem.trim(u8, raw_line, " \r");
+        const line = std.mem.trimRight(u8, raw_line, "\r");
         if (line.len == 0 or line[0] == '#') continue;
 
         result.records += 1;
@@ -149,8 +149,10 @@ fn parseRawLine(line: []const u8) !RawRecord {
     for (fields[0..6]) |field| {
         if (field.len == 0) return error.InvalidRecord;
     }
-    if (fields[6].len == 0) return error.InvalidRecord;
 
+    // Empty or whitespace-only completions are valid experimental records.
+    // They must reach protocol parsing and count as grammar rejections rather
+    // than disappearing as malformed TSV rows.
     return .{
         .workflow = try parseWorkflow(fields[0]),
         .seed = try std.fmt.parseInt(u64, fields[1], 10),
@@ -207,6 +209,32 @@ fn unescapeCompletion(input: []const u8, out: *[max_completion_bytes]u8) ![]cons
     }
 
     return out[0..dst];
+}
+
+test "empty completion is a protocol rejection, not a malformed TSV row" {
+    const tsv =
+        "observe_claim\t0\ttyped_unconstrained\t0\t0\t100\t\n" ++
+        "observe_claim\t0\tcfg_constrained\t0\t2\t100\tOBSERVE CLAIM\n";
+
+    const summary = summarizeTsv(tsv);
+    try std.testing.expectEqual(@as(usize, 2), summary.records);
+    try std.testing.expectEqual(@as(usize, 0), summary.malformed_records);
+    try std.testing.expectEqual(@as(usize, 1), summary.overall.typed.trials);
+    try std.testing.expectEqual(@as(usize, 1), summary.overall.typed.grammar_rejections);
+    try std.testing.expectEqual(@as(usize, 1), summary.overall.constrained.trials);
+    try std.testing.expect(summary.balanced());
+}
+
+test "whitespace-only completion is preserved and rejected by protocol parsing" {
+    const tsv =
+        "query_evidence\t0\ttyped_unconstrained\t0\t1\t100\t   \n" ++
+        "query_evidence\t0\tcfg_constrained\t0\t2\t100\tQUERY EVIDENCE\n";
+
+    const summary = summarizeTsv(tsv);
+    try std.testing.expectEqual(@as(usize, 2), summary.records);
+    try std.testing.expectEqual(@as(usize, 0), summary.malformed_records);
+    try std.testing.expectEqual(@as(usize, 1), summary.overall.typed.grammar_rejections);
+    try std.testing.expect(summary.balanced());
 }
 
 test "raw summary accepts live typed records with escaped trailing newlines" {
