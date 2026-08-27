@@ -26,6 +26,9 @@ pub fn main(init: std.process.Init) !void {
     try writeLine(io, out, "Stage 3E.1 llama.cpp live-trial summary\n", .{});
     try writeLine(io, out, "records: {d}\n", .{result.records});
     try writeLine(io, out, "malformed_records: {d}\n", .{result.malformed_records});
+    try writeLine(io, out, "parse_errors: {d}\n", .{result.parse_errors});
+    try writeLine(io, out, "escape_errors: {d}\n", .{result.escape_errors});
+    try writeLine(io, out, "invalid_attempts: {d}\n", .{result.invalid_attempts});
     try writeLine(io, out, "balanced_pairs: {s}\n\n", .{if (result.balanced()) "yes" else "no"});
 
     try writeHeader(io, out);
