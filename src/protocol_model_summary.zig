@@ -45,7 +45,7 @@ pub fn summarizeTsv(tsv: []const u8) Summary {
     var lines = std.mem.splitScalar(u8, tsv, '\n');
 
     while (lines.next()) |raw_line| {
-        const line = std.mem.trimRight(u8, raw_line, "\r");
+        const line = std.mem.trim(u8, raw_line, "\r");
         if (line.len == 0 or line[0] == '#') continue;
 
         result.records += 1;
