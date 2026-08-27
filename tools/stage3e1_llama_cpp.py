@@ -209,6 +209,13 @@ def write_metadata(
         "endpoint": "/v1/chat/completions",
     }
     meta_path = pathlib.Path(str(output_path) + ".meta.json")
+    if args.resume and meta_path.exists():
+        existing = json.loads(meta_path.read_text(encoding="utf-8"))
+        if existing != metadata:
+            raise RuntimeError(
+                f"resume metadata mismatch for {meta_path}; use a new output file or matching parameters"
+            )
+        return
     meta_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
