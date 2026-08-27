@@ -1,13 +1,16 @@
 const std = @import("std");
 const benchmark = @import("benchmark.zig");
 const message = @import("message.zig");
+const protocol_workflow = @import("protocol_workflow.zig");
 const runtime = @import("runtime.zig");
 
 pub const max_events: usize = 4096;
 
 pub const CorpusEvent = struct {
-    strategy: benchmark.Strategy,
-    task: benchmark.TaskShape,
+    run_id: usize,
+    strategy: ?benchmark.Strategy = null,
+    task: ?benchmark.TaskShape = null,
+    workflow: ?protocol_workflow.Workflow = null,
     seed: u64,
     trace: runtime.TraceEvent,
 };
@@ -57,17 +60,53 @@ pub fn buildCorpus(first_seed: u64, seeds: usize) !Corpus {
             inline for (.{ benchmark.Strategy.broadcast_all, benchmark.Strategy.centralized, benchmark.Strategy.point_to_point }) |strategy| {
                 const result = try benchmark.run(strategy, .{ .seed = seed, .task = task });
                 corpus.runs += 1;
+                const run_id = corpus.runs;
                 if (result.metrics.success) corpus.successful_runs += 1;
 
                 var i: usize = 0;
                 while (i < result.trace_len) : (i += 1) {
                     try corpus.append(.{
+                        .run_id = run_id,
                         .strategy = strategy,
                         .task = task,
                         .seed = seed,
                         .trace = result.trace[i].?,
                     });
                 }
+            }
+        }
+    }
+
+    return corpus;
+}
+
+pub fn buildExpandedCorpus(first_seed: u64, seeds: usize) !Corpus {
+    var corpus = try buildCorpus(first_seed, seeds);
+
+    var seed_offset: usize = 0;
+    while (seed_offset < seeds) : (seed_offset += 1) {
+        const seed = first_seed + seed_offset;
+        inline for (.{
+            protocol_workflow.Workflow.observe_claim,
+            protocol_workflow.Workflow.query_evidence,
+            protocol_workflow.Workflow.proposal_accept,
+            protocol_workflow.Workflow.proposal_reject,
+            protocol_workflow.Workflow.challenge_retract,
+            protocol_workflow.Workflow.delegation,
+        }) |workflow| {
+            const result = try protocol_workflow.run(workflow, seed);
+            corpus.runs += 1;
+            const run_id = corpus.runs;
+            if (result.success) corpus.successful_runs += 1;
+
+            var i: usize = 0;
+            while (i < result.trace_len) : (i += 1) {
+                try corpus.append(.{
+                    .run_id = run_id,
+                    .workflow = workflow,
+                    .seed = seed,
+                    .trace = result.trace[i].?,
+                });
             }
         }
     }
@@ -85,9 +124,11 @@ pub fn analyze(corpus: *const Corpus) Analysis {
     var canonical_bytes: usize = 0;
 
     var previous_kind: ?message.Kind = null;
+    var previous_run_id: ?usize = null;
     var i: usize = 0;
     while (i < corpus.len) : (i += 1) {
-        const msg = corpus.events[i].trace.message;
+        const event = corpus.events[i];
+        const msg = event.trace.message;
         const kind_index: usize = @intFromEnum(msg.kind);
         kind_counts[kind_index] += 1;
         if (msg.causal_ref != null) causal_refs += 1;
@@ -105,14 +146,18 @@ pub fn analyze(corpus: *const Corpus) Analysis {
             }
         }
 
-        if (previous_kind) |prev| {
-            const transition_index = @intFromEnum(prev) * kind_count + kind_index;
-            if (!transition_seen[transition_index]) {
-                transition_seen[transition_index] = true;
-                unique_transitions += 1;
+        if (previous_run_id != null and previous_run_id.? == event.run_id) {
+            if (previous_kind) |prev| {
+                const transition_index = @intFromEnum(prev) * kind_count + kind_index;
+                if (!transition_seen[transition_index]) {
+                    transition_seen[transition_index] = true;
+                    unique_transitions += 1;
+                }
             }
         }
+
         previous_kind = msg.kind;
+        previous_run_id = event.run_id;
     }
 
     var observed_kinds: usize = 0;
@@ -168,7 +213,7 @@ test "stage 3a corpus is deterministic and covers all trusted baselines" {
     }
 }
 
-test "current trusted corpus exposes insufficient kind diversity for CFG promotion" {
+test "current trusted benchmark corpus remains narrow before workflow expansion" {
     const corpus = try buildCorpus(200, 8);
     const analysis = analyze(&corpus);
     try std.testing.expect(analysis.total_events > 0);
@@ -177,8 +222,41 @@ test "current trusted corpus exposes insufficient kind diversity for CFG promoti
     try std.testing.expect(analysis.repeated_shape_events > 0);
 }
 
+test "stage 3b expanded corpus covers full protocol vocabulary" {
+    const corpus = try buildExpandedCorpus(400, 4);
+    const analysis = analyze(&corpus);
+    try std.testing.expectEqual(corpus.runs, corpus.successful_runs);
+    try std.testing.expectEqual(kind_count, analysis.observed_kinds);
+    try std.testing.expect(analysis.unique_kind_transitions >= 8);
+    try std.testing.expect(analysis.messages_with_causal_refs > 0);
+    try std.testing.expect(analysis.repeated_shape_events > 0);
+}
+
+test "transition analysis never crosses run boundaries" {
+    var corpus = Corpus{};
+    try corpus.append(.{
+        .run_id = 1,
+        .seed = 1,
+        .trace = .{
+            .sequence = 1,
+            .message = .{ .sender = 1, .recipient = 2, .kind = .claim },
+        },
+    });
+    try corpus.append(.{
+        .run_id = 2,
+        .seed = 2,
+        .trace = .{
+            .sequence = 1,
+            .message = .{ .sender = 1, .recipient = 2, .kind = .query },
+        },
+    });
+
+    const analysis = analyze(&corpus);
+    try std.testing.expectEqual(@as(usize, 0), analysis.unique_kind_transitions);
+}
+
 test "compact canonical representation is no larger than ABI representation" {
-    const corpus = try buildCorpus(300, 4);
+    const corpus = try buildExpandedCorpus(600, 4);
     const analysis = analyze(&corpus);
     try std.testing.expect(analysis.canonical_bytes <= analysis.abi_bytes);
 }
