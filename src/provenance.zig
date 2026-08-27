@@ -158,8 +158,11 @@ fn mix(h_in: u64, byte: anytype) u64 {
 
 fn mix64(h_in: u64, value: u64) u64 {
     var h = h_in;
-    var shift: u6 = 0;
-    while (shift < 64) : (shift += 8) h = mix(h, @as(u8, @truncate(value >> shift)));
+    var byte_index: usize = 0;
+    while (byte_index < 8) : (byte_index += 1) {
+        const shift: u6 = @intCast(byte_index * 8);
+        h = mix(h, @as(u8, @truncate(value >> shift)));
+    }
     return h;
 }
 
