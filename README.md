@@ -82,9 +82,7 @@ See `docs/stage-3e1-llama-cpp.md` for the experimental controls and runbook.
 ## Stage 3F.0 distributed fact convergence
 
 Stage 3F.0 replaces canonical workflow matching with an outcome-scored
-controlled-emergence benchmark. Five model-backed workers start with overlapping
-local facts on a ring and autonomously choose factual protocol interactions
-until Worker 1 reconstructs the global fact set or the round budget is exhausted.
+controlled-emergence benchmark. Five model-backed workers start with overlapping local facts on a ring and autonomously choose factual protocol interactions until Worker 1 reconstructs the global fact set or the round budget is exhausted. Environment rotation and model sampling are separate factors so multiple trajectories can be measured from the same initial state.
 
 Validate and run the five-seed smoke experiment:
 
@@ -93,11 +91,12 @@ python3 tools/stage3f0_llama_cpp.py --self-test
 python3 tools/stage3f0_llama_cpp.py --dry-run
 python3 tools/stage3f0_llama_cpp.py \
   --base-url http://127.0.0.1:8080 \
-  --seeds 5 \
-  --output trials/stage3f0-gemma4-e2b-smoke.tsv
+  --environments 5 \
+  --sampling-seeds 4 \
+  --output trials/stage3f0-gemma4-e2b-v2.tsv
 
 zig run src/stage3f0_summary.zig -- \
-  trials/stage3f0-gemma4-e2b-smoke.tsv
+  trials/stage3f0-gemma4-e2b-v2.tsv
 ```
 
 See `docs/stage-3f0-distributed-fact-convergence.md` for the environment,
