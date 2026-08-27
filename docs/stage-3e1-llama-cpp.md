@@ -70,7 +70,19 @@ The runner uses llama.cpp's OpenAI-compatible:
 POST /v1/chat/completions
 ```
 
-and sends `cache_prompt: false` in both modes.
+and sends identical generation controls in both modes:
+
+```json
+{
+  "cache_prompt": false,
+  "reasoning_effort": "none",
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  }
+}
+```
+
+Reasoning is disabled deliberately so the shared completion-token budget measures visible protocol generation rather than hidden/thinking output. The constrained arm still differs only by the additional `grammar` field.
 
 ## GBNF
 
@@ -151,6 +163,8 @@ The original 24-generation Gemma smoke run was produced with runner version 1, b
 
 Runner version 2 records a prompt-suite SHA-256 in the metadata sidecar. Use a new TSV filename for the rerun; do not append to or resume the original smoke file.
 
+Runner version 3 additionally disables reasoning/thinking in both A/B arms and raises the common output-token budget from 16 to 32. This follows a Gemma 4 E2B smoke run in which every unconstrained trial consumed the full 16-token budget while returning zero visible content bytes. Version 3 isolates visible protocol generation from that reasoning-budget confound.
+
 ## Run the live experiment
 
 Example:
@@ -169,7 +183,7 @@ Defaults:
 - temperature: `0.7`
 - top-p: `0.9`
 - top-k: `40`
-- max output tokens: `16`
+- max output tokens: `32`
 - grammar: `grammars/starlings.gbnf`
 - one generation attempt per trial
 
@@ -231,6 +245,8 @@ containing:
 - generation count;
 - sampler parameters;
 - token budget;
+- reasoning effort;
+- chat-template thinking setting;
 - workflow list;
 - grammar path;
 - grammar SHA-256;
