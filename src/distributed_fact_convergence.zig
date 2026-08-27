@@ -101,8 +101,8 @@ pub fn applyRound(
                     metrics.network_messages += 1;
                     const unseen = action.facts & ~next[recipient];
                     const duplicate = action.facts & next[recipient];
-                    metrics.useful_fact_deliveries += @popCount(unseen);
-                    metrics.duplicate_fact_transmissions += @popCount(duplicate);
+                    metrics.useful_fact_deliveries += @as(usize, @intCast(@popCount(unseen)));
+                    metrics.duplicate_fact_transmissions += @as(usize, @intCast(@popCount(duplicate)));
                     next[recipient] |= action.facts;
                 }
             },
@@ -173,7 +173,7 @@ test "seed rotations preserve overlapping ring facts and global truth" {
         const knowledge = initialKnowledge(seed);
         var union: u8 = 0;
         for (knowledge) |facts| {
-            try std.testing.expectEqual(@as(usize, 2), @popCount(facts));
+            try std.testing.expectEqual(@as(usize, 2), @as(usize, @intCast(@popCount(facts))));
             union |= facts;
         }
         try std.testing.expectEqual(full_mask, union);
