@@ -38,8 +38,8 @@ pub fn main(init: std.process.Init) !void {
     try writeLine(
         io,
         out,
-        "\ndeltas (constrained - typed): first_valid={d} permille, task_success={d} permille\n",
-        .{ result.overall.validityDeltaPermille(), result.overall.taskSuccessDeltaPermille() },
+        "\ndeltas (constrained - typed): first_valid={d} permille, trajectory_match={d} permille\n",
+        .{ result.overall.validityDeltaPermille(), result.overall.trajectoryMatchDeltaPermille() },
     );
 
     const workflow_names = [_][]const u8{
@@ -81,7 +81,7 @@ fn usage(io: std.Io) !void {
 fn writeHeader(io: std.Io, out: std.Io.File) !void {
     try out.writeStreamingAll(
         io,
-        "mode\ttrials\tfirst-valid\ttask-success\tgrammar-rej\tbackend-err\ttokens\tbytes\tavg-latency-us\n",
+        "mode\ttrials\tfirst-valid\ttrajectory-match\tgrammar-rej\tbackend-err\ttokens\tbytes\tavg-latency-us\n",
     );
 }
 
@@ -96,8 +96,8 @@ fn writeMetrics(io: std.Io, out: std.Io.File, name: []const u8, metrics: model_e
             metrics.trials,
             metrics.firstTryValidityPermille() / 10,
             metrics.firstTryValidityPermille() % 10,
-            metrics.taskSuccessPermille() / 10,
-            metrics.taskSuccessPermille() % 10,
+            metrics.trajectoryMatchPermille() / 10,
+            metrics.trajectoryMatchPermille() % 10,
             metrics.grammar_rejections,
             metrics.backend_errors,
             metrics.completion_tokens,
