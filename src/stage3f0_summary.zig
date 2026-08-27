@@ -5,6 +5,8 @@ const model_eval = @import("protocol_model_eval.zig");
 pub const backend_error_sentinel = "__BACKEND_ERROR__";
 pub const max_completion_bytes: usize = 4096;
 const max_runs: usize = 256;
+const max_invalid_examples: usize = 128;
+const max_invalid_completion_bytes: usize = 256;
 const fnv_offset: u64 = 0xcbf29ce484222325;
 const fnv_prime: u64 = 0x100000001b3;
 
@@ -46,37 +48,98 @@ pub const ModeMetrics = struct {
     }
 };
 
+pub const RunKey = struct {
+    environment_seed: u64,
+    sampling_seed: u64,
+};
+
+pub const RunResult = struct {
+    key: RunKey,
+    mode: model_eval.DecodeMode,
+    success: bool,
+    model_calls: usize,
+    protocol_actions: usize,
+    invalid_actions: usize,
+    backend_errors: usize,
+    semantic_violations: usize,
+    rounds: usize,
+    network_messages: usize,
+    useful_fact_deliveries: usize,
+    duplicate_fact_transmissions: usize,
+    completion_tokens: usize,
+    generated_bytes: usize,
+    latency_us: u64,
+    trajectory_hash: u64,
+
+    pub fn protocolValidityPermille(self: RunResult) usize {
+        if (self.model_calls == 0) return 0;
+        return (self.protocol_actions * 1000) / self.model_calls;
+    }
+};
+
+pub const InvalidExample = struct {
+    key: RunKey,
+    mode: model_eval.DecodeMode,
+    round: u32,
+    worker: u8,
+    escaped_completion: [max_invalid_completion_bytes]u8 = [_]u8{0} ** max_invalid_completion_bytes,
+    completion_len: usize = 0,
+};
+
 pub const Summary = struct {
     typed: ModeMetrics = .{},
     constrained: ModeMetrics = .{},
     records: usize = 0,
     malformed_records: usize = 0,
     replay_errors: usize = 0,
-    typed_seeds: [max_runs]u64 = undefined,
-    typed_seed_count: usize = 0,
-    constrained_seeds: [max_runs]u64 = undefined,
-    constrained_seed_count: usize = 0,
-    typed_success_hashes: [max_runs]u64 = undefined,
-    typed_success_hash_count: usize = 0,
-    constrained_success_hashes: [max_runs]u64 = undefined,
-    constrained_success_hash_count: usize = 0,
+    runs: [max_runs]RunResult = undefined,
+    run_count: usize = 0,
+    invalid_examples: [max_invalid_examples]InvalidExample = undefined,
+    invalid_example_count: usize = 0,
 
     pub fn balanced(self: *const Summary) bool {
-        if (self.typed.runs != self.constrained.runs) return false;
-        if (self.typed_seed_count != self.constrained_seed_count) return false;
+        var typed_count: usize = 0;
+        var constrained_count: usize = 0;
 
-        var i: usize = 0;
-        while (i < self.typed_seed_count) : (i += 1) {
-            if (!containsSeed(self.constrained_seeds[0..self.constrained_seed_count], self.typed_seeds[i])) {
-                return false;
+        for (self.runs[0..self.run_count]) |run| {
+            switch (run.mode) {
+                .typed_unconstrained => {
+                    typed_count += 1;
+                    if (findRun(self, run.key, .cfg_constrained) == null) return false;
+                },
+                .cfg_constrained => {
+                    constrained_count += 1;
+                    if (findRun(self, run.key, .typed_unconstrained) == null) return false;
+                },
             }
         }
-        return true;
+
+        return typed_count == constrained_count;
+    }
+
+    fn recordInvalid(self: *Summary, record: RawRecord) void {
+        if (self.invalid_example_count >= max_invalid_examples) return;
+
+        var example = InvalidExample{
+            .key = record.key,
+            .mode = record.mode,
+            .round = record.round,
+            .worker = record.worker,
+        };
+        const copy_len = @min(record.escaped_completion.len, max_invalid_completion_bytes);
+        std.mem.copyForwards(
+            u8,
+            example.escaped_completion[0..copy_len],
+            record.escaped_completion[0..copy_len],
+        );
+        example.completion_len = copy_len;
+        self.invalid_examples[self.invalid_example_count] = example;
+        self.invalid_example_count += 1;
     }
 };
 
 const RawRecord = struct {
-    seed: u64,
+    key: RunKey,
     mode: model_eval.DecodeMode,
     round: u32,
     worker: u8,
@@ -88,7 +151,7 @@ const RawRecord = struct {
 };
 
 const RunAccumulator = struct {
-    seed: u64,
+    key: RunKey,
     mode: model_eval.DecodeMode,
     knowledge: [convergence.worker_count]u8,
     current_round: u32 = 1,
@@ -109,24 +172,35 @@ const RunAccumulator = struct {
     trajectory_hash: u64 = fnv_offset,
     solved: bool = false,
 
-    fn init(seed: u64, mode: model_eval.DecodeMode) RunAccumulator {
+    fn init(key: RunKey, mode: model_eval.DecodeMode) RunAccumulator {
         return .{
-            .seed = seed,
+            .key = key,
             .mode = mode,
-            .knowledge = convergence.initialKnowledge(seed),
+            .knowledge = convergence.initialKnowledge(key.environment_seed),
         };
     }
 
-    fn ingest(self: *RunAccumulator, record: RawRecord, completion: []const u8) !void {
+    fn ingest(
+        self: *RunAccumulator,
+        summary: *Summary,
+        record: RawRecord,
+        completion: []const u8,
+    ) !void {
         if (self.solved) return error.RecordAfterSuccess;
-        if (record.seed != self.seed or record.mode != self.mode) return error.WrongRun;
+        if (!keyEql(record.key, self.key) or record.mode != self.mode) return error.WrongRun;
         if (record.round != self.current_round) return error.UnexpectedRound;
-        if (record.worker == 0 or @as(usize, record.worker) > convergence.worker_count) return error.InvalidWorker;
+        if (record.worker == 0 or @as(usize, record.worker) > convergence.worker_count) {
+            return error.InvalidWorker;
+        }
 
         const worker_index: usize = @intCast(record.worker - 1);
         if (self.seen_workers[worker_index]) return error.DuplicateWorker;
         if (record.knowledge_before != self.knowledge[worker_index]) return error.KnowledgeMismatch;
-        if (record.generation_seed != convergence.generationSeed(record.seed, record.round, record.worker)) {
+        if (record.generation_seed != convergence.generationSeed(
+            record.key.sampling_seed,
+            record.round,
+            record.worker,
+        )) {
             return error.GenerationSeedMismatch;
         }
 
@@ -144,6 +218,7 @@ const RunAccumulator = struct {
             self.generated_bytes += completion.len;
             const action = convergence.parseAction(completion) catch {
                 self.invalid_actions += 1;
+                summary.recordInvalid(record);
                 self.seen_workers[worker_index] = true;
                 try self.finishRoundIfComplete();
                 return;
@@ -179,6 +254,27 @@ const RunAccumulator = struct {
         }
         return self.model_calls != 0;
     }
+
+    fn result(self: *const RunAccumulator) RunResult {
+        return .{
+            .key = self.key,
+            .mode = self.mode,
+            .success = self.solved,
+            .model_calls = self.model_calls,
+            .protocol_actions = self.protocol_actions,
+            .invalid_actions = self.invalid_actions,
+            .backend_errors = self.backend_errors,
+            .semantic_violations = self.semantic_violations,
+            .rounds = self.rounds,
+            .network_messages = self.network_messages,
+            .useful_fact_deliveries = self.useful_fact_deliveries,
+            .duplicate_fact_transmissions = self.duplicate_fact_transmissions,
+            .completion_tokens = self.completion_tokens,
+            .generated_bytes = self.generated_bytes,
+            .latency_us = self.latency_us,
+            .trajectory_hash = self.trajectory_hash,
+        };
+    }
 };
 
 pub fn summarizeTsv(tsv: []const u8) Summary {
@@ -203,18 +299,18 @@ pub fn summarizeTsv(tsv: []const u8) Summary {
         };
 
         if (active == null) {
-            active = RunAccumulator.init(record.seed, record.mode);
-        } else if (active.?.seed != record.seed or active.?.mode != record.mode) {
+            active = RunAccumulator.init(record.key, record.mode);
+        } else if (!keyEql(active.?.key, record.key) or active.?.mode != record.mode) {
             if (active) |*run| {
                 finishRun(&summary, run) catch {
                     summary.replay_errors += 1;
                 };
             }
-            active = RunAccumulator.init(record.seed, record.mode);
+            active = RunAccumulator.init(record.key, record.mode);
         }
 
         if (active) |*run| {
-            run.ingest(record, completion) catch {
+            run.ingest(&summary, record, completion) catch {
                 summary.replay_errors += 1;
             };
         }
@@ -226,59 +322,38 @@ pub fn summarizeTsv(tsv: []const u8) Summary {
         };
     }
 
+    summary.typed.unique_successful_trajectories =
+        countUniqueSuccessfulTrajectories(&summary, .typed_unconstrained, null);
+    summary.constrained.unique_successful_trajectories =
+        countUniqueSuccessfulTrajectories(&summary, .cfg_constrained, null);
+
     return summary;
 }
 
 fn finishRun(summary: *Summary, run: *RunAccumulator) !void {
     if (!run.complete()) return error.IncompleteRun;
+    if (summary.run_count >= max_runs) return error.TooManyRuns;
+    if (findRun(summary, run.key, run.mode) != null) return error.DuplicateRun;
+
+    const run_result = run.result();
+    summary.runs[summary.run_count] = run_result;
+    summary.run_count += 1;
 
     const metrics = metricsForMode(summary, run.mode);
-    const seed_store = seedStoreForMode(summary, run.mode);
-    if (containsSeed(seed_store.slice, run.seed)) return error.DuplicateRunSeed;
-    if (seed_store.len.* >= max_runs) return error.TooManyRuns;
-    seed_store.storage[seed_store.len.*] = run.seed;
-    seed_store.len.* += 1;
-
     metrics.runs += 1;
-    if (run.solved) metrics.successes += 1;
-    metrics.model_calls += run.model_calls;
-    metrics.protocol_actions += run.protocol_actions;
-    metrics.invalid_actions += run.invalid_actions;
-    metrics.backend_errors += run.backend_errors;
-    metrics.semantic_violations += run.semantic_violations;
-    metrics.rounds += run.rounds;
-    metrics.network_messages += run.network_messages;
-    metrics.useful_fact_deliveries += run.useful_fact_deliveries;
-    metrics.duplicate_fact_transmissions += run.duplicate_fact_transmissions;
-    metrics.completion_tokens += run.completion_tokens;
-    metrics.generated_bytes += run.generated_bytes;
-    metrics.latency_us +%= run.latency_us;
-
-    if (run.solved) {
-        try recordSuccessfulTrajectory(summary, run.mode, run.trajectory_hash);
-        metrics.unique_successful_trajectories = successHashCount(summary, run.mode);
-    }
-}
-
-const SeedStore = struct {
-    storage: *[max_runs]u64,
-    len: *usize,
-    slice: []const u64,
-};
-
-fn seedStoreForMode(summary: *Summary, mode: model_eval.DecodeMode) SeedStore {
-    return switch (mode) {
-        .typed_unconstrained => .{
-            .storage = &summary.typed_seeds,
-            .len = &summary.typed_seed_count,
-            .slice = summary.typed_seeds[0..summary.typed_seed_count],
-        },
-        .cfg_constrained => .{
-            .storage = &summary.constrained_seeds,
-            .len = &summary.constrained_seed_count,
-            .slice = summary.constrained_seeds[0..summary.constrained_seed_count],
-        },
-    };
+    if (run_result.success) metrics.successes += 1;
+    metrics.model_calls += run_result.model_calls;
+    metrics.protocol_actions += run_result.protocol_actions;
+    metrics.invalid_actions += run_result.invalid_actions;
+    metrics.backend_errors += run_result.backend_errors;
+    metrics.semantic_violations += run_result.semantic_violations;
+    metrics.rounds += run_result.rounds;
+    metrics.network_messages += run_result.network_messages;
+    metrics.useful_fact_deliveries += run_result.useful_fact_deliveries;
+    metrics.duplicate_fact_transmissions += run_result.duplicate_fact_transmissions;
+    metrics.completion_tokens += run_result.completion_tokens;
+    metrics.generated_bytes += run_result.generated_bytes;
+    metrics.latency_us +%= run_result.latency_us;
 }
 
 fn metricsForMode(summary: *Summary, mode: model_eval.DecodeMode) *ModeMetrics {
@@ -288,46 +363,69 @@ fn metricsForMode(summary: *Summary, mode: model_eval.DecodeMode) *ModeMetrics {
     };
 }
 
-fn recordSuccessfulTrajectory(summary: *Summary, mode: model_eval.DecodeMode, hash: u64) !void {
-    switch (mode) {
-        .typed_unconstrained => {
-            if (containsHash(summary.typed_success_hashes[0..summary.typed_success_hash_count], hash)) return;
-            if (summary.typed_success_hash_count >= max_runs) return error.TooManyRuns;
-            summary.typed_success_hashes[summary.typed_success_hash_count] = hash;
-            summary.typed_success_hash_count += 1;
-        },
-        .cfg_constrained => {
-            if (containsHash(summary.constrained_success_hashes[0..summary.constrained_success_hash_count], hash)) return;
-            if (summary.constrained_success_hash_count >= max_runs) return error.TooManyRuns;
-            summary.constrained_success_hashes[summary.constrained_success_hash_count] = hash;
-            summary.constrained_success_hash_count += 1;
-        },
+fn findRun(
+    summary: *const Summary,
+    key: RunKey,
+    mode: model_eval.DecodeMode,
+) ?*const RunResult {
+    for (summary.runs[0..summary.run_count]) |*run| {
+        if (run.mode == mode and keyEql(run.key, key)) return run;
     }
+    return null;
 }
 
-fn successHashCount(summary: *const Summary, mode: model_eval.DecodeMode) usize {
-    return switch (mode) {
-        .typed_unconstrained => summary.typed_success_hash_count,
-        .cfg_constrained => summary.constrained_success_hash_count,
-    };
+fn keyEql(a: RunKey, b: RunKey) bool {
+    return a.environment_seed == b.environment_seed and
+        a.sampling_seed == b.sampling_seed;
 }
 
-fn containsSeed(seeds: []const u64, seed: u64) bool {
-    for (seeds) |candidate| {
-        if (candidate == seed) return true;
+fn countUniqueSuccessfulTrajectories(
+    summary: *const Summary,
+    mode: model_eval.DecodeMode,
+    environment_seed: ?u64,
+) usize {
+    var hashes: [max_runs]u64 = undefined;
+    var count: usize = 0;
+
+    for (summary.runs[0..summary.run_count]) |run| {
+        if (run.mode != mode or !run.success) continue;
+        if (environment_seed != null and run.key.environment_seed != environment_seed.?) continue;
+
+        var seen = false;
+        for (hashes[0..count]) |hash| {
+            if (hash == run.trajectory_hash) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen) {
+            hashes[count] = run.trajectory_hash;
+            count += 1;
+        }
     }
-    return false;
+
+    return count;
 }
 
-fn containsHash(hashes: []const u64, hash: u64) bool {
-    for (hashes) |candidate| {
-        if (candidate == hash) return true;
+fn countSuccessfulRuns(
+    summary: *const Summary,
+    mode: model_eval.DecodeMode,
+    environment_seed: u64,
+) usize {
+    var count: usize = 0;
+    for (summary.runs[0..summary.run_count]) |run| {
+        if (run.mode == mode and
+            run.success and
+            run.key.environment_seed == environment_seed)
+        {
+            count += 1;
+        }
     }
-    return false;
+    return count;
 }
 
 fn parseRawLine(line: []const u8) !RawRecord {
-    var fields: [9][]const u8 = undefined;
+    var fields: [10][]const u8 = undefined;
     var count: usize = 0;
     var iterator = std.mem.splitScalar(u8, line, '\t');
 
@@ -337,20 +435,23 @@ fn parseRawLine(line: []const u8) !RawRecord {
         count += 1;
     }
     if (count != fields.len) return error.InvalidRecord;
-    for (fields[0..8]) |field| {
+    for (fields[0..9]) |field| {
         if (field.len == 0) return error.InvalidRecord;
     }
 
     return .{
-        .seed = try std.fmt.parseInt(u64, fields[0], 10),
-        .mode = try parseMode(fields[1]),
-        .round = try std.fmt.parseInt(u32, fields[2], 10),
-        .worker = try std.fmt.parseInt(u8, fields[3], 10),
-        .knowledge_before = try std.fmt.parseInt(u8, fields[4], 10),
-        .generation_seed = try std.fmt.parseInt(u32, fields[5], 10),
-        .completion_tokens = try std.fmt.parseInt(usize, fields[6], 10),
-        .latency_us = try std.fmt.parseInt(u64, fields[7], 10),
-        .escaped_completion = fields[8],
+        .key = .{
+            .environment_seed = try std.fmt.parseInt(u64, fields[0], 10),
+            .sampling_seed = try std.fmt.parseInt(u64, fields[1], 10),
+        },
+        .mode = try parseMode(fields[2]),
+        .round = try std.fmt.parseInt(u32, fields[3], 10),
+        .worker = try std.fmt.parseInt(u8, fields[4], 10),
+        .knowledge_before = try std.fmt.parseInt(u8, fields[5], 10),
+        .generation_seed = try std.fmt.parseInt(u32, fields[6], 10),
+        .completion_tokens = try std.fmt.parseInt(usize, fields[7], 10),
+        .latency_us = try std.fmt.parseInt(u64, fields[8], 10),
+        .escaped_completion = fields[9],
     };
 }
 
@@ -358,6 +459,13 @@ fn parseMode(text: []const u8) !model_eval.DecodeMode {
     if (std.mem.eql(u8, text, "typed_unconstrained")) return .typed_unconstrained;
     if (std.mem.eql(u8, text, "cfg_constrained")) return .cfg_constrained;
     return error.UnknownMode;
+}
+
+fn modeName(mode: model_eval.DecodeMode) []const u8 {
+    return switch (mode) {
+        .typed_unconstrained => "typed_unconstrained",
+        .cfg_constrained => "cfg_constrained",
+    };
 }
 
 fn unescapeCompletion(input: []const u8, out: *[max_completion_bytes]u8) ![]const u8 {
@@ -420,8 +528,9 @@ pub fn main(init: std.process.Init) !void {
     const result = summarizeTsv(tsv);
     const out = std.Io.File.stdout();
 
-    try writeLine(io, out, "Stage 3F.0 Distributed Fact Convergence\n", .{});
+    try writeLine(io, out, "Stage 3F.0 Distributed Fact Convergence v2\n", .{});
     try writeLine(io, out, "records: {d}\n", .{result.records});
+    try writeLine(io, out, "population_runs: {d}\n", .{result.run_count});
     try writeLine(io, out, "malformed_records: {d}\n", .{result.malformed_records});
     try writeLine(io, out, "replay_errors: {d}\n", .{result.replay_errors});
     try writeLine(io, out, "balanced_runs: {s}\n\n", .{if (result.balanced()) "yes" else "no"});
@@ -447,6 +556,10 @@ pub fn main(init: std.process.Init) !void {
         .{ success_delta, validity_delta, message_delta },
     );
 
+    try writePairs(io, out, &result);
+    try writeEnvironmentDiversity(io, out, &result);
+    try writeInvalidExamples(io, out, &result);
+
     if (result.malformed_records != 0 or result.replay_errors != 0 or !result.balanced()) {
         try writeLine(
             io,
@@ -461,7 +574,7 @@ pub fn main(init: std.process.Init) !void {
 fn usage(io: std.Io) !void {
     try std.Io.File.stderr().writeStreamingAll(
         io,
-        "usage: zig run src/stage3f0_summary.zig -- <trials.tsv>\n",
+        "usage: zig run src/stage3f0_summary.zig -- <trials-v2.tsv>\n",
     );
 }
 
@@ -506,72 +619,208 @@ fn writeMetrics(io: std.Io, out: std.Io.File, name: []const u8, metrics: ModeMet
     );
 }
 
+fn writePairs(io: std.Io, out: std.Io.File, summary: *const Summary) !void {
+    try out.writeStreamingAll(
+        io,
+        "\npaired runs\nenv\tsampling\ttyped-success\tcfg-success\ttyped-rounds\tcfg-rounds\ttyped-valid\tcfg-valid\ttyped-msg\tcfg-msg\ttyped-tokens\tcfg-tokens\ttyped-bytes\tcfg-bytes\n",
+    );
+
+    for (summary.runs[0..summary.run_count]) |typed| {
+        if (typed.mode != .typed_unconstrained) continue;
+        const constrained = findRun(summary, typed.key, .cfg_constrained) orelse continue;
+
+        try writeLine(
+            io,
+            out,
+            "{d}\t{d}\t{s}\t{s}\t{d}\t{d}\t{d}.{d}%\t{d}.{d}%\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\n",
+            .{
+                typed.key.environment_seed,
+                typed.key.sampling_seed,
+                if (typed.success) "yes" else "no",
+                if (constrained.success) "yes" else "no",
+                typed.rounds,
+                constrained.rounds,
+                typed.protocolValidityPermille() / 10,
+                typed.protocolValidityPermille() % 10,
+                constrained.protocolValidityPermille() / 10,
+                constrained.protocolValidityPermille() % 10,
+                typed.network_messages,
+                constrained.network_messages,
+                typed.completion_tokens,
+                constrained.completion_tokens,
+                typed.generated_bytes,
+                constrained.generated_bytes,
+            },
+        );
+    }
+}
+
+fn writeEnvironmentDiversity(io: std.Io, out: std.Io.File, summary: *const Summary) !void {
+    try out.writeStreamingAll(
+        io,
+        "\ntrajectory diversity by environment\nenv\ttyped-success-runs\ttyped-unique\tcfg-success-runs\tcfg-unique\n",
+    );
+
+    var seen_environments: [max_runs]u64 = undefined;
+    var seen_count: usize = 0;
+
+    for (summary.runs[0..summary.run_count]) |run| {
+        var already_seen = false;
+        for (seen_environments[0..seen_count]) |environment_seed| {
+            if (environment_seed == run.key.environment_seed) {
+                already_seen = true;
+                break;
+            }
+        }
+        if (already_seen) continue;
+
+        seen_environments[seen_count] = run.key.environment_seed;
+        seen_count += 1;
+
+        try writeLine(
+            io,
+            out,
+            "{d}\t{d}\t{d}\t{d}\t{d}\n",
+            .{
+                run.key.environment_seed,
+                countSuccessfulRuns(summary, .typed_unconstrained, run.key.environment_seed),
+                countUniqueSuccessfulTrajectories(summary, .typed_unconstrained, run.key.environment_seed),
+                countSuccessfulRuns(summary, .cfg_constrained, run.key.environment_seed),
+                countUniqueSuccessfulTrajectories(summary, .cfg_constrained, run.key.environment_seed),
+            },
+        );
+    }
+}
+
+fn writeInvalidExamples(io: std.Io, out: std.Io.File, summary: *const Summary) !void {
+    try writeLine(
+        io,
+        out,
+        "\ninvalid completion examples: {d}\n",
+        .{summary.invalid_example_count},
+    );
+    if (summary.invalid_example_count == 0) return;
+
+    try out.writeStreamingAll(
+        io,
+        "env\tsampling\tmode\tround\tworker\tcompletion\n",
+    );
+
+    for (summary.invalid_examples[0..summary.invalid_example_count]) |example| {
+        const completion = if (example.completion_len == 0)
+            "<empty>"
+        else
+            example.escaped_completion[0..example.completion_len];
+
+        try writeLine(
+            io,
+            out,
+            "{d}\t{d}\t{s}\t{d}\t{d}\t{s}\n",
+            .{
+                example.key.environment_seed,
+                example.key.sampling_seed,
+                modeName(example.mode),
+                example.round,
+                example.worker,
+                completion,
+            },
+        );
+    }
+}
+
 fn writeLine(io: std.Io, out: std.Io.File, comptime format: []const u8, args: anytype) !void {
-    var buffer: [2048]u8 = undefined;
+    var buffer: [4096]u8 = undefined;
     const line = try std.fmt.bufPrint(&buffer, format, args);
     try out.writeStreamingAll(io, line);
 }
 
-test "summary replays two distinct successful controlled-emergence trajectories" {
+test "summary pairs environment and sampling seeds and measures same-state diversity" {
     const tsv =
-        "0\ttyped_unconstrained\t1\t1\t3\t102\t2\t100\tCLAIM A,B\n" ++
-        "0\ttyped_unconstrained\t1\t2\t6\t103\t2\t100\tCLAIM B,C\n" ++
-        "0\ttyped_unconstrained\t1\t3\t12\t104\t2\t100\tCLAIM C,D\n" ++
-        "0\ttyped_unconstrained\t1\t4\t24\t105\t2\t100\tCLAIM D,E\n" ++
-        "0\ttyped_unconstrained\t1\t5\t17\t106\t2\t100\tCLAIM A,E\n" ++
-        "0\ttyped_unconstrained\t2\t1\t23\t203\t3\t100\tQUERY EVIDENCE D\n" ++
-        "0\ttyped_unconstrained\t2\t2\t15\t204\t2\t100\tCLAIM D\n" ++
-        "0\ttyped_unconstrained\t2\t3\t30\t205\t2\t100\tCLAIM C\n" ++
-        "0\ttyped_unconstrained\t2\t4\t29\t206\t2\t100\tCLAIM D\n" ++
-        "0\ttyped_unconstrained\t2\t5\t27\t207\t2\t100\tCLAIM E\n" ++
-        "0\tcfg_constrained\t1\t1\t3\t102\t2\t100\tCLAIM A,B\n" ++
-        "0\tcfg_constrained\t1\t2\t6\t103\t2\t100\tCLAIM B,C\n" ++
-        "0\tcfg_constrained\t1\t3\t12\t104\t2\t100\tCLAIM C,D\n" ++
-        "0\tcfg_constrained\t1\t4\t24\t105\t2\t100\tCLAIM D,E\n" ++
-        "0\tcfg_constrained\t1\t5\t17\t106\t2\t100\tCLAIM A,E\n" ++
-        "0\tcfg_constrained\t2\t1\t23\t203\t2\t100\tCLAIM A,B,C,E\n" ++
-        "0\tcfg_constrained\t2\t2\t15\t204\t2\t100\tCLAIM D\n" ++
-        "0\tcfg_constrained\t2\t3\t30\t205\t2\t100\tCLAIM C\n" ++
-        "0\tcfg_constrained\t2\t4\t29\t206\t2\t100\tCLAIM D\n" ++
-        "0\tcfg_constrained\t2\t5\t27\t207\t2\t100\tCLAIM E\n";
+        "0\t0\ttyped_unconstrained\t1\t1\t3\t102\t2\t100\tCLAIM A,B\n" ++
+        "0\t0\ttyped_unconstrained\t1\t2\t6\t103\t2\t100\tCLAIM B,C\n" ++
+        "0\t0\ttyped_unconstrained\t1\t3\t12\t104\t2\t100\tCLAIM C,D\n" ++
+        "0\t0\ttyped_unconstrained\t1\t4\t24\t105\t2\t100\tCLAIM D,E\n" ++
+        "0\t0\ttyped_unconstrained\t1\t5\t17\t106\t2\t100\tCLAIM A,E\n" ++
+        "0\t0\ttyped_unconstrained\t2\t1\t23\t203\t3\t100\tQUERY EVIDENCE D\n" ++
+        "0\t0\ttyped_unconstrained\t2\t2\t15\t204\t2\t100\tCLAIM D\n" ++
+        "0\t0\ttyped_unconstrained\t2\t3\t30\t205\t2\t100\tCLAIM C\n" ++
+        "0\t0\ttyped_unconstrained\t2\t4\t29\t206\t2\t100\tCLAIM D\n" ++
+        "0\t0\ttyped_unconstrained\t2\t5\t27\t207\t2\t100\tCLAIM E\n" ++
+        "0\t0\tcfg_constrained\t1\t1\t3\t102\t2\t100\tCLAIM A,B\n" ++
+        "0\t0\tcfg_constrained\t1\t2\t6\t103\t2\t100\tCLAIM B,C\n" ++
+        "0\t0\tcfg_constrained\t1\t3\t12\t104\t2\t100\tCLAIM C,D\n" ++
+        "0\t0\tcfg_constrained\t1\t4\t24\t105\t2\t100\tCLAIM D,E\n" ++
+        "0\t0\tcfg_constrained\t1\t5\t17\t106\t2\t100\tCLAIM A,E\n" ++
+        "0\t0\tcfg_constrained\t2\t1\t23\t203\t2\t100\tCLAIM A,B,C,E\n" ++
+        "0\t0\tcfg_constrained\t2\t2\t15\t204\t2\t100\tCLAIM D\n" ++
+        "0\t0\tcfg_constrained\t2\t3\t30\t205\t2\t100\tCLAIM C\n" ++
+        "0\t0\tcfg_constrained\t2\t4\t29\t206\t2\t100\tCLAIM D\n" ++
+        "0\t0\tcfg_constrained\t2\t5\t27\t207\t2\t100\tCLAIM E\n";
 
     const result = summarizeTsv(tsv);
     try std.testing.expectEqual(@as(usize, 20), result.records);
+    try std.testing.expectEqual(@as(usize, 2), result.run_count);
     try std.testing.expectEqual(@as(usize, 0), result.malformed_records);
     try std.testing.expectEqual(@as(usize, 0), result.replay_errors);
     try std.testing.expect(result.balanced());
     try std.testing.expectEqual(@as(usize, 1), result.typed.successes);
     try std.testing.expectEqual(@as(usize, 1), result.constrained.successes);
-    try std.testing.expectEqual(@as(usize, 10), result.typed.protocol_actions);
-    try std.testing.expectEqual(@as(usize, 10), result.constrained.protocol_actions);
-    try std.testing.expectEqual(@as(usize, 22), result.typed.network_messages);
-    try std.testing.expectEqual(@as(usize, 20), result.constrained.network_messages);
-    try std.testing.expectEqual(@as(usize, 1), result.typed.unique_successful_trajectories);
-    try std.testing.expectEqual(@as(usize, 1), result.constrained.unique_successful_trajectories);
+    try std.testing.expectEqual(@as(usize, 1), countUniqueSuccessfulTrajectories(
+        &result,
+        .typed_unconstrained,
+        0,
+    ));
 }
 
-test "replay rejects a record whose prompt knowledge does not match deterministic state" {
-    var run = RunAccumulator.init(0, .typed_unconstrained);
+test "sampling seed is independently verified during replay" {
+    var summary = Summary{};
+    var run = RunAccumulator.init(.{
+        .environment_seed = 0,
+        .sampling_seed = 7,
+    }, .typed_unconstrained);
     const record = RawRecord{
-        .seed = 0,
+        .key = .{ .environment_seed = 0, .sampling_seed = 7 },
         .mode = .typed_unconstrained,
         .round = 1,
         .worker = 1,
-        .knowledge_before = 31,
-        .generation_seed = convergence.generationSeed(0, 1, 1),
+        .knowledge_before = 3,
+        .generation_seed = convergence.generationSeed(8, 1, 1),
         .completion_tokens = 2,
         .latency_us = 100,
         .escaped_completion = "CLAIM A",
     };
 
     try std.testing.expectError(
-        error.KnowledgeMismatch,
-        run.ingest(record, "CLAIM A"),
+        error.GenerationSeedMismatch,
+        run.ingest(&summary, record, "CLAIM A"),
     );
 }
 
-test "empty completion is a protocol-invalid model action, not malformed data" {
-    const line = "0\ttyped_unconstrained\t1\t1\t3\t102\t0\t100\t";
+test "invalid completion is retained for diagnostics" {
+    var summary = Summary{};
+    var run = RunAccumulator.init(.{
+        .environment_seed = 0,
+        .sampling_seed = 0,
+    }, .typed_unconstrained);
+    const record = RawRecord{
+        .key = .{ .environment_seed = 0, .sampling_seed = 0 },
+        .mode = .typed_unconstrained,
+        .round = 1,
+        .worker = 1,
+        .knowledge_before = 3,
+        .generation_seed = convergence.generationSeed(0, 1, 1),
+        .completion_tokens = 3,
+        .latency_us = 100,
+        .escaped_completion = "I think CLAIM A",
+    };
+
+    try run.ingest(&summary, record, "I think CLAIM A");
+    try std.testing.expectEqual(@as(usize, 1), run.invalid_actions);
+    try std.testing.expectEqual(@as(usize, 1), summary.invalid_example_count);
+}
+
+test "empty completion remains a protocol-invalid record, not malformed TSV" {
+    const line = "0\t0\ttyped_unconstrained\t1\t1\t3\t102\t0\t100\t";
     const record = try parseRawLine(line);
     try std.testing.expectEqual(@as(usize, 0), record.escaped_completion.len);
 }
