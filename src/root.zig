@@ -15,6 +15,8 @@ pub const protocol_cfg = @import("protocol_cfg.zig");
 pub const protocol_cfg_stress = @import("protocol_cfg_stress.zig");
 pub const protocol_model_eval = @import("protocol_model_eval.zig");
 pub const protocol_model_record = @import("protocol_model_record.zig");
+pub const protocol_model_summary = @import("protocol_model_summary.zig");
+pub const stage3e1_summary = @import("stage3e1_summary.zig");
 
 test {
     _ = content_id;
@@ -28,6 +30,8 @@ test {
     _ = protocol_cfg_stress;
     _ = protocol_model_eval;
     _ = protocol_model_record;
+    _ = protocol_model_summary;
+    _ = stage3e1_summary;
 }
 
 test "messages route deterministically and update operator state" {

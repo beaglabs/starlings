@@ -1,0 +1,10 @@
+root ::= session
+session ::= interaction (" " interaction)*
+interaction ::= claim-batch | observe-claim | query-evidence | propose-decision | challenge-retract | delegation
+claim-batch ::= "CLAIM" (" CLAIM")*
+observe-claim ::= "OBSERVE CLAIM"
+query-evidence ::= "QUERY EVIDENCE"
+propose-decision ::= "PROPOSE " decision
+decision ::= "ACCEPT" | "REJECT"
+challenge-retract ::= "CHALLENGE RETRACT"
+delegation ::= "DELEGATE QUERY EVIDENCE EVIDENCE"
