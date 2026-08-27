@@ -121,9 +121,9 @@ const RunAccumulator = struct {
         if (self.solved) return error.RecordAfterSuccess;
         if (record.seed != self.seed or record.mode != self.mode) return error.WrongRun;
         if (record.round != self.current_round) return error.UnexpectedRound;
-        if (record.worker == 0 or record.worker > convergence.worker_count) return error.InvalidWorker;
+        if (record.worker == 0 or @as(usize, record.worker) > convergence.worker_count) return error.InvalidWorker;
 
-        const worker_index: usize = record.worker - 1;
+        const worker_index: usize = @intCast(record.worker - 1);
         if (self.seen_workers[worker_index]) return error.DuplicateWorker;
         if (record.knowledge_before != self.knowledge[worker_index]) return error.KnowledgeMismatch;
         if (record.generation_seed != convergence.generationSeed(record.seed, record.round, record.worker)) {
@@ -205,15 +205,19 @@ pub fn summarizeTsv(tsv: []const u8) Summary {
         if (active == null) {
             active = RunAccumulator.init(record.seed, record.mode);
         } else if (active.?.seed != record.seed or active.?.mode != record.mode) {
-            finishRun(&summary, &active.?) catch {
-                summary.replay_errors += 1;
-            };
+            if (active) |*run| {
+                finishRun(&summary, run) catch {
+                    summary.replay_errors += 1;
+                };
+            }
             active = RunAccumulator.init(record.seed, record.mode);
         }
 
-        active.?.ingest(record, completion) catch {
-            summary.replay_errors += 1;
-        };
+        if (active) |*run| {
+            run.ingest(record, completion) catch {
+                summary.replay_errors += 1;
+            };
+        }
     }
 
     if (active) |*run| {
