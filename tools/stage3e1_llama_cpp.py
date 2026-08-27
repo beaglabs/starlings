@@ -183,6 +183,35 @@ def write_record(
     handle.flush()
 
 
+def write_metadata(
+    *,
+    output_path: pathlib.Path,
+    model: str,
+    grammar: str,
+    args: argparse.Namespace,
+) -> None:
+    metadata = {
+        "stage": "3E.1",
+        "runner_version": RUNNER_VERSION,
+        "model": model,
+        "base_url": args.base_url,
+        "first_seed": args.first_seed,
+        "seeds": args.seeds,
+        "workflows": [name for name, _ in WORKFLOWS],
+        "base_generations": args.seeds * len(WORKFLOWS) * 2,
+        "temperature": args.temperature,
+        "top_p": args.top_p,
+        "top_k": args.top_k,
+        "max_tokens": args.max_tokens,
+        "cache_prompt": False,
+        "grammar_sha256": hashlib.sha256(grammar.encode("utf-8")).hexdigest(),
+        "grammar_path": args.grammar,
+        "endpoint": "/v1/chat/completions",
+    }
+    meta_path = pathlib.Path(str(output_path) + ".meta.json")
+    meta_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def self_test() -> None:
     grammar = 'root ::= "QUERY EVIDENCE"'
     typed = build_payload(
@@ -261,6 +290,7 @@ def main() -> int:
         return 0
 
     model = args.model or discover_model(args.base_url, args.api_key, args.timeout)
+    write_metadata(output_path=output_path, model=model, grammar=grammar, args=args)
     completed = load_completed(output_path) if args.resume else set()
     file_mode = "a" if args.resume else "w"
 
