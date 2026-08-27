@@ -110,8 +110,8 @@ fn applyRecord(
 
     metrics.first_try_valid += 1;
     metrics.eventually_valid += 1;
-    if (protocol_model_eval.taskMatches(record.workflow, sample.kinds[0..sample.len])) {
-        metrics.task_successes += 1;
+    if (protocol_model_eval.trajectoryMatches(record.workflow, sample.kinds[0..sample.len])) {
+        metrics.trajectory_matches += 1;
     }
 }
 
@@ -279,7 +279,7 @@ test "raw summary counts invalid prose instead of dropping it" {
     try std.testing.expectEqual(@as(usize, 1), summary.overall.typed.grammar_rejections);
     try std.testing.expectEqual(@as(usize, 0), summary.overall.typed.first_try_valid);
     try std.testing.expectEqual(@as(usize, 1), summary.overall.constrained.first_try_valid);
-    try std.testing.expectEqual(@as(usize, 1), summary.overall.constrained.task_successes);
+    try std.testing.expectEqual(@as(usize, 1), summary.overall.constrained.trajectory_matches);
 }
 
 test "raw summary preserves escaped whitespace and backend failures" {
@@ -289,7 +289,7 @@ test "raw summary preserves escaped whitespace and backend failures" {
 
     const summary = summarizeTsv(tsv);
     try std.testing.expectEqual(@as(usize, 1), summary.overall.typed.first_try_valid);
-    try std.testing.expectEqual(@as(usize, 1), summary.overall.typed.task_successes);
+    try std.testing.expectEqual(@as(usize, 1), summary.overall.typed.trajectory_matches);
     try std.testing.expectEqual(@as(usize, 1), summary.overall.constrained.backend_errors);
 }
 
@@ -300,8 +300,8 @@ test "raw summary separates grammar validity from workflow correctness" {
 
     const summary = summarizeTsv(tsv);
     try std.testing.expectEqual(@as(usize, 1), summary.overall.typed.first_try_valid);
-    try std.testing.expectEqual(@as(usize, 0), summary.overall.typed.task_successes);
-    try std.testing.expectEqual(@as(usize, 1), summary.overall.constrained.task_successes);
+    try std.testing.expectEqual(@as(usize, 0), summary.overall.typed.trajectory_matches);
+    try std.testing.expectEqual(@as(usize, 1), summary.overall.constrained.trajectory_matches);
     try std.testing.expect(summary.balanced());
 }
 

@@ -96,7 +96,7 @@ pub const ModeMetrics = struct {
     attempts: usize = 0,
     first_try_valid: usize = 0,
     eventually_valid: usize = 0,
-    task_successes: usize = 0,
+    trajectory_matches: usize = 0,
     grammar_rejections: usize = 0,
     backend_errors: usize = 0,
     generated_bytes: usize = 0,
@@ -113,9 +113,9 @@ pub const ModeMetrics = struct {
         return (self.eventually_valid * 1000) / self.trials;
     }
 
-    pub fn taskSuccessPermille(self: ModeMetrics) usize {
+    pub fn trajectoryMatchPermille(self: ModeMetrics) usize {
         if (self.trials == 0) return 0;
-        return (self.task_successes * 1000) / self.trials;
+        return (self.trajectory_matches * 1000) / self.trials;
     }
 
     pub fn averageAttemptsPermille(self: ModeMetrics) usize {
@@ -133,9 +133,9 @@ pub const Experiment = struct {
             @as(i64, @intCast(self.typed.firstTryValidityPermille()));
     }
 
-    pub fn taskSuccessDeltaPermille(self: Experiment) i64 {
-        return @as(i64, @intCast(self.constrained.taskSuccessPermille())) -
-            @as(i64, @intCast(self.typed.taskSuccessPermille()));
+    pub fn trajectoryMatchDeltaPermille(self: Experiment) i64 {
+        return @as(i64, @intCast(self.constrained.trajectoryMatchPermille())) -
+            @as(i64, @intCast(self.typed.trajectoryMatchPermille()));
     }
 
     pub fn attemptsDeltaPermille(self: Experiment) i64 {
@@ -212,8 +212,8 @@ fn runTrial(
 
         if (attempt == 0) metrics.first_try_valid += 1;
         metrics.eventually_valid += 1;
-        if (taskMatches(workflow, sample.kinds[0..sample.len])) {
-            metrics.task_successes += 1;
+        if (trajectoryMatches(workflow, sample.kinds[0..sample.len])) {
+            metrics.trajectory_matches += 1;
         }
         return;
     }
@@ -226,7 +226,7 @@ fn metricsForMode(result: *Experiment, mode: DecodeMode) *ModeMetrics {
     };
 }
 
-pub fn taskMatches(workflow: protocol_workflow.Workflow, kinds: []const message.Kind) bool {
+pub fn trajectoryMatches(workflow: protocol_workflow.Workflow, kinds: []const message.Kind) bool {
     return std.mem.eql(message.Kind, kinds, expectedKinds(workflow));
 }
 
@@ -404,19 +404,19 @@ test "same-task A/B evaluator measures validity and retry advantage from constra
     try std.testing.expect(result.constrained.first_try_valid > result.typed.first_try_valid);
     try std.testing.expectEqual(result.typed.trials, result.typed.eventually_valid);
     try std.testing.expectEqual(result.constrained.trials, result.constrained.eventually_valid);
-    try std.testing.expectEqual(result.typed.trials, result.typed.task_successes);
-    try std.testing.expectEqual(result.constrained.trials, result.constrained.task_successes);
+    try std.testing.expectEqual(result.typed.trials, result.typed.trajectory_matches);
+    try std.testing.expectEqual(result.constrained.trials, result.constrained.trajectory_matches);
     try std.testing.expect(result.validityDeltaPermille() > 0);
     try std.testing.expect(result.attemptsDeltaPermille() > 0);
 }
 
-test "structurally valid wrong workflow is not counted as task success" {
+test "structurally valid wrong workflow is not counted as trajectory match" {
     const backend = Backend{ .generate = wrongButValidFixtureGenerate };
     const result = try runExperiment(backend, .{ .first_seed = 1, .seeds = 1, .max_attempts = 1 });
 
     try std.testing.expectEqual(result.typed.trials, result.typed.eventually_valid);
-    try std.testing.expect(result.typed.task_successes < result.typed.eventually_valid);
-    try std.testing.expect(result.constrained.task_successes < result.constrained.eventually_valid);
+    try std.testing.expect(result.typed.trajectory_matches < result.typed.eventually_valid);
+    try std.testing.expect(result.constrained.trajectory_matches < result.constrained.eventually_valid);
 }
 
 test "recorded backend replays exact model trials deterministically" {

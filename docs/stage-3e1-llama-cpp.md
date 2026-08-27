@@ -105,7 +105,7 @@ delegation ::= "DELEGATE QUERY EVIDENCE EVIDENCE"
 
 HTTP/provider transport is not part of the Starlings mathematical core.
 
-The runner uses only Python's standard library. It performs requests and records raw completions; it does not decide whether a completion is valid or semantically correct.
+The runner uses only Python's standard library. It performs requests and records raw completions; it does not decide whether a completion is valid or whether it follows the benchmark's canonical trajectory.
 
 Those decisions remain in Zig.
 
@@ -278,7 +278,7 @@ It reports overall and per-workflow metrics for:
 
 - trials;
 - first-try protocol validity;
-- workflow task success;
+- canonical trajectory match;
 - grammar rejections;
 - backend errors;
 - completion tokens;
@@ -286,6 +286,8 @@ It reports overall and per-workflow metrics for:
 - average latency.
 
 It also reports constrained-minus-unconstrained deltas.
+
+`trajectory-match` is intentionally narrower than task success: it means the generated protocol sequence exactly equals the canonical fixture sequence for that workflow. A structurally valid alternative trajectory is therefore `protocol-valid` but may be `trajectory-match = false`. Stage 3E.1 does not claim that such an alternative failed the underlying task; true task success belongs to later multi-operator experiments that score resulting collective state/outcomes.
 
 If the file contains malformed records or unbalanced typed/constrained counts, the command prints a warning and exits nonzero. Such a run should not be used for a CFG promotion decision.
 
@@ -333,8 +335,27 @@ Do not promote CFG merely because constrained decoding reaches 100% syntactic va
 The first live result is favorable only if constrained decoding produces a system-level improvement such as:
 
 - higher first-try validity;
-- equal or better task success;
+- equal or better canonical trajectory match, interpreted only as a diagnostic;
 - no workflow-specific collapse;
 - no unacceptable latency/token regression.
 
 After the first model, the strongest next step is replication on a materially different model family using the same runner and evaluator.
+
+
+## Metric semantics
+
+Stage 3E.1 separates protocol control from eventual collective outcome:
+
+```text
+protocol validity
+    !=
+canonical trajectory match
+    !=
+task success
+```
+
+- **protocol validity** asks whether the generated sequence belongs to the allowed Starlings language.
+- **trajectory match** asks whether it exactly equals the benchmark's canonical fixture sequence.
+- **task success** is intentionally not measured by this live syntax experiment. It will be measured in later controlled-emergence experiments from the resulting multi-operator world/state outcome.
+
+Exact trajectory matching remains useful for diagnosing whether a model follows the canonical protocol mapping, but it must not be interpreted as the definition of successful coordination.
