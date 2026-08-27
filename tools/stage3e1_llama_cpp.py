@@ -311,7 +311,33 @@ def self_test() -> None:
     ):
         assert interaction in PROTOCOL_SPEC
     for _, task in WORKFLOWS:
-        assert task_prompt(task).startswith(PROTOCOL_SPEC)
+        prompt = task_prompt(task)
+        assert prompt.startswith(PROTOCOL_SPEC)
+        typed_workflow = build_payload(
+            model="m",
+            prompt=prompt,
+            seed=42,
+            mode=TYPED,
+            grammar=grammar,
+            temperature=0.7,
+            top_p=0.9,
+            top_k=40,
+            max_tokens=16,
+        )
+        constrained_workflow = build_payload(
+            model="m",
+            prompt=prompt,
+            seed=42,
+            mode=CONSTRAINED,
+            grammar=grammar,
+            temperature=0.7,
+            top_p=0.9,
+            top_k=40,
+            max_tokens=16,
+        )
+        constrained_without_grammar = dict(constrained_workflow)
+        assert constrained_without_grammar.pop("grammar") == grammar
+        assert typed_workflow == constrained_without_grammar
     assert mode_order(0, 0) == (TYPED, CONSTRAINED)
     assert mode_order(1, 0) == (CONSTRAINED, TYPED)
     assert escape_completion("A\tB\nC\\D") == "A\\tB\\nC\\\\D"
