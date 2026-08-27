@@ -74,7 +74,7 @@ WORKFLOWS = (
 TYPED = "typed_unconstrained"
 CONSTRAINED = "cfg_constrained"
 BACKEND_ERROR = "__BACKEND_ERROR__"
-RUNNER_VERSION = 2
+RUNNER_VERSION = 3
 
 
 def escape_completion(text: str) -> str:
@@ -122,6 +122,8 @@ def build_payload(
         "max_tokens": max_tokens,
         "stream": False,
         "cache_prompt": False,
+        "reasoning_effort": "none",
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     if mode == CONSTRAINED:
         payload["grammar"] = grammar
@@ -240,6 +242,8 @@ def write_metadata(
         "top_k": args.top_k,
         "max_tokens": args.max_tokens,
         "cache_prompt": False,
+        "reasoning_effort": "none",
+        "chat_template_kwargs": {"enable_thinking": False},
         "grammar_sha256": hashlib.sha256(grammar.encode("utf-8")).hexdigest(),
         "grammar_path": args.grammar,
         "endpoint": "/v1/chat/completions",
@@ -266,7 +270,7 @@ def self_test() -> None:
         temperature=0.7,
         top_p=0.9,
         top_k=40,
-        max_tokens=16,
+        max_tokens=32,
     )
     constrained = build_payload(
         model="m",
@@ -277,7 +281,7 @@ def self_test() -> None:
         temperature=0.7,
         top_p=0.9,
         top_k=40,
-        max_tokens=16,
+        max_tokens=32,
     )
 
     assert typed["messages"] == constrained["messages"]
@@ -285,7 +289,11 @@ def self_test() -> None:
     assert typed["temperature"] == constrained["temperature"]
     assert typed["top_p"] == constrained["top_p"]
     assert typed["top_k"] == constrained["top_k"]
-    assert typed["max_tokens"] == constrained["max_tokens"]
+    assert typed["max_tokens"] == constrained["max_tokens"] == 32
+    assert typed["reasoning_effort"] == constrained["reasoning_effort"] == "none"
+    assert typed["chat_template_kwargs"] == constrained["chat_template_kwargs"] == {
+        "enable_thinking": False
+    }
     assert "grammar" not in typed
     assert constrained["grammar"] == grammar
     for terminal in (
@@ -322,7 +330,7 @@ def self_test() -> None:
             temperature=0.7,
             top_p=0.9,
             top_k=40,
-            max_tokens=16,
+            max_tokens=32,
         )
         constrained_workflow = build_payload(
             model="m",
@@ -333,7 +341,7 @@ def self_test() -> None:
             temperature=0.7,
             top_p=0.9,
             top_k=40,
-            max_tokens=16,
+            max_tokens=32,
         )
         constrained_without_grammar = dict(constrained_workflow)
         assert constrained_without_grammar.pop("grammar") == grammar
@@ -356,7 +364,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-p", type=float, default=0.9)
     parser.add_argument("--top-k", type=int, default=40)
-    parser.add_argument("--max-tokens", type=int, default=16)
+    parser.add_argument("--max-tokens", type=int, default=32)
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
