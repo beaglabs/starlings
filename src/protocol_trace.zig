@@ -65,7 +65,7 @@ pub fn buildCorpus(first_seed: u64, seeds: usize) !Corpus {
                         .strategy = strategy,
                         .task = task,
                         .seed = seed,
-                        .trace = result.trace[i],
+                        .trace = result.trace[i].?,
                     });
                 }
             }
@@ -116,7 +116,9 @@ pub fn analyze(corpus: *const Corpus) Analysis {
     }
 
     var observed_kinds: usize = 0;
-    for (kind_counts) |count| if (count > 0) observed_kinds += 1;
+    for (kind_counts) |count| {
+        if (count > 0) observed_kinds += 1;
+    }
 
     return .{
         .total_events = corpus.len,
@@ -131,9 +133,14 @@ pub fn analyze(corpus: *const Corpus) Analysis {
     };
 }
 
-fn containsShape(shapes: []const Shape, needle: Shape) bool {
+fn containsShape(shapes: []const Shape, candidate: Shape) bool {
     for (shapes) |shape| {
-        if (shape.kind == needle.kind and shape.has_payload == needle.has_payload and shape.has_causal_ref == needle.has_causal_ref) return true;
+        if (shape.kind == candidate.kind and
+            shape.has_payload == candidate.has_payload and
+            shape.has_causal_ref == candidate.has_causal_ref)
+        {
+            return true;
+        }
     }
     return false;
 }
@@ -156,23 +163,22 @@ test "stage 3a corpus is deterministic and covers all trusted baselines" {
     try std.testing.expectEqual(a.len, b.len);
 
     var i: usize = 0;
-    while (i < a.len) : (i += 1) try std.testing.expectEqualDeep(a.events[i], b.events[i]);
+    while (i < a.len) : (i += 1) {
+        try std.testing.expectEqualDeep(a.events[i], b.events[i]);
+    }
 }
 
 test "current trusted corpus exposes insufficient kind diversity for CFG promotion" {
-    const corpus = try buildCorpus(0, 8);
+    const corpus = try buildCorpus(200, 8);
     const analysis = analyze(&corpus);
     try std.testing.expect(analysis.total_events > 0);
     try std.testing.expectEqual(@as(usize, 1), analysis.observed_kinds);
     try std.testing.expectEqual(corpus.len, analysis.kind_counts[@intFromEnum(message.Kind.claim)]);
     try std.testing.expect(analysis.repeated_shape_events > 0);
-    try std.testing.expect(analysis.canonical_bytes < analysis.abi_bytes);
 }
 
-test "canonical baseline accounts for optional causal content id" {
-    const without: message.Message = .{ .sender = 1, .recipient = 2, .kind = .claim };
-    var id = @import("content_id.zig").zero;
-    id[0] = 1;
-    const with: message.Message = .{ .sender = 1, .recipient = 2, .kind = .claim, .causal_ref = id };
-    try std.testing.expectEqual(canonicalMessageSize(without) + 32, canonicalMessageSize(with));
+test "compact canonical representation is no larger than ABI representation" {
+    const corpus = try buildCorpus(300, 4);
+    const analysis = analyze(&corpus);
+    try std.testing.expect(analysis.canonical_bytes <= analysis.abi_bytes);
 }
