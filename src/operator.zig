@@ -22,9 +22,15 @@ pub const Operator = struct {
     }
 };
 
-/// Useful deterministic fixture: accumulate message payloads into local state.
+/// Useful deterministic fixture: accumulate numeric message payloads.
 pub fn accumulator(state: u64, input: Message) Transition {
     return .{ .state = state +% input.payload };
+}
+
+/// Set-union semantics for bitset-backed information experiments. Repeated
+/// evidence is idempotent instead of corrupting state through numeric addition.
+pub fn bitUnion(state: u64, input: Message) Transition {
+    return .{ .state = state | input.payload };
 }
 
 /// Useful deterministic fixture: update state and relay the value back to sender.
