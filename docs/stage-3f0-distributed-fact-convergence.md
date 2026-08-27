@@ -116,7 +116,7 @@ replay.
 
 ## Paired A/B treatment
 
-For each run seed there are two closed-loop population runs:
+For each `(environment_seed, sampling_seed)` pair there are two closed-loop population runs:
 
 \`\`\`text
 typed_unconstrained
@@ -258,8 +258,7 @@ python3 tools/stage3f0_llama_cpp.py \
 \`\`\`
 
 Stage 3F.0 intentionally does not support resume in v2. Closed-loop prompts
-depend on prior generated actions, so an interrupted smoke run should be
-restarted rather than partially reconstructed by the transport layer.
+depend on prior generated actions, so an interrupted replication should be restarted rather than partially reconstructed by the transport layer.
 
 ## Summarize and replay in Zig
 
