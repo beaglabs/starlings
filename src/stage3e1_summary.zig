@@ -3,7 +3,7 @@ const model_eval = @import("protocol_model_eval.zig");
 const model_summary = @import("protocol_model_summary.zig");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
