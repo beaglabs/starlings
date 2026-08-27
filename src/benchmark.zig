@@ -36,6 +36,9 @@ pub const Metrics = struct {
     operators_used: usize,
 };
 
+pub const max_trace_events: usize = 64;
+pub const TraceEvent = runtime.TraceEvent;
+
 pub const Result = struct {
     strategy: Strategy,
     task: TaskShape,
@@ -44,6 +47,8 @@ pub const Result = struct {
     observed: u64,
     worker_payloads: [worker_count]u64,
     metrics: Metrics,
+    trace: [max_trace_events]?TraceEvent,
+    trace_len: usize,
 };
 
 pub const Aggregate = struct {
@@ -73,7 +78,7 @@ const worker_count: usize = 5;
 const coordinator_id: message.OperatorId = 6;
 const verifier_id: message.OperatorId = 7;
 const expected_mask: u64 = (1 << worker_count) - 1;
-const BenchRuntime = runtime.Runtime(7, 64, 64);
+const BenchRuntime = runtime.Runtime(7, 64, max_trace_events);
 
 const Recorder = struct {
     rt: *BenchRuntime,
@@ -179,6 +184,10 @@ pub fn run(strategy: Strategy, config: Config) !Result {
     const observed = rt.operators[verifier_index].state;
     const success = observed == expected_mask;
 
+    var trace = [_]?TraceEvent{null} ** max_trace_events;
+    i = 0;
+    while (i < rt.trace_len) : (i += 1) trace[i] = rt.trace[i];
+
     return .{
         .strategy = strategy,
         .task = config.task,
@@ -187,6 +196,8 @@ pub fn run(strategy: Strategy, config: Config) !Result {
         .observed = observed,
         .worker_payloads = worker_payloads,
         .metrics = recorder.metrics(success),
+        .trace = trace,
+        .trace_len = rt.trace_len,
     };
 }
 
@@ -250,6 +261,7 @@ test "all coordination baselines solve both task shapes without faults" {
             const result = try run(strategy, .{ .task = task });
             try std.testing.expect(result.metrics.success);
             try std.testing.expectEqual(expected_mask, result.observed);
+            try std.testing.expectEqual(result.metrics.messages_sent, result.trace_len);
         }
     }
 }
@@ -263,7 +275,7 @@ test "coordination strategies expose expected partitioned communication tradeoff
     try std.testing.expectEqual(@as(usize, 5), direct.metrics.messages_sent);
 }
 
-test "same seed reproduces placement and result" {
+test "same seed reproduces placement result and trace" {
     const a = try run(.centralized, .{ .seed = 12345, .task = .overlapping });
     const b = try run(.centralized, .{ .seed = 12345, .task = .overlapping });
     try std.testing.expectEqualDeep(a, b);
