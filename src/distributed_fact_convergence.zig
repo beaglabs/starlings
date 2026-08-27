@@ -42,8 +42,8 @@ pub fn initialKnowledge(seed: u64) [worker_count]u8 {
     return result;
 }
 
-pub fn generationSeed(run_seed: u64, round: u32, worker: u8) u32 {
-    const mixed = run_seed *% 1_000_003 +%
+pub fn generationSeed(sampling_seed: u64, round: u32, worker: u8) u32 {
+    const mixed = sampling_seed *% 1_000_003 +%
         @as(u64, round) *% 101 +%
         @as(u64, worker);
     return @intCast(mixed & 0x7fff_ffff);
@@ -251,10 +251,11 @@ test "different autonomous trajectories can converge the collector" {
     try std.testing.expect(collectorSolved(query_path));
 }
 
-test "per-turn generation seed is stable and mode-independent" {
+test "per-turn generation seed depends on sampling seed, not environment" {
     try std.testing.expectEqual(@as(u32, 102), generationSeed(0, 1, 1));
     try std.testing.expectEqual(
         generationSeed(42, 7, 3),
         generationSeed(42, 7, 3),
     );
+    try std.testing.expect(generationSeed(42, 7, 3) != generationSeed(43, 7, 3));
 }
