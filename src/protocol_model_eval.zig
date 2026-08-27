@@ -22,6 +22,35 @@ pub const grammar_ebnf =
     \\Decision = "ACCEPT" | "REJECT";
 ;
 
+pub const protocol_prompt_prefix =
+    \\You communicate using only this protocol vocabulary:
+    \\OBSERVE
+    \\QUERY
+    \\CLAIM
+    \\EVIDENCE
+    \\PROPOSE
+    \\ACCEPT
+    \\REJECT
+    \\CHALLENGE
+    \\RETRACT
+    \\DELEGATE
+    \\
+    \\Valid interaction forms are:
+    \\OBSERVE CLAIM
+    \\QUERY EVIDENCE
+    \\PROPOSE ACCEPT
+    \\PROPOSE REJECT
+    \\CHALLENGE RETRACT
+    \\DELEGATE QUERY EVIDENCE EVIDENCE
+    \\CLAIM may repeat one or more times as a claim batch.
+    \\A session may contain one or more valid interactions.
+    \\
+    \\Return only the protocol terminal sequence required by the task.
+    \\Do not include explanations, punctuation, prose, or code fences.
+    \\
+    \\Task:
+;
+
 pub const Request = struct {
     workflow: protocol_workflow.Workflow,
     seed: u64,
@@ -215,17 +244,23 @@ pub fn expectedKinds(workflow: protocol_workflow.Workflow) []const message.Kind 
 pub fn taskPrompt(workflow: protocol_workflow.Workflow) []const u8 {
     return switch (workflow) {
         .observe_claim =>
-        "Return only protocol terminal names. A coordinator gives an observation to an analyst; the analyst must state the resulting claim.",
+        protocol_prompt_prefix ++
+            "A coordinator gives an observation to an analyst; the analyst must state the resulting claim.",
         .query_evidence =>
-        "Return only protocol terminal names. A coordinator requests a known fact from a worker; the worker must return supporting evidence.",
+        protocol_prompt_prefix ++
+            "A coordinator requests a known fact from a worker; the worker must return supporting evidence.",
         .proposal_accept =>
-        "Return only protocol terminal names. A coordinator proposes an allowed action; the evaluator must accept it.",
+        protocol_prompt_prefix ++
+            "A coordinator proposes an allowed action; the evaluator must accept it.",
         .proposal_reject =>
-        "Return only protocol terminal names. A coordinator proposes an action outside the allowed set; the evaluator must reject it.",
+        protocol_prompt_prefix ++
+            "A coordinator proposes an action outside the allowed set; the evaluator must reject it.",
         .challenge_retract =>
-        "Return only protocol terminal names. A coordinator challenges an active claim; the claimant must retract the challenged claim.",
+        protocol_prompt_prefix ++
+            "A coordinator challenges an active claim; the claimant must retract the challenged claim.",
         .delegation =>
-        "Return only protocol terminal names. A coordinator delegates an information request to a worker; the worker queries a specialist, receives evidence, and forwards evidence to the coordinator.",
+        protocol_prompt_prefix ++
+            "A coordinator delegates an information request to a worker; the worker queries a specialist, receives evidence, and forwards evidence to the coordinator.",
     };
 }
 
@@ -306,6 +341,50 @@ fn noisyFixtureGenerate(_: ?*anyopaque, request: Request) !Sample {
 fn wrongButValidFixtureGenerate(_: ?*anyopaque, request: Request) !Sample {
     _ = request;
     return Sample.fromKinds(&.{ .query, .evidence });
+}
+
+test "shared model prompt exposes complete protocol to both decoding modes" {
+    const prompt = taskPrompt(.delegation);
+    try std.testing.expect(std.mem.startsWith(u8, prompt, protocol_prompt_prefix));
+
+    inline for (.{
+        "OBSERVE",
+        "QUERY",
+        "CLAIM",
+        "EVIDENCE",
+        "PROPOSE",
+        "ACCEPT",
+        "REJECT",
+        "CHALLENGE",
+        "RETRACT",
+        "DELEGATE",
+    }) |terminal| {
+        try std.testing.expect(std.mem.indexOf(u8, prompt, terminal) != null);
+    }
+
+    inline for (.{
+        "OBSERVE CLAIM",
+        "QUERY EVIDENCE",
+        "PROPOSE ACCEPT",
+        "PROPOSE REJECT",
+        "CHALLENGE RETRACT",
+        "DELEGATE QUERY EVIDENCE EVIDENCE",
+    }) |interaction| {
+        try std.testing.expect(std.mem.indexOf(u8, prompt, interaction) != null);
+    }
+}
+
+test "all workflow prompts share the identical protocol specification" {
+    inline for (.{
+        protocol_workflow.Workflow.observe_claim,
+        protocol_workflow.Workflow.query_evidence,
+        protocol_workflow.Workflow.proposal_accept,
+        protocol_workflow.Workflow.proposal_reject,
+        protocol_workflow.Workflow.challenge_retract,
+        protocol_workflow.Workflow.delegation,
+    }) |workflow| {
+        try std.testing.expect(std.mem.startsWith(u8, taskPrompt(workflow), protocol_prompt_prefix));
+    }
 }
 
 test "completion parser accepts protocol terminals and rejects prose" {
