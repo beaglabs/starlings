@@ -2,7 +2,7 @@
 
 Experimental infrastructure for evidence-backed mathematical agent communication and collective coordination, implemented in Zig.
 
-## Current scope: Stage 0–3E
+## Current scope: Stage 0–3E.1
 
 The foundation contains the machinery needed to run reproducible experiments and compare coordination strategies:
 
@@ -62,3 +62,17 @@ zig test src/root.zig
 ```
 
 The suite covers deterministic runtime behavior, Stage 1 coordination benchmarks, provenance validation, duplicate-heavy provenance histories, fork/merge causal closure, replica divergence, content identity sensitivity, protocol trace analysis, deterministic workflow diversity, CFG parsing/encoding, CFG stress/generalization, and the Stage 3E model-evaluation machinery.
+
+
+## Stage 3E.1 live llama.cpp experiment
+
+Start a llama.cpp server, then validate and run the paired experiment:
+
+```sh
+python3 tools/stage3e1_llama_cpp.py --self-test
+python3 tools/stage3e1_llama_cpp.py --dry-run
+python3 tools/stage3e1_llama_cpp.py --seeds 100 --output trials/stage3e1.tsv
+zig run src/stage3e1_summary.zig -- trials/stage3e1.tsv
+```
+
+See `docs/stage-3e1-llama-cpp.md` for the experimental controls and runbook.
