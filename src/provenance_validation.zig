@@ -42,7 +42,7 @@ pub fn run() !ValidationResult {
     const decision: provenance.Event = .{
         .kind = .decision,
         .payload = 0b01000,
-        .parents = .{ claim_node.id, 0 },
+        .parents = .{ claim_node.id, provenance.zero_id },
         .parent_count = 1,
     };
 
