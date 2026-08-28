@@ -442,14 +442,10 @@ P(reachable) = (1 - p^R)^M
 and compares it against the original exponential approximation plus one- and
 two-parameter hazard-scale corrections.
 
-Hard holdouts are disjoint and unseen during fitting:
-
-~~~text
-N = 256
-then F/N = 4
-then R = 8
-then p = 0.5
-~~~
+The training box is N={64,128}, F/N={1,2}, R={1,4}, p<=0.4.
+Hard evaluation isolates N=256, F/N=4, R=8, and p=0.5 one axis at a time,
+plus a separate compound-extrapolation set for configurations outside the
+training box on two or more axes.
 
 Run:
 
