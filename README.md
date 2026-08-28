@@ -2,7 +2,7 @@
 
 Experimental infrastructure for evidence-backed mathematical agent communication and collective coordination, implemented in Zig.
 
-## Current scope: Stage 0–3F.0
+## Current scope: Stage 0–3F.1
 
 The foundation contains the machinery needed to run reproducible experiments and compare coordination strategies:
 
@@ -26,6 +26,7 @@ The foundation contains the machinery needed to run reproducible experiments and
 - CFG stress/generalization tests over exhaustive and seeded unseen compositions
 - provider-agnostic model-backed A/B evaluation for unconstrained vs CFG-constrained decoding
 - outcome-scored controlled-emergence experiments over distributed local knowledge
+- communication-budget experiments that measure useful vs redundant information transfer
 
 Stage 1 uses five workers and a verifier. The partitioned task assigns one independent fact to each worker, while the overlapping task gives each worker two facts so that every fact exists at two workers. This lets the harness distinguish raw communication efficiency from resilience under information loss.
 
@@ -101,3 +102,30 @@ zig run src/stage3f0_summary.zig -- \
 
 See `docs/stage-3f0-distributed-fact-convergence.md` for the environment,
 A/B controls, replay invariants, metrics, and progression gates.
+
+
+## Stage 3F.1 communication efficiency
+
+Stage 3F.1 expands the controlled-emergence task to ten overlapping facts and
+gives each worker a fixed communication-unit budget. Broad redundant claims
+consume budget quickly; selective claims and evidence queries can solve the
+same global objective at substantially lower cost.
+
+Validate and run the default replication:
+
+~~~sh
+python3 tools/stage3f1_llama_cpp.py --self-test
+python3 tools/stage3f1_llama_cpp.py --dry-run
+python3 tools/stage3f1_llama_cpp.py \
+  --base-url http://127.0.0.1:8080 \
+  --environments 5 \
+  --sampling-seeds 4 \
+  --worker-budget 16 \
+  --output trials/stage3f1-gemma4-e2b-budget16.tsv
+
+zig run src/stage3f1_summary.zig -- \
+  trials/stage3f1-gemma4-e2b-budget16.tsv
+~~~
+
+See docs/stage-3f1-communication-efficiency.md for the budget semantics,
+replay invariants, metrics, and experimental gate.
