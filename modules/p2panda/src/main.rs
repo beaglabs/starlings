@@ -1,15 +1,17 @@
 use std::collections::HashSet;
 use std::env;
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
-use futures_util::StreamExt;
+use futures_util::{Stream, StreamExt};
 use p2panda::streams::{Source, StreamEvent, StreamPublisher, StreamSubscription};
 use p2panda::{Node, Topic};
 use serde::{Deserialize, Serialize};
-use tokio::time::{interval, sleep, MissedTickBehavior};
+use tokio::task::JoinSet;
+use tokio::time::{interval, sleep, timeout, MissedTickBehavior};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -88,6 +90,99 @@ unsafe extern "C" {
 }
 
 const ABI_VERSION: u32 = 1;
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
+const OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+async fn bounded<T>(
+    phase: &str,
+    limit: Duration,
+    future: impl Future<Output = Result<T>>,
+) -> Result<T> {
+    timeout(limit, future)
+        .await
+        .with_context(|| format!("{phase}: timed out after {limit:?}"))?
+        .with_context(|| phase.to_owned())
+}
+
+async fn receive_while<F, S, H, T>(
+    operation: F,
+    rx: &mut S,
+    stop: &AtomicBool,
+    mut on_event: H,
+) -> Result<Option<T>>
+where
+    F: Future<Output = Result<T>>,
+    S: Stream + Unpin,
+    H: FnMut(S::Item) -> Result<()>,
+{
+    tokio::pin!(operation);
+    let mut cancellation = interval(Duration::from_millis(10));
+    loop {
+        if stop.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        tokio::select! {
+            biased;
+            _ = cancellation.tick() => {}
+            result = &mut operation => return result.map(Some),
+            event = rx.next() => {
+                let event = event.context("topic stream closed while publishing")?;
+                on_event(event)?;
+            }
+        }
+    }
+}
+
+async fn collect_nodes(
+    mut tasks: JoinSet<Result<NodeStats>>,
+    stop: &AtomicBool,
+    collector_complete: &AtomicBool,
+    max_runtime: Duration,
+    drain: Duration,
+    shutdown: Duration,
+) -> Result<Vec<NodeStats>> {
+    let deadline = sleep(max_runtime);
+    tokio::pin!(deadline);
+    let mut poll = interval(Duration::from_millis(10));
+    let mut progress = interval(Duration::from_secs(2));
+    let mut stats = Vec::with_capacity(tasks.len());
+    while !tasks.is_empty() {
+        tokio::select! {
+            biased;
+            _ = &mut deadline => {
+                eprintln!("[stop] runtime deadline reached");
+                break;
+            }
+            result = tasks.join_next() => {
+                stats.push(result.context("missing node task")?
+                    .context("join Stage 7C node task")??);
+            }
+            _ = poll.tick() => {
+                if stop.load(Ordering::Acquire) {
+                    bail!("Stage 7C node requested stop after a policy error");
+                }
+                if collector_complete.load(Ordering::Acquire) {
+                    eprintln!("[drain] collector has all facts");
+                    sleep(drain).await;
+                    break;
+                }
+            }
+            _ = progress.tick() => {
+                eprintln!("[running] {} node tasks active; collector_complete={}",
+                    tasks.len(), collector_complete.load(Ordering::Acquire));
+            }
+        }
+    }
+    stop.store(true, Ordering::Release);
+    bounded("node shutdown", shutdown, async {
+        while let Some(result) = tasks.join_next().await {
+            stats.push(result.context("join Stage 7C node task")??);
+        }
+        Ok(())
+    }).await?;
+    Ok(stats)
+}
 
 #[derive(Clone, Copy, Debug)]
 struct Theta {
@@ -274,13 +369,18 @@ async fn main() -> Result<()> {
 
     for node_index in 0..config.nodes {
         eprintln!("[spawn {}/{}] p2panda node", node_index + 1, config.nodes);
-        let node = p2panda::spawn()
-            .await
-            .with_context(|| format!("spawn p2panda node {node_index}"))?;
-        let pair = node
-            .stream::<Envelope>(topic.clone())
-            .await
-            .with_context(|| format!("create topic stream for node {node_index}"))?;
+        let node = bounded(
+            &format!("spawn p2panda node {node_index}"),
+            STARTUP_TIMEOUT,
+            async { Ok(p2panda::spawn().await?) },
+        ).await?;
+        eprintln!("[stream {}/{}] creating topic stream", node_index + 1, config.nodes);
+        let pair = bounded(
+            &format!("create topic stream for node {node_index}"),
+            STARTUP_TIMEOUT,
+            async { Ok(node.stream::<Envelope>(topic.clone()).await?) },
+        ).await?;
+        eprintln!("[ready {}/{}] node and stream initialized", node_index + 1, config.nodes);
         node_guards.push(node);
         streams.push(pair);
     }
@@ -291,12 +391,12 @@ async fn main() -> Result<()> {
     let collector_complete = Arc::new(AtomicBool::new(false));
     let started = Instant::now();
 
-    let mut handles = Vec::with_capacity(config.nodes as usize);
+    let mut handles = JoinSet::new();
     for (node_index, (tx, rx)) in streams.into_iter().enumerate() {
         let node_config = config.clone();
         let node_stop = stop.clone();
         let node_collector_complete = collector_complete.clone();
-        handles.push(tokio::spawn(async move {
+        handles.spawn(async move {
             run_node(
                 node_index as u16,
                 node_config,
@@ -307,38 +407,24 @@ async fn main() -> Result<()> {
                 node_collector_complete,
             )
             .await
-        }));
+        });
     }
 
     let max_runtime = Duration::from_millis(
         config.tick_ms.saturating_mul(config.max_ticks as u64)
-            + config.startup_ms
-            + config.drain_ms
-            + 5000,
+            .saturating_add(config.startup_ms)
+            .saturating_add(config.drain_ms)
+            .saturating_add(5000),
     );
 
-    loop {
-        if collector_complete.load(Ordering::Acquire) {
-            sleep(Duration::from_millis(config.drain_ms)).await;
-            stop.store(true, Ordering::Release);
-            break;
-        }
-
-        if started.elapsed() >= max_runtime {
-            stop.store(true, Ordering::Release);
-            break;
-        }
-
-        sleep(Duration::from_millis(10)).await;
-    }
-
-    let mut node_stats = Vec::with_capacity(handles.len());
-    for handle in handles {
-        let stats = handle
-            .await
-            .context("join Stage 7C node task")??;
-        node_stats.push(stats);
-    }
+    let mut node_stats = collect_nodes(
+        handles,
+        &stop,
+        &collector_complete,
+        max_runtime,
+        Duration::from_millis(config.drain_ms),
+        SHUTDOWN_TIMEOUT,
+    ).await?;
     node_stats.sort_by_key(|stats| stats.node);
 
     // Keep nodes alive through all stream processing and task joins.
@@ -400,6 +486,11 @@ async fn main() -> Result<()> {
         bail!("Stage 7C policy FFI reported errors");
     }
 
+    if !collector.collector_complete {
+        bail!("Stage 7C did not converge: collector has {}/{} facts",
+            collector.final_facts, config.facts);
+    }
+
     Ok(())
 }
 
@@ -455,9 +546,11 @@ async fn run_node(
     let mut ticker = interval(Duration::from_millis(config.tick_ms));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut emission_done = false;
+    let mut cancellation = interval(Duration::from_millis(10));
 
     while !stop.load(Ordering::Acquire) {
         tokio::select! {
+            _ = cancellation.tick() => {}
             _ = ticker.tick() => {
                 if emission_done {
                     continue;
@@ -529,13 +622,29 @@ async fn run_node(
                     facts: facts.clone(),
                 };
 
-                let processing = tx
-                    .publish(envelope)
-                    .await
-                    .with_context(|| format!("node {node_index}: publish"))?;
-                processing
-                    .await
-                    .with_context(|| format!("node {node_index}: local processing"))?;
+                let operation = async {
+                    let processing = bounded(
+                        &format!("node {node_index}: publish"),
+                        OPERATION_TIMEOUT,
+                        async { Ok(tx.publish(envelope).await?) },
+                    ).await?;
+                    let processed = bounded(
+                        &format!("node {node_index}: local processing"),
+                        OPERATION_TIMEOUT,
+                        async { Ok(processing.await?) },
+                    ).await?;
+                    if processed.is_failed() {
+                        bail!("node {node_index}: local processing failed: {:?}",
+                            processed.failure_reason());
+                    }
+                    Ok(())
+                };
+                if receive_while(operation, &mut rx, &stop, |event| {
+                    apply_event(event, node_index, &config, run_nonce,
+                        &mut state, &mut stats, &mut seen, &collector_complete)
+                }).await?.is_none() {
+                    break;
+                }
 
                 if action.reset_sent != 0 {
                     state.sent.fill(0);
@@ -552,81 +661,9 @@ async fn run_node(
             }
 
             event = rx.next() => {
-                let Some(event) = event else {
-                    break;
-                };
-
-                match event {
-                    StreamEvent::Processed { operation, source } => {
-                        match source {
-                            Source::LocalStore => {
-                                stats.p2panda_local_operations += 1;
-                            }
-                            Source::SyncSession { .. } => {
-                                stats.p2panda_remote_operations += 1;
-                            }
-                            Source::ExternalStream { .. } => {}
-                        }
-
-                        let envelope = operation.message();
-                        if envelope.run_nonce != run_nonce {
-                            continue;
-                        }
-
-                        let key = (
-                            envelope.run_nonce,
-                            envelope.sender,
-                            envelope.sequence,
-                        );
-                        if !seen.insert(key) {
-                            stats.duplicate_envelopes += 1;
-                            continue;
-                        }
-
-                        if !envelope.recipients.contains(&node_index) {
-                            continue;
-                        }
-
-                        for fact in &envelope.facts {
-                            if has_fact(&state.knowledge, *fact) {
-                                stats.duplicate_deliveries += 1;
-                            } else {
-                                stats.useful_deliveries += 1;
-                                set_fact(&mut state.knowledge, *fact);
-                            }
-                        }
-
-                        if node_index == 0
-                            && contains_all(&state.knowledge, config.facts)
-                        {
-                            stats.collector_complete = true;
-                            collector_complete.store(true, Ordering::Release);
-                        }
-                    }
-
-                    StreamEvent::SyncEnded {
-                        sent_bytes,
-                        received_bytes,
-                        error,
-                        ..
-                    } => {
-                        stats.sync_sessions += 1;
-                        stats.sync_sent_bytes += sent_bytes as u64;
-                        stats.sync_received_bytes += received_bytes as u64;
-                        if error.is_some() {
-                            stats.sync_errors += 1;
-                        }
-                    }
-
-                    StreamEvent::ProcessingFailed { .. }
-                    | StreamEvent::ReplayFailed { .. }
-                    | StreamEvent::DecodeFailed { .. }
-                    | StreamEvent::AckFailed { .. } => {
-                        stats.sync_errors += 1;
-                    }
-
-                    _ => {}
-                }
+                let event = event.context("topic stream closed before run completed")?;
+                apply_event(event, node_index, &config, run_nonce,
+                    &mut state, &mut stats, &mut seen, &collector_complete)?;
             }
         }
     }
@@ -637,6 +674,90 @@ async fn run_node(
     }
 
     Ok(stats)
+}
+
+fn apply_event(
+    event: StreamEvent<Envelope>,
+    node_index: u16,
+    config: &Config,
+    run_nonce: u64,
+    state: &mut LocalState,
+    stats: &mut NodeStats,
+    seen: &mut HashSet<(u64, u16, u32)>,
+    collector_complete: &AtomicBool,
+) -> Result<()> {
+    match event {
+        StreamEvent::Processed { operation, source } => {
+            match source {
+                Source::LocalStore => {
+                    stats.p2panda_local_operations += 1;
+                }
+                Source::SyncSession { .. } => {
+                    stats.p2panda_remote_operations += 1;
+                }
+                Source::ExternalStream { .. } => {}
+            }
+
+            let envelope = operation.message();
+            if envelope.run_nonce != run_nonce {
+                return Ok(());
+            }
+
+            let key = (
+                envelope.run_nonce,
+                envelope.sender,
+                envelope.sequence,
+            );
+            if !seen.insert(key) {
+                stats.duplicate_envelopes += 1;
+                return Ok(());
+            }
+
+            if !envelope.recipients.contains(&node_index) {
+                return Ok(());
+            }
+
+            for fact in &envelope.facts {
+                if has_fact(&state.knowledge, *fact) {
+                    stats.duplicate_deliveries += 1;
+                } else {
+                    stats.useful_deliveries += 1;
+                    set_fact(&mut state.knowledge, *fact);
+                }
+            }
+
+            if node_index == 0
+                && contains_all(&state.knowledge, config.facts)
+            {
+                stats.collector_complete = true;
+                collector_complete.store(true, Ordering::Release);
+            }
+        }
+
+        StreamEvent::SyncEnded {
+            sent_bytes,
+            received_bytes,
+            error,
+            ..
+        } => {
+            stats.sync_sessions += 1;
+            stats.sync_sent_bytes += sent_bytes as u64;
+            stats.sync_received_bytes += received_bytes as u64;
+            if error.is_some() {
+                stats.sync_errors += 1;
+            }
+        }
+
+        StreamEvent::ProcessingFailed { .. }
+        | StreamEvent::ReplayFailed { .. }
+        | StreamEvent::DecodeFailed { .. }
+        | StreamEvent::AckFailed { .. } => {
+            stats.sync_errors += 1;
+        }
+
+        _ => {}
+    }
+    Ok(())
 }
 
 fn simulate(config: &Config) -> Result<FfiSimulation> {
@@ -990,4 +1111,122 @@ mod tests {
         assert_eq!(recipients(Topology::Grid, 0, 9), vec![1, 3]);
         assert_eq!(recipients(Topology::Grid, 4, 9), vec![3, 5, 1, 7]);
     }
+
+    #[tokio::test]
+    async fn publication_drains_backpressure_before_waiting_for_ack() {
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        let mut rx = Box::pin(futures_util::stream::unfold(rx, |mut rx| async {
+            rx.recv().await.map(|event| (event, rx))
+        }));
+        let (acked_tx, acked_rx) = tokio::sync::oneshot::channel();
+        let mut acked_tx = Some(acked_tx);
+        let mut received = Vec::new();
+        let stop = AtomicBool::new(false);
+        let operation = async {
+            for event in 0..64 {
+                tx.send(event).await?;
+            }
+            acked_rx.await?;
+            Ok(())
+        };
+        let result = timeout(Duration::from_secs(2), receive_while(
+            operation, &mut rx, &stop, |event| {
+                received.push(event);
+                if event == 63 {
+                    acked_tx.take().unwrap().send(()).unwrap();
+                }
+                Ok(())
+            },
+        )).await.unwrap().unwrap();
+        assert_eq!(result, Some(()));
+        assert_eq!(received, (0..64).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn stalled_operation_times_out_with_phase_context() {
+        for phase in ["spawn node", "create stream", "publish", "local processing"] {
+            let mut rx = futures_util::stream::pending::<()>();
+            let stop = AtomicBool::new(false);
+            let result = timeout(Duration::from_secs(2), receive_while(
+                bounded(phase, Duration::from_millis(5), std::future::pending::<Result<()>>()),
+                &mut rx, &stop, |_| Ok(()),
+            )).await.unwrap().unwrap_err();
+            assert!(result.to_string().contains(phase));
+            assert!(result.to_string().contains("timed out"));
+        }
+    }
+
+    #[tokio::test]
+    async fn stop_interrupts_pending_publication() {
+        let stop = AtomicBool::new(false);
+        let mut rx = futures_util::stream::pending::<()>();
+        let cancel = async {
+            sleep(Duration::from_millis(5)).await;
+            stop.store(true, Ordering::Release);
+        };
+        let (_, result) = timeout(Duration::from_secs(2), async {
+            tokio::join!(cancel, receive_while(
+                std::future::pending::<Result<()>>(), &mut rx, &stop, |_| Ok(()),
+            ))
+        }).await.unwrap();
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn closed_stream_fails_pending_publication() {
+        let mut rx = futures_util::stream::empty::<()>();
+        let stop = AtomicBool::new(false);
+        let error = receive_while(
+            std::future::pending::<Result<()>>(), &mut rx, &stop, |_| Ok(()),
+        ).await.unwrap_err();
+        assert!(error.to_string().contains("topic stream closed"));
+    }
+
+    struct DropSignal(Arc<AtomicBool>);
+
+    impl Drop for DropSignal {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+
+    #[tokio::test]
+    async fn deadline_aborts_unresponsive_node_instead_of_hanging_on_join() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let guard = DropSignal(dropped.clone());
+        let mut tasks = JoinSet::new();
+        tasks.spawn(async move {
+            let _guard = guard;
+            std::future::pending::<Result<NodeStats>>().await
+        });
+        let stop = AtomicBool::new(false);
+        let complete = AtomicBool::new(false);
+        let error = timeout(Duration::from_secs(2), collect_nodes(
+            tasks, &stop, &complete, Duration::from_millis(5),
+            Duration::ZERO, Duration::from_millis(5),
+        )).await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("node shutdown"));
+        assert!(stop.load(Ordering::Acquire));
+        timeout(Duration::from_secs(2), async {
+            while !dropped.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        }).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn node_failure_is_reported_without_waiting_for_runtime_deadline() {
+        let mut tasks = JoinSet::new();
+        tasks.spawn(std::future::pending::<Result<NodeStats>>());
+        tasks.spawn(async { bail!("publication failed") });
+        let stop = AtomicBool::new(false);
+        let complete = AtomicBool::new(false);
+        let error = timeout(Duration::from_secs(2), collect_nodes(
+            tasks, &stop, &complete, Duration::from_secs(60),
+            Duration::ZERO, Duration::from_millis(5),
+        )).await.unwrap().unwrap_err();
+        assert!(format!("{error:#}").contains("publication failed"));
+    }
+
 }
+
