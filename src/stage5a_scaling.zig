@@ -65,6 +65,26 @@ pub const BitSet = struct {
         }
     }
 
+    pub fn unionWithFacts(self: *BitSet, other: BitSet, fact_count: usize) void {
+        const words = activeWordCount(fact_count);
+        var i: usize = 0;
+        while (i < words) : (i += 1) {
+            self.words[i] |= other.words[i];
+        }
+    }
+
+    pub fn hasDifference(self: BitSet, other: BitSet, fact_count: usize) bool {
+        const words = activeWordCount(fact_count);
+        const tail_mask = activeTailMask(fact_count);
+        var i: usize = 0;
+        while (i < words) : (i += 1) {
+            var difference = self.words[i] & ~other.words[i];
+            if (i + 1 == words) difference &= tail_mask;
+            if (difference != 0) return true;
+        }
+        return false;
+    }
+
     pub fn intersectCount(self: BitSet, other: BitSet) usize {
         var result: usize = 0;
         var i: usize = 0;
@@ -75,18 +95,25 @@ pub const BitSet = struct {
     }
 
     pub fn count(self: BitSet, fact_count: usize) usize {
+        const words = activeWordCount(fact_count);
+        const tail_mask = activeTailMask(fact_count);
         var result: usize = 0;
         var i: usize = 0;
-        while (i < fact_count) : (i += 1) {
-            if (self.has(i)) result += 1;
+        while (i < words) : (i += 1) {
+            var word = self.words[i];
+            if (i + 1 == words) word &= tail_mask;
+            result += @as(usize, @intCast(@popCount(word)));
         }
         return result;
     }
 
     pub fn containsAll(self: BitSet, fact_count: usize) bool {
+        const words = activeWordCount(fact_count);
+        const tail_mask = activeTailMask(fact_count);
         var i: usize = 0;
-        while (i < fact_count) : (i += 1) {
-            if (!self.has(i)) return false;
+        while (i < words) : (i += 1) {
+            const expected = if (i + 1 == words) tail_mask else std.math.maxInt(u64);
+            if ((self.words[i] & expected) != expected) return false;
         }
         return true;
     }
@@ -174,9 +201,133 @@ pub fn run(config: Config) Error!Result {
     initializeStates(&states, config);
 
     const initial_facts = states[collector_index].knowledge.count(config.fact_count);
-    var result = Result{
+    var result = initialResult(config, initial_facts);
+
+    if (result.success) return result;
+
+    var round: u32 = 1;
+    while (round <= config.max_rounds) : (round += 1) {
+        var actions = [_]?Action{null} ** max_operators;
+        var received = [_]BitSet{.{}} ** max_operators;
+
+        // All policies decide against the same pre-round state. No state is
+        // mutated until every decision has been collected.
+        var operator_index: usize = 0;
+        while (operator_index < config.population_size) : (operator_index += 1) {
+            result.policy_calls +%= 1;
+            if (decide(
+                config.policy,
+                states[operator_index],
+                operator_index,
+                round,
+                config,
+            )) |action| {
+                actions[operator_index] = action;
+                result.actions_proposed +%= 1;
+            }
+        }
+
+        // Knowledge remains unchanged throughout delivery, so states[*].knowledge
+        // is still the frozen pre-round snapshot used for validation and useful/
+        // duplicate accounting. sent/cursor are policy-local metadata and may be
+        // committed now because no policy executes again until the next round.
+        var sender: usize = 0;
+        while (sender < config.population_size) : (sender += 1) {
+            const action = actions[sender] orelse continue;
+
+            if (!validateAction(action, states[sender], config)) {
+                result.rejected_actions +%= 1;
+                result.violations +%= 1;
+                continue;
+            }
+
+            if (action.reset_sent) states[sender].sent.clear();
+            states[sender].sent.unionWithFacts(action.facts, config.fact_count);
+            states[sender].cursor = action.next_cursor;
+
+            switch (config.topology) {
+                .ring => {
+                    const left = (sender + config.population_size - 1) % config.population_size;
+                    const right = (sender + 1) % config.population_size;
+                    deliver(
+                        action,
+                        states[left].knowledge,
+                        &received[left],
+                        &result,
+                    );
+                    if (right != left) {
+                        deliver(
+                            action,
+                            states[right].knowledge,
+                            &received[right],
+                            &result,
+                        );
+                    }
+                },
+                .complete => {
+                    var recipient: usize = 0;
+                    while (recipient < config.population_size) : (recipient += 1) {
+                        if (recipient == sender) continue;
+                        deliver(
+                            action,
+                            states[recipient].knowledge,
+                            &received[recipient],
+                            &result,
+                        );
+                    }
+                },
+                .grid => {
+                    const width = gridWidth(config.population_size);
+                    const row = sender / width;
+                    const col = sender % width;
+
+                    if (col > 0) {
+                        const recipient = sender - 1;
+                        deliver(action, states[recipient].knowledge, &received[recipient], &result);
+                    }
+                    if (col + 1 < width and sender + 1 < config.population_size) {
+                        const recipient = sender + 1;
+                        if (recipient / width == row) {
+                            deliver(action, states[recipient].knowledge, &received[recipient], &result);
+                        }
+                    }
+                    if (sender >= width) {
+                        const recipient = sender - width;
+                        deliver(action, states[recipient].knowledge, &received[recipient], &result);
+                    }
+                    if (sender + width < config.population_size) {
+                        const recipient = sender + width;
+                        deliver(action, states[recipient].knowledge, &received[recipient], &result);
+                    }
+                },
+            }
+        }
+
+        operator_index = 0;
+        while (operator_index < config.population_size) : (operator_index += 1) {
+            states[operator_index].knowledge.unionWithFacts(
+                received[operator_index],
+                config.fact_count,
+            );
+        }
+
+        result.rounds = round;
+        result.collector_final_facts = states[collector_index].knowledge.count(config.fact_count);
+
+        if (states[collector_index].knowledge.containsAll(config.fact_count)) {
+            result.success = true;
+            break;
+        }
+    }
+
+    assertAccounting(result);
+    return result;
+}
+
+fn initialResult(config: Config, initial_facts: usize) Result {
+    return .{
         .config = config,
-        .success = states[collector_index].knowledge.containsAll(config.fact_count),
+        .success = initial_facts == config.fact_count,
         .rounds = 0,
         .diameter = topologyDiameter(config.topology, config.population_size),
         .edges = topologyEdges(config.topology, config.population_size),
@@ -191,126 +342,13 @@ pub fn run(config: Config) Error!Result {
         .duplicate_deliveries = 0,
         .violations = 0,
     };
+}
 
-    if (result.success) return result;
-
-    var round: u32 = 1;
-    while (round <= config.max_rounds) : (round += 1) {
-        const snapshot = states;
-        var next = snapshot;
-        var actions = [_]?Action{null} ** max_operators;
-        var received = [_]BitSet{.{}} ** max_operators;
-
-        var operator_index: usize = 0;
-        while (operator_index < config.population_size) : (operator_index += 1) {
-            result.policy_calls +%= 1;
-            if (decide(
-                config.policy,
-                snapshot[operator_index],
-                operator_index,
-                round,
-                config,
-            )) |action| {
-                actions[operator_index] = action;
-                result.actions_proposed +%= 1;
-            }
-        }
-
-        var sender: usize = 0;
-        while (sender < config.population_size) : (sender += 1) {
-            const action = actions[sender] orelse continue;
-
-            if (!validateAction(action, snapshot[sender], config)) {
-                result.rejected_actions +%= 1;
-                result.violations +%= 1;
-                continue;
-            }
-
-            if (action.reset_sent) next[sender].sent.clear();
-            next[sender].sent.unionWith(action.facts);
-            next[sender].cursor = action.next_cursor;
-
-            switch (config.topology) {
-                .ring => {
-                    const left = (sender + config.population_size - 1) % config.population_size;
-                    const right = (sender + 1) % config.population_size;
-                    deliver(
-                        left,
-                        action,
-                        snapshot[left].knowledge,
-                        &received[left],
-                        &result,
-                    );
-                    if (right != left) {
-                        deliver(
-                            right,
-                            action,
-                            snapshot[right].knowledge,
-                            &received[right],
-                            &result,
-                        );
-                    }
-                },
-                .complete => {
-                    var recipient: usize = 0;
-                    while (recipient < config.population_size) : (recipient += 1) {
-                        if (recipient == sender) continue;
-                        deliver(
-                            recipient,
-                            action,
-                            snapshot[recipient].knowledge,
-                            &received[recipient],
-                            &result,
-                        );
-                    }
-                },
-                .grid => {
-                    const width = gridWidth(config.population_size);
-                    const row = sender / width;
-                    const col = sender % width;
-
-                    if (col > 0) {
-                        const recipient = sender - 1;
-                        deliver(recipient, action, snapshot[recipient].knowledge, &received[recipient], &result);
-                    }
-                    if (col + 1 < width and sender + 1 < config.population_size) {
-                        const recipient = sender + 1;
-                        if (recipient / width == row) {
-                            deliver(recipient, action, snapshot[recipient].knowledge, &received[recipient], &result);
-                        }
-                    }
-                    if (sender >= width) {
-                        const recipient = sender - width;
-                        deliver(recipient, action, snapshot[recipient].knowledge, &received[recipient], &result);
-                    }
-                    if (sender + width < config.population_size) {
-                        const recipient = sender + width;
-                        deliver(recipient, action, snapshot[recipient].knowledge, &received[recipient], &result);
-                    }
-                },
-            }
-        }
-
-        operator_index = 0;
-        while (operator_index < config.population_size) : (operator_index += 1) {
-            next[operator_index].knowledge.unionWith(received[operator_index]);
-        }
-
-        states = next;
-        result.rounds = round;
-        result.collector_final_facts = states[collector_index].knowledge.count(config.fact_count);
-
-        if (states[collector_index].knowledge.containsAll(config.fact_count)) {
-            result.success = true;
-            break;
-        }
-    }
-
+fn assertAccounting(result: Result) void {
     std.debug.assert(
         result.communication_units ==
             result.useful_deliveries + result.duplicate_deliveries,
     );
-    return result;
 }
 
 pub fn initializeStates(states: *[max_operators]State, config: Config) void {
@@ -356,14 +394,10 @@ fn decide(
         .seeded => selectSeeded(state, operator_index, round, config),
         .novel_first => blk: {
             var candidate = state;
-            var has_unsent = false;
-            var i: usize = 0;
-            while (i < config.fact_count) : (i += 1) {
-                if (state.knowledge.has(i) and !state.sent.has(i)) {
-                    has_unsent = true;
-                    break;
-                }
-            }
+            const has_unsent = state.knowledge.hasDifference(
+                state.sent,
+                config.fact_count,
+            );
 
             if (!has_unsent) {
                 candidate.sent.clear();
@@ -475,27 +509,45 @@ fn validateAction(action: Action, state: State, config: Config) bool {
 }
 
 fn deliver(
-    recipient: usize,
     action: Action,
     snapshot_knowledge: BitSet,
     received: *BitSet,
     result: *Result,
 ) void {
-    _ = recipient;
     result.messages +%= 1;
     result.communication_units +%= @as(u64, @intCast(action.selected));
 
-    var fact: usize = 0;
-    while (fact < result.config.fact_count) : (fact += 1) {
-        if (!action.facts.has(fact)) continue;
+    const words = activeWordCount(result.config.fact_count);
+    const tail_mask = activeTailMask(result.config.fact_count);
+    var word_index: usize = 0;
+    while (word_index < words) : (word_index += 1) {
+        var action_word = action.facts.words[word_index];
+        if (word_index + 1 == words) action_word &= tail_mask;
+        if (action_word == 0) continue;
 
-        if (!snapshot_knowledge.has(fact) and !received.has(fact)) {
-            result.useful_deliveries +%= 1;
-        } else {
-            result.duplicate_deliveries +%= 1;
-        }
-        received.set(fact);
+        const already_known =
+            snapshot_knowledge.words[word_index] | received.words[word_index];
+        const useful_bits = action_word & ~already_known;
+        const duplicate_bits = action_word & already_known;
+
+        result.useful_deliveries +%=
+            @as(u64, @intCast(@popCount(useful_bits)));
+        result.duplicate_deliveries +%=
+            @as(u64, @intCast(@popCount(duplicate_bits)));
+        received.words[word_index] |= action_word;
     }
+}
+
+fn activeWordCount(fact_count: usize) usize {
+    std.debug.assert(fact_count >= 1 and fact_count <= max_facts);
+    return (fact_count + 63) / 64;
+}
+
+fn activeTailMask(fact_count: usize) u64 {
+    std.debug.assert(fact_count >= 1 and fact_count <= max_facts);
+    const remainder = fact_count % 64;
+    if (remainder == 0) return std.math.maxInt(u64);
+    return (@as(u64, 1) << @intCast(remainder)) - 1;
 }
 
 pub fn topologyDegree(kind: TopologyKind, operator_index: usize, population_size: usize) usize {
