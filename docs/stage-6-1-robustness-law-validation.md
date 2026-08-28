@@ -202,29 +202,50 @@ M0 and M1 are parameter-free and never fitted.
 
 ## Hard holdouts
 
-The holdouts are fixed before fitting and made disjoint by priority.
+The non-holdout training box is fixed before fitting:
 
 ~~~text
-1. population extrapolation:
-   N = 256
-
-2. density extrapolation:
-   N != 256
-   F/N = 4
-
-3. redundancy extrapolation:
-   N != 256
-   F/N != 4
-   R = 8
-
-4. severity extrapolation:
-   N != 256
-   F/N != 4
-   R != 8
-   p = 0.5
+N in {64,128}
+F/N in {1,2}
+R in {1,4}
+p <= 0.4
 ~~~
 
-This leaves:
+Hard evaluation is factorial.
+
+A row outside the training box on exactly one axis enters the corresponding
+single-axis extrapolation set:
+
+~~~text
+population extrapolation:
+  N = 256
+  all other coordinates remain inside the training box
+
+density extrapolation:
+  F/N = 4
+  all other coordinates remain inside the training box
+
+redundancy extrapolation:
+  R = 8
+  all other coordinates remain inside the training box
+
+severity extrapolation:
+  p = 0.5
+  all other coordinates remain inside the training box
+~~~
+
+Rows outside the training box on two or more axes enter a separate:
+
+~~~text
+compound extrapolation
+~~~
+
+set.
+
+This makes the four single-axis scores interpretable while preserving a hard
+test of simultaneous extrapolation.
+
+The deterministic split is:
 
 ~~~text
 representatives: 1296
@@ -233,14 +254,14 @@ non-holdout: 336
   candidate fit seeds 0-1: 224
   candidate validation seed 2: 112
 
-hard population holdout: 432
-hard density holdout: 288
-hard redundancy holdout: 192
-hard severity holdout: 48
-~~~
+single-axis hard holdouts:
+  N=256: 168
+  F/N=4: 168
+  R=8: 168
+  p=0.5: 48
 
-Thus roughly three quarters of the unique reachability evidence is hidden from
-fitting.
+compound extrapolation: 408
+~~~
 
 ## Model selection discipline
 
