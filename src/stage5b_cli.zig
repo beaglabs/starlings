@@ -183,7 +183,28 @@ fn writeCandidateTable(
                         candidate.fit_rows,
                         candidate.validation_rows,
                         candidate.validation_score,
-                        if (law == selected.law) "yes" else "no",
+                        if (law == selected.law) "yes" else "diagnostic",
+                    },
+                );
+            }
+
+            if (selected.law == .one_class) {
+                const candidate = try predictive.candidateValidation(
+                    summary,
+                    regime,
+                    target,
+                    .one_class,
+                );
+                try writeLine(
+                    io,
+                    out,
+                    "{s}\t{s}\tone_class\t{d}\t{d}\t{d}\tyes\n",
+                    .{
+                        topology.name(),
+                        policy.name(),
+                        candidate.fit_rows,
+                        candidate.validation_rows,
+                        candidate.validation_score,
                     },
                 );
             }
