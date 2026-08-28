@@ -187,7 +187,7 @@ fn runSearch(io: std.Io) !void {
 
     var train_metrics =
         [_]search.Aggregate{.{}} ** search.max_candidates;
-    var train_eligible =
+    const train_eligible =
         search.allEligible(candidates.len);
     var total_violations: u64 = 0;
 
@@ -216,7 +216,7 @@ fn runSearch(io: std.Io) !void {
 
     var validation_metrics =
         [_]search.Aggregate{.{}} ** search.max_candidates;
-    var validation_evaluated =
+    const validation_evaluated =
         search.selectedOrControls(
             candidates.len,
             &train_frontier.flags,
