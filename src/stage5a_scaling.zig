@@ -196,7 +196,7 @@ pub fn run(config: Config) Error!Result {
 
     var round: u32 = 1;
     while (round <= config.max_rounds) : (round += 1) {
-        var snapshot = states;
+        const snapshot = states;
         var next = snapshot;
         var actions = [_]?Action{null} ** max_operators;
         var received = [_]BitSet{.{}} ** max_operators;
