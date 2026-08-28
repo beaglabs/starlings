@@ -2,7 +2,7 @@
 
 Experimental infrastructure for evidence-backed mathematical agent communication and collective coordination, implemented in Zig.
 
-## Current scope: Stage 0–5A
+## Current scope: Stage 0–7C
 
 The foundation contains the machinery needed to run reproducible experiments and compare coordination strategies:
 
@@ -32,6 +32,34 @@ The foundation contains the machinery needed to run reproducible experiments and
 - orthogonal information-diffusion scaling sweeps over population, information volume, topology, redundancy, bandwidth, and local policy
 
 Stage 1 uses five workers and a verifier. The partitioned task assigns one independent fact to each worker, while the overlapping task gives each worker two facts so that every fact exists at two workers. This lets the harness distinguish raw communication efficiency from resilience under information loss.
+
+## Repository layout
+
+~~~text
+src/
+  root.zig                 test/import root
+  core/                    deterministic runtime and formal population substrate
+  protocol/                typed protocol, CFG, traces, and model-eval machinery
+  provenance/              content-addressed causal provenance
+  experiments/
+    stage3/                language/formal-protocol experiments
+    stage4/                operator-neutral population experiment
+    stage5/                scaling, prediction, and regime experiments
+    stage6/                perturbation and robustness-law experiments
+    stage7/                parameterized policy, search, and transfer ABI
+
+modules/
+  p2panda/                 optional native Rust P2Panda Stage 7C runtime adapter
+
+tools/                     external experiment runners
+grammars/                  constrained-generation grammars
+docs/                      stage reports and architecture decisions
+trials/                    local generated outputs only; ignored by Git
+~~~
+
+Core Starlings code does not depend on the optional modules. Generated trial
+outputs are intentionally kept out of version control; canonical hashes and
+scientific conclusions belong in the stage documentation.
 
 ## Validated architecture: content-addressed provenance
 
