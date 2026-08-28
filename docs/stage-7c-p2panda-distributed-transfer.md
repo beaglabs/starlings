@@ -460,3 +460,34 @@ B=2
 
 The suite is frozen comparison/transfer evidence only. It does not select or
 modify theta.
+
+
+## Rust toolchain
+
+P2Panda 0.7.x requires Rust 1.96 or newer.
+
+The Stage 7C crate pins:
+
+~~~text
+Rust 1.98.0
+~~~
+
+in:
+
+~~~text
+stage7c/p2panda/rust-toolchain.toml
+~~~
+
+When rustup manages the local toolchain, entering the Stage 7C crate and running
+Cargo will automatically select/install the pinned compiler.
+
+Check with:
+
+~~~sh
+cd stage7c/p2panda
+rustc --version
+cargo --version
+~~~
+
+The canonical compile gate requires rustc >= 1.96 and uses the pinned 1.98.0
+toolchain unless explicitly overridden.
