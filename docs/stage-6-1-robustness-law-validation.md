@@ -179,8 +179,13 @@ c_operator_omission
 c_message_drop
 ~~~
 
-This tests whether the different correlation structures of operator omission
-and directed message drop require separate effective hazards.
+For the one-round collector-only reachability target, operator omission and
+sender-to-collector message drop are distributionally equivalent: either the
+sender's full contribution is available to the collector or it is not. The two
+perturbation labels use different deterministic hash domains, so this model is
+retained only as a **fault-world/domain sensitivity diagnostic**. A persistent
+difference in fitted c_k must not be interpreted as distinct coverage physics
+without new independent perturbation worlds.
 
 No polynomial feature expansion, generic logistic interaction model, or
 policy term is included.
@@ -331,8 +336,10 @@ renormalize the hazard by an approximately global constant.
 
 ### M3 materially improves M2
 
-Then nominally equal p values have different effective hazard under operator
-omission versus directed message drop.
+Treat the improvement as evidence that the finite deterministic perturbation
+worlds differ by fault-domain label. It is not, by itself, evidence that
+operator omission and sender-to-collector drop have different one-round
+coverage physics.
 
 ### All compact laws fail hard extrapolation
 
