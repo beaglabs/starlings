@@ -168,7 +168,7 @@ pub fn validateRotations(max_rounds: u32) !ValidationSummary {
         );
         summary.runs += 1;
         if (result.simulation.outcome == .success) summary.successes += 1;
-        summary.total_rounds += result.simulation.rounds;
+        summary.total_rounds += @as(usize, @intCast(result.simulation.rounds));
         summary.total_communication +%= result.simulation.cost.communication;
         summary.total_computation +%= result.simulation.cost.computation;
         summary.total_violations +%= result.simulation.cost.violations;
@@ -206,7 +206,9 @@ fn rotatingClaimPolicy(
 
     const known_count: usize = @intCast(@popCount(observation.knowledge));
     const offset: usize = @intCast(
-        (@as(u64, observation.round - 1) + observation.operator_index) % known_count,
+        (@as(u64, observation.round - 1) +
+            @as(u64, @intCast(observation.operator_index))) %
+            @as(u64, @intCast(known_count)),
     );
 
     return .{ .facts = nthSetBit(observation.knowledge, offset) };
