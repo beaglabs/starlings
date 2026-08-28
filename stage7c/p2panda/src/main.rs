@@ -353,12 +353,12 @@ async fn main() -> Result<()> {
 
     if !config.no_header {
         println!(
-            "profile\tn\te\tr\tu\tnodes\tfacts\ttopology\tredundancy\tbandwidth\tseed\tsim_success\tsim_rounds\tsim_communication\tdist_success\tdist_elapsed_ms\tcollector_initial\tcollector_final\tmax_local_round\tactions\tlogical_messages\tcommunication_units\tuseful\tduplicate\tp2panda_local_ops\tp2panda_remote_ops\tduplicate_envelopes\tsync_sessions\tsync_sent_bytes\tsync_received_bytes\tsync_errors\tpolicy_errors"
+            "profile\tn\te\tr\tu\tnodes\tfacts\ttopology\tredundancy\tbandwidth\tseed\tsim_success\tsim_rounds\tsim_communication\tdist_success\tdist_elapsed_ms\tcollector_initial\tcollector_final\tmax_local_round\tactions\tlogical_messages\tcommunication_units\tuseful\tduplicate\tundelivered_units\tp2panda_local_ops\tp2panda_remote_ops\tduplicate_envelopes\tsync_sessions\tsync_sent_bytes\tsync_received_bytes\tsync_errors\tpolicy_errors"
         );
     }
 
     println!(
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         config.profile,
         config.theta.novelty,
         config.theta.exploration,
@@ -383,6 +383,9 @@ async fn main() -> Result<()> {
         aggregate.communication_units,
         aggregate.useful_deliveries,
         aggregate.duplicate_deliveries,
+        aggregate.communication_units.saturating_sub(
+            aggregate.useful_deliveries + aggregate.duplicate_deliveries,
+        ),
         aggregate.p2panda_local_operations,
         aggregate.p2panda_remote_operations,
         aggregate.duplicate_envelopes,
@@ -455,7 +458,10 @@ async fn run_node(
 
     while !stop.load(Ordering::Acquire) {
         tokio::select! {
-            _ = ticker.tick(), if !emission_done => {
+            _ = ticker.tick() => {
+                if emission_done {
+                    continue;
+                }
                 if state.round >= config.max_ticks {
                     emission_done = true;
                     continue;
