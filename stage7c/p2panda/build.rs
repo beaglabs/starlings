@@ -12,7 +12,7 @@ fn main() {
         .expect("resolve Starlings repo root");
     let zig_source = repo_root.join("src/stage7c_policy_ffi.zig");
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
-    let output = out_dir.join("libstarlings_stage7c.a");
+    let output = out_dir.join("starlings_stage7c.o");
     let zig = env::var("ZIG").unwrap_or_else(|_| "zig".to_string());
 
     println!("cargo:rerun-if-changed={}", zig_source.display());
@@ -26,7 +26,7 @@ fn main() {
     );
 
     let status = Command::new(&zig)
-        .arg("build-lib")
+        .arg("build-obj")
         .arg(&zig_source)
         .arg("-O")
         .arg("ReleaseFast")
@@ -39,6 +39,8 @@ fn main() {
         panic!("Zig Stage 7C policy library build failed: {status}");
     }
 
-    println!("cargo:rustc-link-search=native={}", out_dir.display());
-    println!("cargo:rustc-link-lib=static=starlings_stage7c");
+    // Link the Zig object directly rather than wrapping it in a static archive.
+    // Apple ld rejects Zig 0.16-produced Mach-O archive members whose ar member
+    // payload is not 8-byte aligned, even though the object itself is valid.
+    println!("cargo:rustc-link-arg={}", output.display());
 }
