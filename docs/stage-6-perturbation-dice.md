@@ -391,3 +391,151 @@ zig run -O ReleaseFast src/stage6_cli.zig -- sparse full 137 \
 When start_index > 1 the CLI does not emit another TSV header.
 
 The same convention applies to the coverage sweep.
+
+
+## Canonical sparse robustness results
+
+The authoritative Stage 6 sparse dataset contains:
+
+~~~text
+rows: 540
+malformed rows: 0
+violation rows: 0
+severity-zero failures: 0
+SHA-256:
+bc65358d7c8a519905319fdeb023c4d0b34d8a5d4d66f090bf6eaf30eb336d6e
+~~~
+
+Every canonical anchor therefore reproduces its Stage 5C baseline at zero
+severity.
+
+### Observed robustness boundaries
+
+The first-any / first-all horizon-censoring severities are:
+
+~~~text
+anchor                         mechanism           first-any   first-all
+ring_round_robin_edge          operator_omission       25          150
+ring_round_robin_edge          message_drop            25           50
+ring_round_robin_edge          edge_removal             10           25
+
+ring_seeded_edge               operator_omission      400          500
+ring_seeded_edge               message_drop           300          400
+ring_seeded_edge               edge_removal             10           25
+
+ring_novel_first_high          operator_omission       10           10
+ring_novel_first_high          message_drop            10           10
+ring_novel_first_high          edge_removal             10           25
+
+grid_round_robin_edge          operator_omission       50          100
+grid_round_robin_edge          message_drop            10           25
+grid_round_robin_edge          edge_removal             25           50
+
+grid_seeded_edge               operator_omission      150          150
+grid_seeded_edge               message_drop           100          200
+grid_seeded_edge               edge_removal            150          300
+
+grid_novel_first_high          operator_omission       25          300
+grid_novel_first_high          message_drop           100          150
+grid_novel_first_high          edge_removal            100          300
+~~~
+
+All values are permille.
+
+### Transient faults versus structural failure
+
+Operator omission and directed message loss never make the initial graph
+structurally unreachable. Their failures are therefore dynamical/horizon
+failures.
+
+Static edge removal behaves differently.
+
+For the ring, the first structurally unreachable trial appears at 10 permille
+edge removal and all three trials are structurally unreachable by 25 permille.
+This is consistent with the ring's low edge-connectivity: small static damage
+rapidly partitions the information placement.
+
+For the grid, structural failure appears much later:
+
+~~~text
+first any structurally unreachable: 300 permille
+first all structurally unreachable: 400 permille
+~~~
+
+for all three grid anchors.
+
+Importantly, grid convergence often fails well before structural reachability
+is lost. For example grid round-robin has all three trials horizon-censored by
+50 permille edge removal even though all three collector components still
+contain every fact. Grid seeded remains structurally reachable in all trials
+through 200 permille but already shows horizon censoring at 150 permille.
+
+Therefore topology perturbation has at least two separate effects:
+
+1. path/throughput degradation while all information remains reachable;
+2. eventual structural loss of required information from the collector
+   component.
+
+### Policy-specific fault tolerance
+
+Ring seeded is the strongest transient-fault regime among the tested ring
+anchors:
+
+~~~text
+operator omission:
+  first-any censoring = 400 permille
+  first-all censoring = 500 permille
+
+message drop:
+  first-any censoring = 300 permille
+  first-all censoring = 400 permille
+~~~
+
+This is substantially more robust than ring round-robin despite both operating
+on the same topology.
+
+The high-load ring novel-first control shows the opposite behavior: it
+converges cleanly without faults but all trials censor at only 10 permille
+operator omission or message drop.
+
+Thus high clean-system throughput is not equivalent to perturbation
+robustness.
+
+### Non-monotone trajectory response
+
+The deterministic fault sets are nested with severity, but convergence outcome
+is not strictly monotone.
+
+Examples:
+
+~~~text
+ring round-robin + operator omission:
+  25 permille -> 2/3 successes
+  50 permille -> 3/3 successes
+
+grid seeded + operator omission:
+  150 permille -> 0/3 successes
+  200 permille -> 1/3 successes
+~~~
+
+Additional faults can therefore alter the collective trajectory in a way that
+restores convergence for a trial that failed at a lower severity.
+
+This rejects a purely scalar interpretation in which perturbation only reduces
+effective bandwidth or effective round budget. A future robustness law needs
+both a resource-loss term and a trajectory/coordination-state term.
+
+### Stage 6 sparse conclusion
+
+The sparse results support four claims within the tested deterministic
+population envelope:
+
+1. robustness is strongly topology × policy dependent;
+2. transient operator/message faults can cause dynamical failure without any
+   loss of structural reachability;
+3. static topology damage introduces a distinct reachability phase transition;
+4. nested perturbation severity does not guarantee monotone collective
+   convergence because faults also change the coordination trajectory.
+
+The complete-graph coverage robustness sweep remains the second canonical half
+of Stage 6.
