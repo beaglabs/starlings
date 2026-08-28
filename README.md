@@ -736,3 +736,14 @@ theta93 = (685, 283, 960, 344)
 The TSV output reports the exact synchronous simulation result next to the
 distributed P2Panda result, including logical communication and P2Panda
 operation/sync-byte instrumentation.
+
+
+After the Stage 7C single-run smoke passes:
+
+~~~sh
+cd stage7c/p2panda
+bash run_suite.sh > ../../trials/stage7c-p2panda.tsv
+~~~
+
+This runs the three frozen Stage 7B theta values plus novel-first across ring
+and grid with seeds 0-2 (24 runs total).
