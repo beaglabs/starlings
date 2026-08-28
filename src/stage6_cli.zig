@@ -158,10 +158,28 @@ fn runSparseSweep(io: std.Io, full: bool) !void {
     );
 
     if (full) {
+        const progress = std.Io.File.stderr();
+        var completed: usize = 0;
+        const total = perturb.sparsePlanCount();
+
         for (perturb.sparse_anchors) |anchor| {
             for (perturb.perturbation_kinds) |kind| {
                 for (perturb.sparse_severities_permille) |severity| {
                     for (perturb.trial_seeds) |trial_seed| {
+                        try writeLine(
+                            io,
+                            progress,
+                            "[{d}/{d}] {s} {s} severity={d} seed={d}\n",
+                            .{
+                                completed + 1,
+                                total,
+                                anchor.id,
+                                kind.name(),
+                                severity,
+                                trial_seed,
+                            },
+                        );
+
                         const result = try perturb.runSparseAnchor(
                             anchor,
                             kind,
@@ -169,6 +187,7 @@ fn runSparseSweep(io: std.Io, full: bool) !void {
                             trial_seed,
                         );
                         try writeSparseRow(io, out, anchor, trial_seed, result);
+                        completed += 1;
                     }
                 }
             }
