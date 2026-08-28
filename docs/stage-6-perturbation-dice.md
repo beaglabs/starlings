@@ -539,3 +539,204 @@ population envelope:
 
 The complete-graph coverage robustness sweep remains the second canonical half
 of Stage 6.
+
+
+## Canonical complete-coverage robustness results
+
+The authoritative Stage 6 coverage dataset contains:
+
+~~~text
+rows: 2592
+malformed rows: 0
+violation rows: 0
+severity-zero anomalies: 0
+unreachable rows: 1172
+unreachable fraction: 45.2%
+SHA-256:
+86f15137ee2c3d1b066daeb6e61fa9f052ddf55cb5eb4f4c4f44aed2a11bdb04
+~~~
+
+All severity-zero cells reproduce the Stage 5C one-round threshold baseline.
+
+### Redundancy creates a reachability phase transition
+
+Pooling policy, information density, population size, trial seed, and both
+perturbation mechanisms gives the following one-round reachability fractions:
+
+~~~text
+R=1:
+  p=0.000 -> 108/108 = 100.0%
+  p=0.025 ->   8/108 =   7.4%
+  p=0.050 ->   2/108 =   1.9%
+  p=0.100 ->   0/108 =   0.0%
+
+R=4:
+  p=0.100 -> 108/108 = 100.0%
+  p=0.200 ->  66/108 =  61.1%
+  p=0.300 ->  16/108 =  14.8%
+  p=0.400 ->   6/108 =   5.6%
+  p=0.500 ->   4/108 =   3.7%
+
+R=8:
+  p=0.200 -> 108/108 = 100.0%
+  p=0.300 -> 106/108 =  98.1%
+  p=0.400 ->  84/108 =  77.8%
+  p=0.500 ->  48/108 =  44.4%
+~~~
+
+Thus redundancy is not merely reducing the clean-system B* threshold. It
+changes whether a complete one-round solution exists at all after faults.
+
+R=1 is catastrophically brittle because a missing unique source can remove the
+only one-round path to a required fact. R=8 often retains alternative source
+copies even when a large fraction of senders or deliveries are suppressed.
+
+### Reachability is policy-independent at full bandwidth
+
+Round-robin and seeded have identical reachable-row counts in every
+mechanism × R × severity aggregate.
+
+This is mechanistically expected. At B=F, both policies emit all locally known
+facts, so existence of a one-round solution depends on:
+
+~~~text
+initial placement
+redundancy
+which senders/deliveries survive
+collector's own initial knowledge
+~~~
+
+rather than the ordering policy.
+
+Policy still changes the minimum sub-full threshold B* when the perturbed
+system remains reachable.
+
+This separates two mathematical objects:
+
+~~~text
+reachability phase:
+  controlled primarily by placement/redundancy/fault realization
+
+bandwidth inflation inside the reachable phase:
+  controlled additionally by emission policy/overlap
+~~~
+
+### Fault mechanism differences
+
+At high redundancy, message-drop worlds remain somewhat more reachable than
+operator-omission worlds at high severity.
+
+Examples pooled over policy/density/population/trial:
+
+~~~text
+R=8, p=0.5:
+  message_drop      28/54 reachable = 51.9%
+  operator_omission 20/54 reachable = 37.0%
+
+R=4, p=0.3:
+  message_drop      14/54 reachable = 25.9%
+  operator_omission  2/54 reachable =  3.7%
+~~~
+
+Operator omission removes the sender's entire emission opportunity, while
+message drop is recipient-directed. These mechanisms therefore have different
+coverage correlation structures even at the same nominal severity.
+
+### Information density reduces fault tolerance
+
+Within fixed redundancy, larger F/N reduces the probability that every
+required fact still has at least one surviving route.
+
+At R=8 and p=0.5, pooling policy and both mechanisms:
+
+~~~text
+F/N=1 -> 26/36 reachable = 72.2%
+F/N=2 -> 14/36 reachable = 38.9%
+F/N=4 ->  8/36 reachable = 22.2%
+~~~
+
+This shows that redundancy alone is not the sufficient robustness coordinate;
+information volume must also enter the reachability law.
+
+### Graceful threshold inflation
+
+When redundant systems remain reachable, perturbation often first appears as
+an increase in B* rather than immediate impossibility.
+
+Representative summary cells include:
+
+~~~text
+operator omission, seeded, R=8, F/N=4, p=0.5:
+  median inflation ≈ 2.038x
+
+message drop, seeded, R=8, F/N=4, p=0.5:
+  median inflation ≈ 1.705x
+
+operator omission, round-robin, R=8, F/N=4, p=0.5:
+  median inflation ≈ 1.236x
+
+message drop, round-robin, R=8, F/N=4, p=0.5:
+  median inflation ≈ 1.096x
+~~~
+
+Therefore redundancy converts part of the fault response from binary
+unreachability into graceful communication-cost inflation.
+
+### Candidate missing-fact hazard law
+
+A useful null model follows directly from the one-round semantics.
+
+If each required fact has R independently placed source copies and each source
+route is independently unavailable with probability p, then the probability a
+particular fact loses every source is approximately:
+
+~~~text
+p^R
+~~~
+
+and for F required facts:
+
+~~~text
+P(all facts reachable) ≈ (1 - p^R)^F
+                       ≈ exp(-F p^R)
+~~~
+
+when p^R is small.
+
+This implies a candidate critical fault scale:
+
+~~~text
+p_c ~ F^(-1/R)
+~~~
+
+up to collector-self-knowledge, placement correlations, and finite-population
+effects.
+
+Stage 6 does not validate this equation yet. It is a mechanistic hypothesis
+suggested by the observed sharp R-dependent reachability transition and should
+be tested explicitly before becoming part of the Starlings coordination law.
+
+### Stage 6 combined conclusion
+
+The sparse and complete-coverage experiments together separate three distinct
+robustness mechanisms:
+
+1. **dynamical degradation** — transient faults can push a structurally
+   reachable sparse population beyond the convergence horizon;
+2. **topological reachability loss** — static damage can remove required
+   information from the collector component entirely;
+3. **coverage redundancy** — replicated information can preserve one-round
+   reachability and convert faults into B* inflation instead of immediate
+   impossibility.
+
+The sparse experiment additionally shows that nested fault sets can produce
+non-monotone trajectory outcomes, so a complete robustness theory cannot be
+only a scalar capacity law.
+
+The complete-coverage result suggests that structural fault tolerance may have
+a simpler missing-fact hazard law based on F, R, and perturbation probability,
+while sparse multi-round dynamics require an additional trajectory/state term.
+
+This completes the canonical Stage 6 perturbation dataset. The next stage
+should test/fit the compact robustness coordinates and then use them to define
+a learnable coordination-control parameter theta.
