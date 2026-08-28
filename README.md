@@ -406,3 +406,8 @@ zig run src/stage6_cli.zig -- summarize-sparse \
 zig run src/stage6_cli.zig -- summarize-coverage \
   trials/stage6-coverage.tsv
 ~~~
+
+
+Full Stage 6 sweeps are resumable and print the current deterministic case to
+stderr. Use an optional 1-based start index with append mode after an
+interruption; start_index > 1 suppresses the duplicate TSV header.
