@@ -652,3 +652,87 @@ compound multi-axis stress set. It substantially dominates the named controls
 on the sparse ring/grid holdouts, while complete connectivity is approximately
 a parity regime rather than a broad win. Stage 7B therefore supports a compact
 Pareto family rather than one universal optimal theta.
+
+
+## Stage 7C — Native P2Panda Distributed Transfer
+
+Stage 7C freezes the Stage 7B-selected policy family and transfers the exact
+Zig policy into a real asynchronous P2Panda runtime.
+
+The canonical adapter uses native Rust P2Panda 0.7.0 directly. There is no
+GObject binding in the measurement path.
+
+The architecture is:
+
+~~~text
+Stage 7A / 7B Zig pi_theta
+        |
+        | tiny C ABI
+        v
+Rust Stage 7C harness
+        |
+        v
+native p2panda::Node / topic streams
+        |
+        v
+P2Panda synchronization + Iroh transport
+~~~
+
+Rust does not reimplement the policy. Zig owns:
+
+~~~text
+deterministic initial fact placement
+local pi_theta action selection
+exact named-policy corner behavior
+synchronous Stage 7A comparison baseline
+~~~
+
+Rust owns:
+
+~~~text
+independent asynchronous node clocks
+P2Panda node/topic lifecycle
+real operation publication and synchronization
+application-level logical topology
+idempotent at-least-once event handling
+P2Panda sync/session instrumentation
+~~~
+
+The first Stage 7C experiment is deliberately a distributed-runtime transfer
+test rather than an OS-level network-partition claim. Multiple actual P2Panda
+nodes run concurrently in one process, while Starlings ring/grid/complete
+recipient semantics are encoded in the application envelope. Later 7C
+experiments can place the same harness in separate processes/network
+namespaces without changing pi_theta.
+
+Build and test:
+
+~~~sh
+zig test src/root.zig
+
+cd stage7c/p2panda
+cargo test
+cargo run --release -- \
+  --profile theta51 \
+  --nodes 8 \
+  --facts 32 \
+  --topology ring \
+  --redundancy 2 \
+  --bandwidth 2 \
+  --seed 0
+~~~
+
+The Rust build script invokes Zig automatically to build the Stage 7C static
+policy ABI. Set ZIG=/path/to/zig only if zig is not available on PATH.
+
+Frozen Stage 7B profiles:
+
+~~~text
+theta37 = (244, 94, 15, 958)
+theta51 = (354, 141, 0, 994)
+theta93 = (685, 283, 960, 344)
+~~~
+
+The TSV output reports the exact synchronous simulation result next to the
+distributed P2Panda result, including logical communication and P2Panda
+operation/sync-byte instrumentation.
