@@ -290,6 +290,51 @@ struct LocalState {
     sequence: u32,
 }
 
+const ERROR_SAMPLE_LIMIT: usize = 3;
+const ERROR_DETAIL_LIMIT: usize = 1200;
+const ERROR_KINDS: [&str; 5] = ["session", "processing", "replay", "decode", "ack"];
+
+#[derive(Clone, Copy)]
+enum StreamErrorKind {
+    Session = 0,
+    Processing = 1,
+    Replay = 2,
+    Decode = 3,
+    Ack = 4,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ErrorBucket {
+    count: u64,
+    samples: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct StreamErrors {
+    buckets: [ErrorBucket; 5],
+}
+
+impl StreamErrors {
+    fn record(&mut self, kind: StreamErrorKind, detail: impl FnOnce() -> String) -> Option<&str> {
+        let bucket = &mut self.buckets[kind as usize];
+        bucket.count += 1;
+        if bucket.samples.len() >= ERROR_SAMPLE_LIMIT {
+            return None;
+        }
+        let detail = detail();
+        let mut sample: String = detail.chars().take(ERROR_DETAIL_LIMIT).collect();
+        if detail.chars().count() > ERROR_DETAIL_LIMIT {
+            sample.push_str(" [truncated]");
+        }
+        bucket.samples.push(sample);
+        bucket.samples.last().map(String::as_str)
+    }
+
+    fn counts(&self) -> [u64; 5] {
+        std::array::from_fn(|index| self.buckets[index].count)
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct NodeStats {
     node: u16,
@@ -310,6 +355,17 @@ struct NodeStats {
     sync_errors: u64,
     policy_errors: u64,
     collector_complete: bool,
+    stream_errors: StreamErrors,
+}
+
+impl NodeStats {
+    fn record_stream_error(&mut self, kind: StreamErrorKind, detail: impl FnOnce() -> String) {
+        self.sync_errors += 1;
+        if let Some(sample) = self.stream_errors.record(kind, detail) {
+            eprintln!("[stream-error] node={} round={} kind={} detail={}",
+                self.node, self.rounds, ERROR_KINDS[kind as usize], sample);
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -328,6 +384,7 @@ struct AggregateStats {
     sync_errors: u64,
     policy_errors: u64,
     max_local_round: u32,
+    stream_error_counts: [u64; 5],
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -442,14 +499,23 @@ async fn main() -> Result<()> {
         .context("collector stats missing")?;
     let aggregate = aggregate(&node_stats);
     let elapsed_ms = started.elapsed().as_millis();
+    eprintln!("[stream-error-summary] total={} session={} processing={} replay={} decode={} ack={}",
+        aggregate.sync_errors, aggregate.stream_error_counts[0],
+        aggregate.stream_error_counts[1], aggregate.stream_error_counts[2],
+        aggregate.stream_error_counts[3], aggregate.stream_error_counts[4]);
+    for stats in &node_stats {
+        let counts = stats.stream_errors.counts();
+        eprintln!("[node-error-summary] node={} total={} session={} processing={} replay={} decode={} ack={}",
+            stats.node, stats.sync_errors, counts[0], counts[1], counts[2], counts[3], counts[4]);
+    }
 
     if !config.no_header {
         println!(
-            "profile\tn\te\tr\tu\tnodes\tfacts\ttopology\tredundancy\tbandwidth\tseed\tsim_success\tsim_rounds\tsim_communication\tdist_success\tdist_elapsed_ms\tcollector_initial\tcollector_final\tmax_local_round\tactions\tlogical_messages\tcommunication_units\tuseful\tduplicate\tundelivered_units\tp2panda_local_ops\tp2panda_remote_ops\tduplicate_envelopes\tsync_sessions\tsync_sent_bytes\tsync_received_bytes\tsync_errors\tpolicy_errors"
+            "profile\tn\te\tr\tu\tnodes\tfacts\ttopology\tredundancy\tbandwidth\tseed\tsim_success\tsim_rounds\tsim_communication\tdist_success\tdist_elapsed_ms\tcollector_initial\tcollector_final\tmax_local_round\tactions\tlogical_messages\tcommunication_units\tuseful\tduplicate\tundelivered_units\tp2panda_local_ops\tp2panda_remote_ops\tduplicate_envelopes\tsync_sessions\tsync_sent_bytes\tsync_received_bytes\tsync_errors\tpolicy_errors\tsync_session_errors\tprocessing_errors\treplay_errors\tdecode_errors\tack_errors"
         );
     }
 
-    println!(
+    print!(
         "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         config.profile,
         config.theta.novelty,
@@ -487,6 +553,11 @@ async fn main() -> Result<()> {
         aggregate.sync_errors,
         aggregate.policy_errors,
     );
+
+    println!("\t{}\t{}\t{}\t{}\t{}",
+        aggregate.stream_error_counts[0], aggregate.stream_error_counts[1],
+        aggregate.stream_error_counts[2], aggregate.stream_error_counts[3],
+        aggregate.stream_error_counts[4]);
 
     if aggregate.policy_errors != 0 {
         bail!("Stage 7C policy FFI reported errors");
@@ -751,21 +822,33 @@ fn apply_event(
             sent_bytes,
             received_bytes,
             error,
+            remote_node_id,
+            session_id,
             ..
         } => {
             stats.sync_sessions += 1;
             stats.sync_sent_bytes += sent_bytes as u64;
             stats.sync_received_bytes += received_bytes as u64;
-            if error.is_some() {
-                stats.sync_errors += 1;
+            if let Some(error) = error {
+                stats.record_stream_error(StreamErrorKind::Session, || {
+                    format!("peer={remote_node_id:?} session={session_id} error={error:?}")
+                });
             }
         }
 
-        StreamEvent::ProcessingFailed { .. }
-        | StreamEvent::ReplayFailed { .. }
-        | StreamEvent::DecodeFailed { .. }
-        | StreamEvent::AckFailed { .. } => {
-            stats.sync_errors += 1;
+        StreamEvent::ProcessingFailed { error, source, .. } => {
+            stats.record_stream_error(StreamErrorKind::Processing, || {
+                format!("source={source:?} error={error:?}")
+            });
+        }
+        StreamEvent::ReplayFailed { error } => {
+            stats.record_stream_error(StreamErrorKind::Replay, || format!("{error:?}"));
+        }
+        StreamEvent::DecodeFailed { error, .. } => {
+            stats.record_stream_error(StreamErrorKind::Decode, || format!("{error:?}"));
+        }
+        StreamEvent::AckFailed { error, .. } => {
+            stats.record_stream_error(StreamErrorKind::Ack, || format!("{error:?}"));
         }
 
         _ => {}
@@ -812,6 +895,10 @@ fn aggregate(nodes: &[NodeStats]) -> AggregateStats {
         total.sync_sent_bytes += stats.sync_sent_bytes;
         total.sync_received_bytes += stats.sync_received_bytes;
         total.sync_errors += stats.sync_errors;
+        for (total_count, count) in total.stream_error_counts.iter_mut()
+            .zip(stats.stream_errors.counts()) {
+            *total_count += count;
+        }
         total.policy_errors += stats.policy_errors;
         total.max_local_round = total.max_local_round.max(stats.rounds);
     }
@@ -1318,6 +1405,68 @@ mod tests {
             }
             Ok(())
         }).await
+    }
+
+    #[test]
+    fn stream_error_counts_preserve_totals_and_cap_samples() {
+        let mut stats = NodeStats::default();
+        for kind in [StreamErrorKind::Session, StreamErrorKind::Processing,
+            StreamErrorKind::Replay, StreamErrorKind::Decode, StreamErrorKind::Ack] {
+            for index in 0..100 {
+                stats.record_stream_error(kind, || {
+                    assert!(index < ERROR_SAMPLE_LIMIT);
+                    format!("example {index}")
+                });
+            }
+        }
+        assert_eq!(stats.sync_errors, 500);
+        assert_eq!(stats.stream_errors.counts(), [100; 5]);
+        for bucket in &stats.stream_errors.buckets {
+            assert_eq!(bucket.samples.len(), ERROR_SAMPLE_LIMIT);
+            assert_eq!(bucket.samples[0], "example 0");
+        }
+        let total = aggregate(&[stats.clone(), stats]);
+        assert_eq!(total.stream_error_counts, [200; 5]);
+        assert_eq!(total.sync_errors, total.stream_error_counts.iter().sum::<u64>());
+    }
+
+    #[test]
+    fn stream_error_samples_are_bounded_utf8() {
+        let mut errors = StreamErrors::default();
+        let sample = errors.record(StreamErrorKind::Decode, || "é".repeat(5000)).unwrap();
+        assert_eq!(sample, format!("{} [truncated]", "é".repeat(ERROR_DETAIL_LIMIT)));
+    }
+
+    #[test]
+    fn replay_failure_is_not_counted_as_session_failure() -> Result<()> {
+        let config = Config::default();
+        let mut state = LocalState {
+            knowledge: vec![0], sent: vec![0], cursor: 0, round: 0, sequence: 0,
+        };
+        let mut stats = NodeStats::default();
+        let mut seen = HashSet::new();
+        let complete = AtomicBool::new(false);
+        apply_event(StreamEvent::ReplayFailed {
+            error: Arc::new(p2panda::streams::ReplayError::CriticalError),
+        }, 0, &config, 0, &mut state, &mut stats, &mut seen, &complete)?;
+        apply_event(StreamEvent::SyncEnded {
+            remote_node_id: p2panda::NodeId::default(),
+            session_id: 1,
+            sent_operations: 1,
+            received_operations: 1,
+            sent_bytes: 10,
+            received_bytes: 20,
+            sent_bytes_topic_total: 10,
+            received_bytes_topic_total: 20,
+            error: None,
+        }, 0, &config, 0, &mut state, &mut stats, &mut seen, &complete)?;
+        assert_eq!(stats.sync_errors, 1);
+        assert_eq!(stats.stream_errors.counts(), [0, 0, 1, 0, 0]);
+        assert!(stats.stream_errors.buckets[2].samples[0].contains("CriticalError"));
+        assert_eq!(stats.sync_sessions, 1);
+        assert_eq!(stats.sync_sent_bytes, 10);
+        assert_eq!(stats.sync_received_bytes, 20);
+        Ok(())
     }
 
 }
