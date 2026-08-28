@@ -457,3 +457,21 @@ zig run -O ReleaseFast src/stage6_1_cli.zig -- \
 The CLI refuses non-canonical input, reports seed-2 validation metrics, refits
 the scalar corrections on all non-holdout seeds, evaluates every hard holdout,
 and prints a direct hazard-collapse calibration table.
+
+
+Stage 6.1 canonical result: the zero-parameter missing-information hazard
+coordinate
+
+~~~text
+M = F - K0
+h = -M log(1-p^R)
+~~~
+
+predicts the Stage 6 one-round reachability transition across unseen
+population size, information density, redundancy, severity, and compound
+multi-axis extrapolation. On the 408-row compound holdout, the zero-parameter
+laws achieve about 0.0515 Brier, 92.2% accuracy, and aggregate predicted
+reachability within 0.6 percentage points of observed. The fitted hazard-scale
+corrections do not consistently improve unseen performance. P≈exp(-h) is a
+compact probability approximation rather than an exact tail law; rare
+high-hazard successes are under-predicted.
