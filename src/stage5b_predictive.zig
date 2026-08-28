@@ -292,7 +292,7 @@ pub fn fitPooled(
     return .{ .target = target, .model = model, .train_rows = rows };
 }
 
-const Subset = struct {
+const Subset = enum {
     fit,
     validation,
 };
@@ -943,7 +943,7 @@ test "hard holdouts are fixed independently of seed and outcome" {
 }
 
 test "training validation split never admits hard holdouts" {
-    const row = stage5a.Row{
+    var row = stage5a.Row{
         .series = .population,
         .population = 500,
         .facts = 32,
