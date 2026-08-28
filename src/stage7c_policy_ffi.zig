@@ -10,6 +10,18 @@ pub const FfiAction = extern struct {
     _padding: [3]u8 = .{ 0, 0, 0 },
 };
 
+pub const FfiSimulation = extern struct {
+    success: u8,
+    _padding: [7]u8 = .{ 0, 0, 0, 0, 0, 0, 0 },
+    rounds: u32,
+    _padding2: u32 = 0,
+    communication_units: u64,
+    useful_deliveries: u64,
+    duplicate_deliveries: u64,
+    policy_calls: u64,
+    violations: u64,
+};
+
 fn topologyFromInt(value: u8) ?scaling.TopologyKind {
     return switch (value) {
         0 => .ring,
@@ -181,6 +193,53 @@ pub export fn starlings_stage7c_decide(
         .reset_sent = if (action.reset_sent) 1 else 0,
     };
     return 1;
+}
+
+pub export fn starlings_stage7c_simulate(
+    population_size: u16,
+    fact_count: u16,
+    topology: u8,
+    redundancy: u16,
+    bandwidth: u16,
+    seed: u64,
+    max_rounds: u32,
+    novelty_permille: u16,
+    exploration_permille: u16,
+    retry_permille: u16,
+    bandwidth_utilization_permille: u16,
+    out_simulation: *FfiSimulation,
+) callconv(.c) i32 {
+    const config = configFromArgs(
+        population_size,
+        fact_count,
+        topology,
+        redundancy,
+        bandwidth,
+        seed,
+        max_rounds,
+    ) orelse return -1;
+
+    config.validate() catch return -2;
+
+    const theta = stage7a.Theta{
+        .novelty_permille = novelty_permille,
+        .exploration_permille = exploration_permille,
+        .retry_permille = retry_permille,
+        .bandwidth_utilization_permille = bandwidth_utilization_permille,
+    };
+    theta.validate() catch return -3;
+
+    const result = stage7a.run(config, theta) catch return -4;
+    out_simulation.* = .{
+        .success = if (result.success) 1 else 0,
+        .rounds = result.rounds,
+        .communication_units = result.communication_units,
+        .useful_deliveries = result.useful_deliveries,
+        .duplicate_deliveries = result.duplicate_deliveries,
+        .policy_calls = result.policy_calls,
+        .violations = result.violations,
+    };
+    return 0;
 }
 
 test "Stage 7C FFI uses the exact Stage 7A policy" {
