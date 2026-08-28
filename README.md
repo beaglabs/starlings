@@ -725,6 +725,10 @@ cargo run --release -- \
 The Rust build script invokes Zig automatically to build the Stage 7C static
 policy ABI. Set ZIG=/path/to/zig only if zig is not available on PATH.
 
+The Stage 7C crate includes rust-toolchain.toml pinned to Rust 1.98.0, so rustup
+selects a toolchain new enough for P2Panda 0.7.x automatically. P2Panda's
+minimum supported Rust version is 1.96.
+
 Frozen Stage 7B profiles:
 
 ~~~text
