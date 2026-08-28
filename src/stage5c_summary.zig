@@ -381,8 +381,8 @@ fn splitFields(line: []const u8, output: anytype) usize {
     var iterator = std.mem.splitScalar(u8, line, '\t');
     var count: usize = 0;
     while (iterator.next()) |field| {
-        if (count >= output.len) return count + 1;
-        output[count] = field;
+        if (count >= output.*.len) return count + 1;
+        output.*[count] = field;
         count += 1;
     }
     return count;
