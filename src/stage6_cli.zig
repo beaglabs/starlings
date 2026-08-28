@@ -274,6 +274,12 @@ fn writeSparseSummary(
     try writeLine(io, out, "rows: {d}\n", .{dataset.row_count});
     try writeLine(io, out, "malformed_rows: {d}\n", .{dataset.malformed_rows});
     try writeLine(io, out, "violation_rows: {d}\n", .{dataset.violationRows()});
+    try writeLine(
+        io,
+        out,
+        "severity0_failures: {d}\n",
+        .{dataset.severityZeroFailures()},
+    );
 
     try out.writeStreamingAll(
         io,
@@ -340,7 +346,10 @@ fn writeSparseSummary(
         }
     }
 
-    if (dataset.malformed_rows != 0 or dataset.violationRows() != 0) {
+    if (dataset.malformed_rows != 0 or
+        dataset.violationRows() != 0 or
+        dataset.severityZeroFailures() != 0)
+    {
         std.process.exit(2);
     }
 }
@@ -355,6 +364,12 @@ fn writeCoverageSummary(
     try writeLine(io, out, "malformed_rows: {d}\n", .{dataset.malformed_rows});
     try writeLine(io, out, "violation_rows: {d}\n", .{dataset.violationRows()});
     try writeLine(io, out, "unreachable_rows: {d}\n", .{dataset.unreachableRows()});
+    try writeLine(
+        io,
+        out,
+        "severity0_anomalies: {d}\n",
+        .{dataset.severityZeroAnomalies()},
+    );
 
     try out.writeStreamingAll(
         io,
@@ -398,7 +413,10 @@ fn writeCoverageSummary(
         }
     }
 
-    if (dataset.malformed_rows != 0 or dataset.violationRows() != 0) {
+    if (dataset.malformed_rows != 0 or
+        dataset.violationRows() != 0 or
+        dataset.severityZeroAnomalies() != 0)
+    {
         std.process.exit(2);
     }
 }
