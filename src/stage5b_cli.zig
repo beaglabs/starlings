@@ -183,7 +183,12 @@ fn writeCandidateTable(
                         candidate.fit_rows,
                         candidate.validation_rows,
                         candidate.validation_score,
-                        if (law == selected.law) "yes" else "diagnostic",
+                        if (law == selected.law)
+                            "yes"
+                        else if (law == .hybrid)
+                            "diagnostic"
+                        else
+                            "no",
                     },
                 );
             }
