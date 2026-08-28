@@ -52,7 +52,7 @@ fn configFromArgs(
     };
 }
 
-pub export fn starlings_stage7c_abi_version() callconv(.c) u32 {
+pub export fn starlings_stage7c_abi_version() u32 {
     return abi_version;
 }
 
@@ -69,7 +69,7 @@ pub export fn starlings_stage7c_init_state(
     operator_index: u16,
     out_knowledge: [*]u64,
     out_words: usize,
-) callconv(.c) i32 {
+) i32 {
     const config = configFromArgs(
         population_size,
         fact_count,
@@ -131,7 +131,7 @@ pub export fn starlings_stage7c_decide(
     out_fact_words: [*]u64,
     out_words: usize,
     out_action: *FfiAction,
-) callconv(.c) i32 {
+) i32 {
     const config = configFromArgs(
         population_size,
         fact_count,
@@ -210,7 +210,7 @@ pub export fn starlings_stage7c_simulate(
     retry_permille: u16,
     bandwidth_utilization_permille: u16,
     out_simulation: *FfiSimulation,
-) callconv(.c) i32 {
+) i32 {
     const config = configFromArgs(
         population_size,
         fact_count,
