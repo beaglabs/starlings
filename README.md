@@ -385,7 +385,7 @@ Static-edge runs record the collector component and whether that component
 contains every fact, separating structural impossibility from slow dynamics.
 
 Complete-graph coverage robustness perturbs the Stage 5C one-round B* threshold.
-The canonical coverage sweep contains 864 threshold searches across
+The canonical coverage sweep contains 2,592 threshold searches across
 N={64,128,256}, F/N={1,2,4}, R={1,4,8}, round_robin/seeded, operator omission
 or message drop, eight severities, and three deterministic trials. A perturbed
 configuration may become explicitly unreachable even at B=F.
