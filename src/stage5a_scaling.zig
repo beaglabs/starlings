@@ -380,23 +380,23 @@ fn decide(
 fn selectRoundRobin(state: State, config: Config, reset_sent: bool) ?Action {
     var selected = BitSet{};
     var selected_count: usize = 0;
-    var scanned: usize = 0;
-    var cursor: usize = @as(usize, state.cursor) % config.fact_count;
+    const start: usize = @as(usize, state.cursor) % config.fact_count;
+    var offset: usize = 0;
+    var next_cursor = start;
 
-    while (scanned < config.fact_count and selected_count < config.bandwidth) : (scanned += 1) {
-        const fact = (cursor + scanned) % config.fact_count;
+    while (offset < config.fact_count and selected_count < config.bandwidth) : (offset += 1) {
+        const fact = (start + offset) % config.fact_count;
         if (!state.knowledge.has(fact)) continue;
         selected.set(fact);
         selected_count += 1;
-        cursor = (fact + 1) % config.fact_count;
-        scanned = 0;
+        next_cursor = (fact + 1) % config.fact_count;
     }
 
     if (selected_count == 0) return null;
     return .{
         .facts = selected,
         .selected = @intCast(selected_count),
-        .next_cursor = @intCast(cursor),
+        .next_cursor = @intCast(next_cursor),
         .reset_sent = reset_sent,
     };
 }
@@ -469,7 +469,7 @@ fn selectSeeded(
 fn validateAction(action: Action, state: State, config: Config) bool {
     const selected_count = action.facts.count(config.fact_count);
     if (selected_count == 0) return false;
-    if (selected_count != @as(usize, action.selected)) return false;
+    if (selected_count != @as(usize, @intCast(action.selected))) return false;
     if (selected_count > config.bandwidth) return false;
     return action.facts.isSubsetOf(state.knowledge);
 }
@@ -483,7 +483,7 @@ fn deliver(
 ) void {
     _ = recipient;
     result.messages +%= 1;
-    result.communication_units +%= action.selected;
+    result.communication_units +%= @as(u64, @intCast(action.selected));
 
     var fact: usize = 0;
     while (fact < result.config.fact_count) : (fact += 1) {
@@ -660,21 +660,21 @@ test "same scaling configuration is exactly reproducible" {
 }
 
 test "configuration validation rejects impossible dimensions" {
-    try std.testing.expectError(error.InvalidPopulationSize, Config{
+    try std.testing.expectError(error.InvalidPopulationSize, (Config{
         .population_size = 1,
         .fact_count = 1,
         .topology = .ring,
         .redundancy = 1,
         .bandwidth = 1,
         .policy = .round_robin,
-    }.validate());
+    }).validate());
 
-    try std.testing.expectError(error.InvalidRedundancy, Config{
+    try std.testing.expectError(error.InvalidRedundancy, (Config{
         .population_size = 5,
         .fact_count = 5,
         .topology = .ring,
         .redundancy = 6,
         .bandwidth = 1,
         .policy = .round_robin,
-    }.validate());
+    }).validate());
 }
