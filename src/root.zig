@@ -21,6 +21,9 @@ pub const distributed_fact_convergence = @import("distributed_fact_convergence.z
 pub const stage3f0_summary = @import("stage3f0_summary.zig");
 pub const distributed_fact_efficiency = @import("distributed_fact_efficiency.zig");
 pub const stage3f1_summary = @import("stage3f1_summary.zig");
+pub const formal_population = @import("formal_population.zig");
+pub const stage4_population_experiment = @import("stage4_population_experiment.zig");
+pub const stage4_cli = @import("stage4_cli.zig");
 
 test {
     _ = content_id;
@@ -40,6 +43,9 @@ test {
     _ = stage3f0_summary;
     _ = distributed_fact_efficiency;
     _ = stage3f1_summary;
+    _ = formal_population;
+    _ = stage4_population_experiment;
+    _ = stage4_cli;
 }
 
 test "messages route deterministically and update operator state" {
