@@ -86,6 +86,7 @@ pub fn main(init: std.process.Init) !void {
         .density_extrapolation,
         .redundancy_extrapolation,
         .severity_extrapolation,
+        .compound_extrapolation,
     };
 
     for (holdouts) |holdout| {
@@ -237,6 +238,12 @@ fn writeSplit(
         "severity_holdout_p_500: {d}\n",
         .{counts.severity},
     );
+    try writeLine(
+        io,
+        out,
+        "compound_extrapolation_holdout: {d}\n",
+        .{counts.compound},
+    );
 }
 
 fn writeMethod(io: std.Io, out: std.Io.File) !void {
@@ -254,7 +261,8 @@ fn writeMethod(io: std.Io, out: std.Io.File) !void {
             "candidate fit: nonholdout seeds 0-1\n" ++
             "candidate validation: nonholdout seed 2\n" ++
             "hard evaluation: refit scalar corrections on all nonholdout seeds\n" ++
-            "hard holdouts are disjoint by priority: N=256, then F/N=4, then R=8, then p=0.5\n",
+            "training box: N={64,128}, F/N={1,2}, R={1,4}, p<=0.4\n" ++
+            "hard holdouts: exactly one unseen axis (N=256 | F/N=4 | R=8 | p=0.5) plus compound extrapolation for 2+ unseen axes\n",
     );
 }
 
