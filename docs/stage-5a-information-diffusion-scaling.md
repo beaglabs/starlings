@@ -332,6 +332,60 @@ zig run src/stage5a_cli.zig -- sweep full > trials/stage5a-full.tsv
 The TSV contains a series column so population, information, and capacity
 experiments remain distinguishable.
 
+## Stage 5A.1 performance hardening
+
+The canonical Stage 5A experiment is unchanged, but the execution engine is
+hardened so large sweeps measure coordination behavior without avoidable
+simulator overhead.
+
+The optimized path makes four semantics-preserving changes:
+
+1. Delivery accounting operates on active 64-bit words rather than scanning
+   every fact for every logical message.
+2. BitSet count, complete-set detection, and novel-first unsent detection use
+   word-level operations with an explicit mask for partial tail words.
+3. The main round loop no longer copies the complete population into both
+   snapshot and next arrays. All policy decisions are collected before any
+   mutation; knowledge remains frozen during delivery; local sent/cursor
+   metadata is then committed; received knowledge is merged only after all
+   deliveries.
+4. Knowledge merges touch only the words needed by the configured fact count.
+
+These changes preserve the Stage 5A synchronous semantics:
+
+~~~text
+all decisions observe pre-round state
+all action validation uses pre-round knowledge
+all useful/duplicate accounting uses pre-round knowledge plus earlier
+same-round receipts
+new knowledge becomes policy-visible only on the next round
+~~~
+
+A deliberately slow reference engine remains test-only. It retains the
+original population copying and per-fact delivery loop. The root suite compares
+the optimized and reference Results exactly across all three topology families,
+all three policy families, and configurations on both sides of a 64-bit word
+boundary.
+
+The equivalence requirement is:
+
+~~~text
+optimized Result == reference Result
+~~~
+
+including success, rounds, policy calls, actions, messages, communication
+units, useful deliveries, duplicates, rejected actions, and violations.
+
+For a direct regression against the preliminary large-ring result, rerun:
+
+~~~sh
+zig run src/stage5a_cli.zig -- \
+  run 1000 ring 2 2 novel_first 0 4096 32
+~~~
+
+The optimized implementation should reproduce the same deterministic metrics
+as the pre-hardening run while completing substantially faster.
+
 ## Stage 5A gate
 
 Stage 5A is successful if:
