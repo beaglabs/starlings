@@ -217,7 +217,10 @@ first severity where all trials are structurally impossible
 non-monotonic all-success returns
 ~~~
 
-A zero threshold means the event was not observed on the sampled severity grid.
+Boundary summaries use `-1` to mean "not observed on the sampled severity
+grid." This is intentionally distinct from a real 0-permille boundary value.
+Each boundary row also reports the maximum severity actually present in the
+dataset, and summary tables omit unsampled zero-row groups.
 
 Detailed severity rows also report average successful convergence time,
 delivered/attempted communication ratio, removed edges, and surviving collector
