@@ -256,7 +256,8 @@ fn writeMethod(io: std.Io, out: std.Io.File) !void {
             "naive_F_exp: P = exp(-F p^R)\n" ++
             "missing_exact: P = exp(-h_exact) = (1-p^R)^M\n" ++
             "global_scaled_exact: P = exp(-c h_exact), one fitted c\n" ++
-            "mechanism_scaled_exact: P = exp(-c_k h_exact), one c per transient fault mechanism\n" ++
+            "mechanism_scaled_exact: P = exp(-c_k h_exact), one c per fault-domain label; diagnostic only for one-round coverage\n" ++
+            "operator omission and sender-to-collector drop are distributionally equivalent for this one-round target; c_k differences are fault-world/domain diagnostics, not distinct coverage physics\n" ++
             "scalar corrections fit by deterministic Bernoulli maximum likelihood\n" ++
             "candidate fit: nonholdout seeds 0-1\n" ++
             "candidate validation: nonholdout seed 2\n" ++
