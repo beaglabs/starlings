@@ -258,3 +258,54 @@ Canonical Stage 5A dataset SHA-256:
 ~~~text
 92279da22ded432f942b24f96f4f4658ee49174ba45c66239537744bee988fc6
 ~~~
+
+
+## Stage 5B — Predictive Coordination Laws
+
+Stage 5B asks whether the empirical Stage 5A dynamics can be predicted on
+configurations that are deliberately hidden before fitting.
+
+Run against the frozen canonical dataset:
+
+~~~sh
+zig run src/stage5b_cli.zig -- trials/stage5a-full.tsv
+~~~
+
+The primary approach fits a separate compact law for each topology × policy
+regime. Two identifiable feature families compete using only seed-2 validation
+rows from the non-holdout region:
+
+- mechanistic: diameter, information volume, redundancy, bandwidth;
+- population: population size, information volume, redundancy, bandwidth.
+
+A hybrid N+D model is still reported as a predictive diagnostic, but it cannot
+be selected as the primary mathematical law because D is determined by N
+inside each fixed topology family. For convergence regimes whose candidate-fit
+rows contain only one outcome class, Stage 5B reports an explicit smoothed
+one-class baseline instead of manufacturing an unidentifiable boundary law.
+
+Seeds 0 and 1 fit each candidate. Seed 2 chooses the candidate. The selected
+candidate is then refit on all non-holdout seeds before hard evaluation.
+
+Hard holdouts are fixed before model fitting:
+
+~~~text
+population extrapolation: N = 1000
+information extrapolation: F = 1024
+capacity interpolation:
+  (R,B) = (1,2), (1,8), (2,4), (4,2), (4,16), (8,8)
+~~~
+
+A pooled 30-term ridge model with topology/policy interactions is evaluated as
+a challenger to the regime-specific laws.
+
+Targets are separated:
+
+~~~text
+P(T_conv <= 4096)   all rows, including right-censored outcomes
+T_conv | success    successful rows only
+C_comm | success    successful rows only
+eta_info | success  successful rows only
+~~~
+
+Censored observations are never assigned a fake convergence time of 4096.
