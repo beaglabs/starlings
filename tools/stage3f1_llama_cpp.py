@@ -286,6 +286,7 @@ def write_record(
     worker: int,
     knowledge_before: int,
     budget_before: int,
+    worker_budget: int,
     model_seed: int,
     completion_tokens: int,
     latency_us: int,
@@ -293,7 +294,7 @@ def write_record(
 ) -> None:
     handle.write(
         f"{environment_seed}\t{sampling_seed}\t{mode}\t{round_number}\t{worker}\t"
-        f"{knowledge_before}\t{budget_before}\t{model_seed}\t"
+        f"{knowledge_before}\t{budget_before}\t{worker_budget}\t{model_seed}\t"
         f"{completion_tokens}\t{latency_us}\t{escape_completion(completion)}\n"
     )
     handle.flush()
@@ -555,6 +556,7 @@ def main() -> int:
                                 worker=worker,
                                 knowledge_before=snapshot[worker_index],
                                 budget_before=budget_snapshot[worker_index],
+                                worker_budget=args.worker_budget,
                                 model_seed=model_seed,
                                 completion_tokens=tokens,
                                 latency_us=latency_us,
