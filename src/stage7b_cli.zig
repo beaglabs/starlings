@@ -86,7 +86,17 @@ fn validate(io: std.Io) !void {
         .{if (controls_exact) "yes" else "no"},
     );
 
-    inline for (std.meta.tags(search.SplitKind)) |split| {
+    const splits = [_]search.SplitKind{
+        .training,
+        .validation,
+        .population_extrapolation,
+        .density_extrapolation,
+        .redundancy_extrapolation,
+        .bandwidth_extrapolation,
+        .topology_extrapolation,
+        .compound_extrapolation,
+    };
+    for (splits) |split| {
         try writeLine(
             io,
             out,
