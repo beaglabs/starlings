@@ -638,9 +638,13 @@ R=4, p=0.3:
   operator_omission  2/54 reachable =  3.7%
 ~~~
 
-Operator omission removes the sender's entire emission opportunity, while
-message drop is recipient-directed. These mechanisms therefore have different
-coverage correlation structures even at the same nominal severity.
+In the sparse multi-round experiment, operator omission and per-recipient
+message loss are genuinely different mechanisms. In this complete one-round
+collector-only coverage oracle, however, both reduce to a Bernoulli
+sender-contribution event at the collector. Their different observed reachable
+counts come from different deterministic fault hash domains / finite sampled
+worlds and should not be interpreted as different one-round coverage
+correlation structures.
 
 ### Information density reduces fault tolerance
 

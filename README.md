@@ -411,3 +411,67 @@ zig run src/stage6_cli.zig -- summarize-coverage \
 Full Stage 6 sweeps are resumable and print the current deterministic case to
 stderr. Use an optional 1-based start index with append mode after an
 interruption; start_index > 1 suppresses the duplicate TSV header.
+
+
+## Stage 6.1 — Robustness Law Validation
+
+Stage 6.1 tests whether the one-round reachability phase discovered in Stage 6
+has a compact predictive law before Starlings moves to learned coordination
+control.
+
+It consumes the frozen canonical Stage 6 coverage dataset:
+
+~~~text
+rows: 2592
+SHA-256:
+86f15137ee2c3d1b066daeb6e61fa9f052ddf55cb5eb4f4c4f44aed2a11bdb04
+~~~
+
+Because round-robin and seeded have identical full-bandwidth reachability,
+Stage 6.1 first verifies that invariant and then keeps one representative copy
+per reachability world, leaving 1296 independent deterministic cases.
+
+The primary parameter-free candidate uses only facts missing from the
+collector:
+
+~~~text
+M = F - K0
+P(reachable) = (1 - p^R)^M
+~~~
+
+and compares it against the original exponential approximation plus one- and
+two-parameter hazard-scale corrections.
+
+The training box is N={64,128}, F/N={1,2}, R={1,4}, p<=0.4.
+Hard evaluation isolates N=256, F/N=4, R=8, and p=0.5 one axis at a time,
+plus a separate compound-extrapolation set for configurations outside the
+training box on two or more axes.
+
+Run:
+
+~~~sh
+zig run -O ReleaseFast src/stage6_1_cli.zig -- \
+  trials/stage6-coverage.tsv
+~~~
+
+The CLI refuses non-canonical input, reports seed-2 validation metrics, refits
+the scalar corrections on all non-holdout seeds, evaluates every hard holdout,
+and prints a direct hazard-collapse calibration table.
+
+
+Stage 6.1 canonical result: the zero-parameter missing-information hazard
+coordinate
+
+~~~text
+M = F - K0
+h = -M log(1-p^R)
+~~~
+
+predicts the Stage 6 one-round reachability transition across unseen
+population size, information density, redundancy, severity, and compound
+multi-axis extrapolation. On the 408-row compound holdout, the zero-parameter
+laws achieve about 0.0515 Brier, 92.2% accuracy, and aggregate predicted
+reachability within 0.6 percentage points of observed. The fitted hazard-scale
+corrections do not consistently improve unseen performance. P≈exp(-h) is a
+compact probability approximation rather than an exact tail law; rare
+high-hazard successes are under-predicted.
