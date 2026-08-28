@@ -160,7 +160,8 @@ complete × seeded
 complete × novel_first
 ~~~
 
-Three candidate laws compete independently for every regime and target.
+Two identifiable candidate laws compete independently for every regime and
+target. A hybrid law remains as a predictive diagnostic only.
 
 ### Mechanistic candidate
 
@@ -194,7 +195,7 @@ log(Y) =
 This challenger asks whether raw population scale can substitute for graph
 diameter within a fixed topology family.
 
-### Hybrid candidate
+### Hybrid diagnostic
 
 ~~~text
 log(Y) =
@@ -206,18 +207,45 @@ log(Y) =
   + betaB log(B)
 ~~~
 
-Small ridge regularization keeps the normal equations stable when N and D are
-strongly related.
+The hybrid is evaluated but cannot be selected as the primary empirical law.
+Within each fixed Stage 5A topology, diameter is a deterministic function of
+population size: ring diameter is approximately N/2, complete diameter is 1,
+and the grid construction deterministically maps N to its dimensions. Separate
+betaN and betaD coefficients are therefore not identifiable as physical
+scaling exponents. Ridge can stabilize prediction numerically, but it cannot
+create independent information that the experiment did not vary.
+
+### One-class convergence fallback
+
+Some topology × policy regimes contain only successes (or only censoring) in
+the candidate-fit region. Logistic regression cannot identify a convergence
+boundary without both outcome classes.
+
+For those regimes Stage 5B uses a smoothed constant probability:
+
+~~~text
+p = (successes + 0.5) / (rows + 1)
+~~~
+
+and reports the law as `one_class`. This is an explicit statement that the
+Stage 5A training region does not identify a boundary for that regime; it is
+not interpreted as a scaling law.
 
 ## Candidate selection without hard-holdout leakage
 
-For each topology × policy × target × candidate:
+For each topology × policy × target:
 
-1. Fit on non-holdout rows with seed 0 or 1.
-2. Evaluate on non-holdout rows with seed 2.
-3. Select the lowest validation loss.
+1. Fit the mechanistic and population candidates on non-holdout rows with seed
+   0 or 1.
+2. Evaluate both on non-holdout rows with seed 2.
+3. Select the lower validation loss.
 4. Refit the selected candidate using all non-holdout seeds 0, 1, and 2.
-5. Only then evaluate N=1000, F=1024, and capacity interpolation holdouts.
+5. Evaluate the hybrid separately as a predictive-only diagnostic.
+6. Only then evaluate N=1000, F=1024, and capacity interpolation holdouts.
+
+For convergence, if the seed-0/1 fit region contains only one outcome class,
+the `one_class` constant model replaces candidate selection because no
+boundary is identifiable.
 
 Selection loss:
 
