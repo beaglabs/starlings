@@ -386,6 +386,57 @@ zig run src/stage5a_cli.zig -- \
 The optimized implementation should reproduce the same deterministic metrics
 as the pre-hardening run while completing substantially faster.
 
+## Stage 5A.2 deterministic dataset summary
+
+The canonical full sweep is summarized by a deterministic Zig parser:
+
+~~~sh
+zig run src/stage5a_summary.zig -- trials/stage5a-full.tsv
+~~~
+
+The canonical dataset checkpoint is:
+
+~~~text
+rows: 918
+population: 162
+information: 216
+capacity: 540
+violating rows: 0
+successes within 4096 rounds: 889
+right-censored at 4096 rounds: 29
+success rate within horizon: 96.84%
+sha256: 92279da22ded432f942b24f96f4f4658ee49174ba45c66239537744bee988fc6
+~~~
+
+A horizon-exhausted row is not treated as a 4096-round convergence. It is a
+right-censored observation:
+
+~~~text
+T_conv > 4096
+~~~
+
+Accordingly, mean/median/min/max convergence rounds are calculated only over
+successful runs. Censored runs are instead characterized by collector
+completion fraction, communication expenditure, and useful-information
+efficiency.
+
+The summary produces:
+
+1. canonical shape/hash/integrity metadata;
+2. overall successful-versus-censored metrics;
+3. topology x policy aggregate statistics;
+4. population-scaling tables at fixed F=32, R=2, B=2;
+5. information-scaling tables at fixed N=128, R=2, B=2;
+6. capacity-scaling tables at fixed N=128, F=128;
+7. first observed population and information censoring boundaries by
+   topology/policy;
+8. empirical extrema;
+9. the complete list of right-censored configurations.
+
+Stage 5A.2 remains descriptive. It does not fit, select, or validate a scaling
+equation. Predictive mathematical modeling and held-out evaluation are reserved
+for Stage 5B.
+
 ## Stage 5A gate
 
 Stage 5A is successful if:
