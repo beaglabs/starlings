@@ -106,8 +106,10 @@ at both 4096 and 16384 rounds.
 It also reports non-monotonicity: a later F returning to all-success after an
 earlier censored F is explicit evidence against a simple scalar threshold.
 
-A value of zero in a boundary column means no such boundary was observed
-through F=2048.
+A value of zero in a boundary column means no such boundary was observed in
+the rows actually present for that group. The summary also reports
+`max_observed_F`; only the canonical full dataset reaches F=2048 for every
+topology/policy/bandwidth group.
 
 ## Hypothesis B — complete-graph one-round saturation
 
@@ -133,6 +135,13 @@ seed = 0, 1, 2
 ~~~
 
 This yields 576 threshold configurations.
+
+For round 1, `novel_first` is intentionally expected to match
+`round_robin`: every operator begins with an empty `sent` set, so the
+novelty policy's first emission reduces to the same round-robin selection.
+Those duplicated threshold rows are retained as an explicit invariant/control,
+not interpreted as independent policy evidence. Root tests require exact
+one-round equivalence for representative configurations.
 
 For each configuration Stage 5C finds:
 
