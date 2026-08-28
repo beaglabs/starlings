@@ -160,7 +160,7 @@ pub fn validateRotations(max_rounds: u32) !ValidationSummary {
     var summary = ValidationSummary{};
 
     var environment_seed: u64 = 0;
-    while (environment_seed < fact_count) : (environment_seed += 1) {
+    while (environment_seed < @as(u64, fact_count)) : (environment_seed += 1) {
         const result = try runEnvironment(
             environment_seed,
             .rotating_claim,
