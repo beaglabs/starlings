@@ -94,6 +94,12 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
+fn transient_node_builder() -> p2panda::NodeBuilder {
+    // At the pinned revision, Node::spawn uses the generic multi-connection
+    // SQLite pool; the builder uses SqliteStoreBuilder::memory() instead.
+    p2panda::builder()
+}
+
 async fn bounded<T>(
     phase: &str,
     limit: Duration,
@@ -372,7 +378,7 @@ async fn main() -> Result<()> {
         let node = bounded(
             &format!("spawn p2panda node {node_index}"),
             STARTUP_TIMEOUT,
-            async { Ok(p2panda::spawn().await?) },
+            async { Ok(transient_node_builder().spawn().await?) },
         ).await?;
         eprintln!("[stream {}/{}] creating topic stream", node_index + 1, config.nodes);
         let pair = bounded(
@@ -639,10 +645,17 @@ async fn run_node(
                     }
                     Ok(())
                 };
-                if receive_while(operation, &mut rx, &stop, |event| {
+                let publication = receive_while(operation, &mut rx, &stop, |event| {
                     apply_event(event, node_index, &config, run_nonce,
                         &mut state, &mut stats, &mut seen, &collector_complete)
-                }).await?.is_none() {
+                }).await;
+                let publication = publication.with_context(|| format!(
+                    "node {node_index}: round={} sequence={} actions={} local_ops={} remote_ops={} sync_errors={} known_facts={}/{}",
+                    state.round, state.sequence, stats.actions,
+                    stats.p2panda_local_operations, stats.p2panda_remote_operations,
+                    stats.sync_errors, count_facts(&state.knowledge, config.facts), config.facts,
+                ))?;
+                if publication.is_none() {
                     break;
                 }
 
@@ -1226,6 +1239,85 @@ mod tests {
             Duration::ZERO, Duration::from_millis(5),
         )).await.unwrap().unwrap_err();
         assert!(format!("{error:#}").contains("publication failed"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn transient_nodes_process_real_publications_concurrently() -> Result<()> {
+        fn record_local(
+            event: StreamEvent<Envelope>,
+            node_index: u16,
+            received: &mut HashSet<u32>,
+        ) -> Result<()> {
+            match event {
+                StreamEvent::Processed { operation, source } => {
+                    if !matches!(source, Source::LocalStore) {
+                        bail!("unexpected remote operation in isolated local-processing test");
+                    }
+                    let envelope = operation.message();
+                    if envelope.sender != node_index || envelope.sequence >= 64 {
+                        bail!("unexpected local message");
+                    }
+                    received.insert(envelope.sequence);
+                }
+                StreamEvent::ProcessingFailed { .. }
+                | StreamEvent::ReplayFailed { .. }
+                | StreamEvent::DecodeFailed { .. }
+                | StreamEvent::AckFailed { .. } => bail!("local pipeline reported a failure"),
+                _ => {}
+            }
+            Ok(())
+        }
+
+        let mut tasks = JoinSet::new();
+        for node_index in 0_u16..8 {
+            tasks.spawn(async move {
+                let node = bounded("test node startup", STARTUP_TIMEOUT, async {
+                    Ok(transient_node_builder()
+                        .mdns_mode(p2panda::network::MdnsDiscoveryMode::Disabled)
+                        .spawn().await?)
+                }).await?;
+                let (tx, mut rx) = bounded("test stream startup", STARTUP_TIMEOUT, async {
+                    Ok(node.stream::<Envelope>(Topic::random()).await?)
+                }).await?;
+                let stop = AtomicBool::new(false);
+                let mut received = HashSet::new();
+                for sequence in 0..64 {
+                    let envelope = Envelope {
+                        run_nonce: 1,
+                        sender: node_index,
+                        sequence,
+                        logical_round: sequence + 1,
+                        recipients: vec![node_index],
+                        facts: vec![(sequence % 32) as u16],
+                    };
+                    let operation = bounded("test local publication", OPERATION_TIMEOUT, async {
+                        let processed = tx.publish(envelope).await?.await?;
+                        if !processed.is_completed() || processed.is_failed() {
+                            bail!("local processing did not complete successfully");
+                        }
+                        Ok(())
+                    });
+                    receive_while(operation, &mut rx, &stop, |event| {
+                        record_local(event, node_index, &mut received)
+                    }).await?.context("test publication cancelled unexpectedly")?;
+                }
+                bounded("test local delivery drain", OPERATION_TIMEOUT, async {
+                    while received.len() < 64 {
+                        let event = rx.next().await.context("local stream closed")?;
+                        record_local(event, node_index, &mut received)?;
+                    }
+                    Ok(())
+                }).await?;
+                drop(node);
+                Ok::<_, anyhow::Error>(())
+            });
+        }
+        bounded("concurrent P2Panda local processing test", Duration::from_secs(60), async {
+            while let Some(result) = tasks.join_next().await {
+                result.context("join real P2Panda test node")??;
+            }
+            Ok(())
+        }).await
     }
 
 }
