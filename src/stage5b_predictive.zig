@@ -42,6 +42,36 @@ pub const LawKind = enum {
             .hybrid => 6,
         };
     }
+
+    pub fn featureName(self: LawKind, index: usize) []const u8 {
+        return switch (self) {
+            .mechanistic => switch (index) {
+                0 => "intercept",
+                1 => "log(D+1)",
+                2 => "log(F)",
+                3 => "log(R)",
+                4 => "log(B)",
+                else => "unused",
+            },
+            .population => switch (index) {
+                0 => "intercept",
+                1 => "log(N)",
+                2 => "log(F)",
+                3 => "log(R)",
+                4 => "log(B)",
+                else => "unused",
+            },
+            .hybrid => switch (index) {
+                0 => "intercept",
+                1 => "log(N)",
+                2 => "log(D+1)",
+                3 => "log(F)",
+                4 => "log(R)",
+                5 => "log(B)",
+                else => "unused",
+            },
+        };
+    }
 };
 
 pub const Target = enum {
@@ -985,7 +1015,7 @@ test "logistic fit orders easy success above hard failure" {
 }
 
 test "pooled challenger feature contract remains fixed at thirty terms" {
-    var row = stage5a.Row{
+    const row = stage5a.Row{
         .series = .population,
         .population = 100,
         .facts = 32,
