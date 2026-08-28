@@ -272,12 +272,17 @@ zig run src/stage5b_cli.zig -- trials/stage5a-full.tsv
 ~~~
 
 The primary approach fits a separate compact law for each topology × policy
-regime. Three candidate feature families compete using only seed-2 validation
+regime. Two identifiable feature families compete using only seed-2 validation
 rows from the non-holdout region:
 
 - mechanistic: diameter, information volume, redundancy, bandwidth;
-- population: population size, information volume, redundancy, bandwidth;
-- hybrid: population size plus diameter and the remaining resource variables.
+- population: population size, information volume, redundancy, bandwidth.
+
+A hybrid N+D model is still reported as a predictive diagnostic, but it cannot
+be selected as the primary mathematical law because D is determined by N
+inside each fixed topology family. For convergence regimes whose candidate-fit
+rows contain only one outcome class, Stage 5B reports an explicit smoothed
+one-class baseline instead of manufacturing an unidentifiable boundary law.
 
 Seeds 0 and 1 fit each candidate. Seed 2 chooses the candidate. The selected
 candidate is then refit on all non-holdout seeds before hard evaluation.
