@@ -14,6 +14,7 @@ pub const HoldoutKind = enum {
     density_extrapolation,
     redundancy_extrapolation,
     severity_extrapolation,
+    compound_extrapolation,
 
     pub fn name(self: HoldoutKind) []const u8 {
         return switch (self) {
@@ -22,6 +23,7 @@ pub const HoldoutKind = enum {
             .density_extrapolation => "density_F_over_N_4",
             .redundancy_extrapolation => "redundancy_R_8",
             .severity_extrapolation => "severity_p_500",
+            .compound_extrapolation => "compound_extrapolation",
         };
     }
 };
@@ -101,6 +103,7 @@ pub const SplitCounts = struct {
     density: usize = 0,
     redundancy: usize = 0,
     severity: usize = 0,
+    compound: usize = 0,
 };
 
 pub const CalibrationBin = struct {
@@ -145,6 +148,7 @@ const EvalSubset = enum {
     density,
     redundancy,
     severity,
+    compound,
 };
 
 pub fn parseDataset(tsv: []const u8) Dataset {
@@ -164,13 +168,26 @@ pub fn isRepresentative(row: stage6.CoverageRow) bool {
 }
 
 pub fn holdoutKind(row: stage6.CoverageRow) HoldoutKind {
-    // Priority makes the hard holdouts disjoint. Their union is unseen during
-    // fitting and seed-2 candidate validation.
-    if (row.population == 256) return .population_extrapolation;
-    if (row.facts_per_operator_x1000 == 4000) return .density_extrapolation;
-    if (row.redundancy == 8) return .redundancy_extrapolation;
-    if (row.severity_permille == 500) return .severity_extrapolation;
-    return .training;
+    // The training box contains only N={64,128}, F/N={1,2}, R={1,4},
+    // and p<=0.4. Exactly-one-axis extrapolations are isolated; configurations
+    // outside the box on multiple axes are scored separately as compound.
+    const population_out = row.population == 256;
+    const density_out = row.facts_per_operator_x1000 == 4000;
+    const redundancy_out = row.redundancy == 8;
+    const severity_out = row.severity_permille == 500;
+
+    const outside_count =
+        @as(u8, @intFromBool(population_out)) +
+        @as(u8, @intFromBool(density_out)) +
+        @as(u8, @intFromBool(redundancy_out)) +
+        @as(u8, @intFromBool(severity_out));
+
+    if (outside_count == 0) return .training;
+    if (outside_count > 1) return .compound_extrapolation;
+    if (population_out) return .population_extrapolation;
+    if (density_out) return .density_extrapolation;
+    if (redundancy_out) return .redundancy_extrapolation;
+    return .severity_extrapolation;
 }
 
 pub fn splitCounts(dataset: *const Dataset) SplitCounts {
@@ -193,6 +210,7 @@ pub fn splitCounts(dataset: *const Dataset) SplitCounts {
             .density_extrapolation => counts.density += 1,
             .redundancy_extrapolation => counts.redundancy += 1,
             .severity_extrapolation => counts.severity += 1,
+            .compound_extrapolation => counts.compound += 1,
         }
     }
 
@@ -295,6 +313,7 @@ pub fn scoreHardHoldout(
         .density_extrapolation => .density,
         .redundancy_extrapolation => .redundancy,
         .severity_extrapolation => .severity,
+        .compound_extrapolation => .compound,
     };
     return scoreSubset(dataset, subset, law, fit);
 }
@@ -528,6 +547,7 @@ fn subsetMatches(
         .density => holdout == .density_extrapolation,
         .redundancy => holdout == .redundancy_extrapolation,
         .severity => holdout == .severity_extrapolation,
+        .compound => holdout == .compound_extrapolation,
     };
 }
 
@@ -633,6 +653,7 @@ test "Stage 6.1 holdout grid is deterministic and disjoint" {
                                 .density_extrapolation => counts.density += 1,
                                 .redundancy_extrapolation => counts.redundancy += 1,
                                 .severity_extrapolation => counts.severity += 1,
+                                .compound_extrapolation => counts.compound += 1,
                             }
                         }
                     }
@@ -648,10 +669,11 @@ test "Stage 6.1 holdout grid is deterministic and disjoint" {
     try std.testing.expectEqual(@as(usize, 336), counts.training);
     try std.testing.expectEqual(@as(usize, 224), counts.fit);
     try std.testing.expectEqual(@as(usize, 112), counts.validation);
-    try std.testing.expectEqual(@as(usize, 432), counts.population);
-    try std.testing.expectEqual(@as(usize, 288), counts.density);
-    try std.testing.expectEqual(@as(usize, 192), counts.redundancy);
+    try std.testing.expectEqual(@as(usize, 168), counts.population);
+    try std.testing.expectEqual(@as(usize, 168), counts.density);
+    try std.testing.expectEqual(@as(usize, 168), counts.redundancy);
     try std.testing.expectEqual(@as(usize, 48), counts.severity);
+    try std.testing.expectEqual(@as(usize, 408), counts.compound);
 }
 
 test "exact missing-fact law uses only collector-missing facts" {
