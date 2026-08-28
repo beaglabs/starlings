@@ -141,7 +141,7 @@ no GLib dependency
 ~~~
 
 The Rust crate's build script invokes Zig to build only the Stage 7C policy ABI
-as a static library.
+as a linkable object file.
 
 Thus:
 
