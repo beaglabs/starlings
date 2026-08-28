@@ -258,11 +258,11 @@ fn writeBoundarySummary(io: std.Io, dataset: *const summary.BoundaryDataset) !vo
     try writeLine(io, out, "censored_4096: {d}\n", .{dataset.censored4096()});
     try writeLine(io, out, "delayed_convergence_by_16384: {d}\n", .{dataset.delayed()});
     try writeLine(io, out, "persistent_censoring_16384: {d}\n", .{dataset.persistent()});
-    try writeLine(io, out, "boundary_value_0_means: not_observed_through_F_2048\n", .{});
+    try writeLine(io, out, "boundary_value_0_means: not_observed_in_available_rows\n", .{});
 
     try out.writeStreamingAll(
         io,
-        "\ntopology\tpolicy\tB\trows\tlast_all_success_4096\tfirst_any_censored_4096\tfirst_all_censored_4096\tlast_all_success_16384\tfirst_any_censored_16384\tfirst_all_censored_16384\tnonmonotonic_4096\tnonmonotonic_16384\tq_fb_x1000_at_first_4096\tq_fdb_x1000_at_first_4096\tq_fnb_x1000_at_first_4096\tq_fdnrb_x1000_at_first_4096\n",
+        "\ntopology\tpolicy\tB\trows\tmax_observed_F\tlast_all_success_4096\tfirst_any_censored_4096\tfirst_all_censored_4096\tlast_all_success_16384\tfirst_any_censored_16384\tfirst_all_censored_16384\tnonmonotonic_4096\tnonmonotonic_16384\tq_fb_x1000_at_first_4096\tq_fdb_x1000_at_first_4096\tq_fnb_x1000_at_first_4096\tq_fdnrb_x1000_at_first_4096\n",
     );
 
     for (regimes.boundary_topologies) |topology| {
@@ -283,12 +283,13 @@ fn writeBoundarySummary(io: std.Io, dataset: *const summary.BoundaryDataset) !vo
                 try writeLine(
                     io,
                     out,
-                    "{s}\t{s}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\n",
+                    "{s}\t{s}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\n",
                     .{
                         topology.name(),
                         policy.name(),
                         bandwidth,
                         band.rows,
+                        band.max_observed_f,
                         band.last_all_success_4096,
                         band.first_any_censored_4096,
                         band.first_all_censored_4096,
