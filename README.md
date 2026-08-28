@@ -552,3 +552,103 @@ The full probe contains 432 deterministic runs across six fixed theta profiles,
 N={32,64}, F={32,128}, ring/grid, R=2, B={1,2,4}, and seeds 0-2. It is a
 parameterization sanity/control-surface dataset only, not a fitted or selected
 policy result.
+
+
+## Stage 7B — Policy Search and Generalization
+
+Stage 7B searches the frozen Stage 7A policy surface without changing its
+semantics.
+
+The search space contains:
+
+~~~text
+6 fixed Stage 7A profiles
+128 deterministic Latin-hypercube-style candidates
+
+total: 134 theta candidates
+~~~
+
+The search is fixed before evaluation and uses no hard-holdout feedback.
+
+Training:
+
+~~~text
+N={32,64}
+F/N={1,2}
+G={ring,grid}
+R=2
+B={1,2,4}
+seed={0,1}
+
+48 worlds per candidate
+6432 exact training runs
+~~~
+
+Selection is feasibility-first:
+
+~~~text
+1. retain the minimum observed failure count
+2. among equally feasible candidates, compute the Pareto frontier over:
+   rounds
+   communication units
+   duplicate deliveries
+   policy/computation calls
+~~~
+
+This prevents a policy that fails cheaply from appearing Pareto-optimal.
+
+Validation uses seed=2 over the same structural box and is evaluated only for
+the training frontier plus the three named controls.
+
+Only the validation-selected frontier plus the exact controls is then tested on
+hard unseen regimes:
+
+~~~text
+N=128
+F/N=4
+R=4
+B=8
+complete topology
+
+compound:
+  N=128
+  F=512
+  R=4
+  B=8
+  G={ring,grid,complete}
+~~~
+
+Hard results never participate in theta selection.
+
+Run:
+
+~~~sh
+zig test src/root.zig
+
+zig run src/stage7b_cli.zig -- validate
+zig run src/stage7b_cli.zig -- plan
+
+zig run -O ReleaseFast src/stage7b_cli.zig -- search \
+  > trials/stage7b-search.txt
+~~~
+
+Progress is written to stderr while the deterministic report is written to
+stdout.
+
+Stage 7B intentionally searches clean coordination dynamics. Stage 6/6.1 fault
+results remain external structural evidence rather than optimizer feedback.
+Stage 7C is the planned real distributed transfer test using P2Panda, where
+partitions, reconnection, stale state, and asynchronous execution can test
+whether the simulator-selected theta transfers.
+
+
+Stage 7B canonical result: deterministic search over 134 compact theta
+candidates produced a ten-point training frontier and a three-point
+validation-selected frontier. All three selected interior policies have zero
+validation failures and strictly dominate novel-first on validation resource
+cost. The strongest general-purpose point, theta=(354,141,0,994), transfers
+with zero failures to unseen N=128, F/N=4, R=4, B=8, complete topology, and a
+compound multi-axis stress set. It substantially dominates the named controls
+on the sparse ring/grid holdouts, while complete connectivity is approximately
+a parity regime rather than a broad win. Stage 7B therefore supports a compact
+Pareto family rather than one universal optimal theta.
