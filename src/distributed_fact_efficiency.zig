@@ -130,7 +130,7 @@ pub fn applyRound(
                     continue;
                 }
                 remaining_budget[sender] -= cost;
-                metrics.communication_units += cost;
+                metrics.communication_units += @as(usize, @intCast(cost));
                 metrics.network_messages += @as(usize, @intCast(cost));
 
                 for (neighbors) |recipient| {
