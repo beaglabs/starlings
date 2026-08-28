@@ -19,6 +19,8 @@ pub const protocol_model_summary = @import("protocol_model_summary.zig");
 pub const stage3e1_summary = @import("stage3e1_summary.zig");
 pub const distributed_fact_convergence = @import("distributed_fact_convergence.zig");
 pub const stage3f0_summary = @import("stage3f0_summary.zig");
+pub const distributed_fact_efficiency = @import("distributed_fact_efficiency.zig");
+pub const stage3f1_summary = @import("stage3f1_summary.zig");
 
 test {
     _ = content_id;
@@ -36,6 +38,8 @@ test {
     _ = stage3e1_summary;
     _ = distributed_fact_convergence;
     _ = stage3f0_summary;
+    _ = distributed_fact_efficiency;
+    _ = stage3f1_summary;
 }
 
 test "messages route deterministically and update operator state" {
