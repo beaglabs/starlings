@@ -279,7 +279,7 @@ trial = 0,1,2
 for:
 
 ~~~text
-864 threshold searches
+2,592 threshold searches
 ~~~
 
 Novel-first is omitted because Stage 5C proved it is exactly round-robin in the
