@@ -978,7 +978,7 @@ fn mix64(input: u64) u64 {
 
 test "Stage 6 canonical plan sizes are fixed" {
     try std.testing.expectEqual(@as(usize, 540), sparsePlanCount());
-    try std.testing.expectEqual(@as(usize, 864), coveragePlanCount());
+    try std.testing.expectEqual(@as(usize, 2592), coveragePlanCount());
 }
 
 test "severity events are nested for a fixed deterministic world" {
