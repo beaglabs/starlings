@@ -176,11 +176,11 @@ pub fn holdoutKind(row: stage6.CoverageRow) HoldoutKind {
     const redundancy_out = row.redundancy == 8;
     const severity_out = row.severity_permille == 500;
 
-    const outside_count =
-        @as(u8, @intFromBool(population_out)) +
-        @as(u8, @intFromBool(density_out)) +
-        @as(u8, @intFromBool(redundancy_out)) +
-        @as(u8, @intFromBool(severity_out));
+    var outside_count: u8 = 0;
+    if (population_out) outside_count += 1;
+    if (density_out) outside_count += 1;
+    if (redundancy_out) outside_count += 1;
+    if (severity_out) outside_count += 1;
 
     if (outside_count == 0) return .training;
     if (outside_count > 1) return .compound_extrapolation;
@@ -227,12 +227,16 @@ pub fn faultProbability(row: stage6.CoverageRow) f64 {
 }
 
 pub fn allCopiesLostProbability(row: stage6.CoverageRow) f64 {
-    const p = faultProbability(row);
-    return std.math.pow(
-        f64,
-        p,
-        @as(f64, @floatFromInt(row.redundancy)),
-    );
+    return powInteger(faultProbability(row), row.redundancy);
+}
+
+fn powInteger(base: f64, exponent: usize) f64 {
+    var result: f64 = 1.0;
+    var i: usize = 0;
+    while (i < exponent) : (i += 1) {
+        result *= base;
+    }
+    return result;
 }
 
 pub fn exactMissingFactHazard(row: stage6.CoverageRow) f64 {
@@ -688,11 +692,7 @@ test "exact missing-fact law uses only collector-missing facts" {
         true,
         10,
     );
-    const expected: f64 = std.math.pow(
-        f64,
-        @as(f64, 0.9),
-        @as(f64, 90.0),
-    );
+    const expected: f64 = powInteger(0.9, 90);
     const actual = predict(row, .missing_exact, .{});
     try std.testing.expectApproxEqAbs(expected, actual, 1.0e-12);
 }
