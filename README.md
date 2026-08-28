@@ -2,7 +2,7 @@
 
 Experimental infrastructure for evidence-backed mathematical agent communication and collective coordination, implemented in Zig.
 
-## Current scope: Stage 0–3F.1
+## Current scope: Stage 0–4
 
 The foundation contains the machinery needed to run reproducible experiments and compare coordination strategies:
 
@@ -27,6 +27,8 @@ The foundation contains the machinery needed to run reproducible experiments and
 - provider-agnostic model-backed A/B evaluation for unconstrained vs CFG-constrained decoding
 - outcome-scored controlled-emergence experiments over distributed local knowledge
 - communication-budget experiments that measure useful vs redundant information transfer
+- an operator-neutral formal population substrate with pluggable local policies
+- deterministic coordination-plane validation without any language-model dependency
 
 Stage 1 uses five workers and a verifier. The partitioned task assigns one independent fact to each worker, while the overlapping task gives each worker two facts so that every fact exists at two workers. This lets the harness distinguish raw communication efficiency from resilience under information loss.
 
@@ -129,3 +131,37 @@ zig run src/stage3f1_summary.zig -- \
 
 See docs/stage-3f1-communication-efficiency.md for the budget semantics,
 replay invariants, metrics, and experimental gate.
+
+
+## Stage 4 formal population substrate
+
+Stage 4 makes the architectural pivot from LLM-first experiments to an
+operator-neutral coordination core. The formal population model is executable
+as:
+
+~~~text
+P = (A, G, X, M, F, Pi, C, Phi, J)
+~~~
+
+where populations, topology, local state, actions, transition semantics,
+policies, constraints, global observables, and costs are represented by the
+generic Zig substrate in src/formal_population.zig.
+
+The core has no dependency on prompts, tokenizers, model providers, or
+completion APIs. Language models remain a supported downstream policy/operator
+class rather than the definition of Starlings itself.
+
+Validate the deterministic Stage 4 substrate:
+
+~~~sh
+zig test src/root.zig
+
+zig run src/stage4_cli.zig -- validate
+
+zig run src/stage4_cli.zig -- simulate 0 8
+~~~
+
+See docs/stage-4-formal-population-substrate.md and
+docs/adr/0002-operator-neutral-coordination-core.md for the formal mapping,
+architectural decision, validation scope, and progression toward a coordination
+SDK/CLI/serving plane.
