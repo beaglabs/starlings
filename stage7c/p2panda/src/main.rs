@@ -959,6 +959,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ffi_layout_matches_zig_contract() {
+        assert_eq!(std::mem::size_of::<FfiAction>(), 8);
+        assert_eq!(std::mem::size_of::<FfiSimulation>(), 56);
+    }
+
+    #[test]
     fn exact_stage7b_profiles_are_frozen() {
         let theta51 = profile_theta("theta51").unwrap();
         assert_eq!(theta51.novelty, 354);
