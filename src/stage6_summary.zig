@@ -17,6 +17,14 @@ pub const SparseDataset = struct {
         }
         return count;
     }
+
+    pub fn severityZeroFailures(self: *const SparseDataset) usize {
+        var count: usize = 0;
+        for (self.rows[0..self.row_count]) |row| {
+            if (row.severity_permille == 0 and !row.success) count += 1;
+        }
+        return count;
+    }
 };
 
 pub const CoverageDataset = struct {
@@ -37,6 +45,20 @@ pub const CoverageDataset = struct {
         var count: usize = 0;
         for (self.rows[0..self.row_count]) |row| {
             if (!row.reachable) count += 1;
+        }
+        return count;
+    }
+
+    pub fn severityZeroAnomalies(self: *const CoverageDataset) usize {
+        var count: usize = 0;
+        for (self.rows[0..self.row_count]) |row| {
+            if (row.severity_permille != 0) continue;
+            if (!row.reachable or
+                row.perturbed_bandwidth != row.baseline_bandwidth or
+                row.inflation_x1000 != 1000)
+            {
+                count += 1;
+            }
         }
         return count;
     }
