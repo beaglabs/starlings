@@ -78,6 +78,14 @@ pub const BoundaryBand = struct {
     nonmonotonic_16384: usize = 0,
 };
 
+pub const BoundaryCoordinate = struct {
+    facts: usize = 0,
+    q_fb_x1000: u64 = 0,
+    q_fdb_x1000: u64 = 0,
+    q_fnb_x1000: u64 = 0,
+    q_fdnrb_x1000: u64 = 0,
+};
+
 pub const SaturationStats = struct {
     rows: usize = 0,
     median_min_bandwidth: u64 = 0,
@@ -209,6 +217,33 @@ pub fn boundaryBand(
     }
 
     return result;
+}
+
+pub fn firstCensoredCoordinate4096(
+    dataset: *const BoundaryDataset,
+    topology: scaling.TopologyKind,
+    policy: scaling.PolicyKind,
+    bandwidth: usize,
+) BoundaryCoordinate {
+    const band = boundaryBand(dataset, topology, policy, bandwidth);
+    if (band.first_any_censored_4096 == 0) return .{};
+
+    for (dataset.rows[0..dataset.row_count]) |row| {
+        if (row.topology == topology and
+            row.policy == policy and
+            row.bandwidth == bandwidth and
+            row.facts == band.first_any_censored_4096)
+        {
+            return .{
+                .facts = row.facts,
+                .q_fb_x1000 = row.q_fb_x1000,
+                .q_fdb_x1000 = row.q_fdb_x1000,
+                .q_fnb_x1000 = row.q_fnb_x1000,
+                .q_fdnrb_x1000 = row.q_fdnrb_x1000,
+            };
+        }
+    }
+    return .{};
 }
 
 pub fn saturationStats(
