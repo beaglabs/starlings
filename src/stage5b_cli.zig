@@ -94,9 +94,11 @@ fn writeMethod(io: std.Io, out: std.Io.File) !void {
     try out.writeStreamingAll(
         io,
         "primary: separate compact law per topology x policy regime\n" ++
-            "candidate laws: mechanistic | population | hybrid\n" ++
+            "primary candidates: mechanistic | population\n" ++
+            "hybrid: predictive diagnostic only; N and D are not separately identifiable within fixed topology\n" ++
+            "one_class: convergence fallback when seed-0/1 fit rows contain only one outcome class\n" ++
             "candidate selection: fit seeds 0-1, validate on seed 2, training rows only\n" ++
-            "refit: chosen law uses all non-holdout training seeds before hard evaluation\n" ++
+            "refit: chosen primary law uses all non-holdout training seeds before hard evaluation\n" ++
             "challenger: one pooled 30-term ridge model with topology/policy interactions\n" ++
             "convergence target: all rows, Brier score / accuracy / censored recall\n" ++
             "performance targets: successful rows only; censored T_conv is never set to 4096\n" ++
