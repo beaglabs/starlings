@@ -32,6 +32,9 @@ pub const stage5b_cli = @import("stage5b_cli.zig");
 pub const stage5c_regimes = @import("stage5c_regimes.zig");
 pub const stage5c_summary = @import("stage5c_summary.zig");
 pub const stage5c_cli = @import("stage5c_cli.zig");
+pub const stage6_perturbation = @import("stage6_perturbation.zig");
+pub const stage6_summary = @import("stage6_summary.zig");
+pub const stage6_cli = @import("stage6_cli.zig");
 
 test {
     _ = content_id;
@@ -62,6 +65,9 @@ test {
     _ = stage5c_regimes;
     _ = stage5c_summary;
     _ = stage5c_cli;
+    _ = stage6_perturbation;
+    _ = stage6_summary;
+    _ = stage6_cli;
 }
 
 test "messages route deterministically and update operator state" {
