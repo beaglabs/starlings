@@ -475,3 +475,80 @@ reachability within 0.6 percentage points of observed. The fitted hazard-scale
 corrections do not consistently improve unseen performance. P≈exp(-h) is a
 compact probability approximation rather than an exact tail law; rare
 high-hazard successes are under-predicted.
+
+
+## Stage 7A — Parameterized Coordination Policy
+
+Stage 7A introduces the first compact operator-neutral coordination control
+parameter without fitting it.
+
+The local policy is:
+
+~~~text
+a_i,t = pi_theta(o_i,t)
+
+theta = (n, e, r, u)
+~~~
+
+with four permille-valued controls:
+
+~~~text
+n  novelty bias
+e  cursor-order <-> deterministic seeded-order exploration
+r  eligibility of previously emitted facts while unsent facts remain
+u  fraction of the environment-provided bandwidth budget used
+~~~
+
+The policy observation contains only local operator state plus immutable
+environment metadata. It does not expose collector state, peer knowledge,
+global completion, or a global novelty table.
+
+The three named Stage 5 policies are exact control corners:
+
+~~~text
+round_robin: n=0    e=0    r=1000 u=1000
+seeded:      n=0    e=1000 r=1000 u=1000
+novel_first: n=1000 e=0    r=0    u=1000
+~~~
+
+At those exact points Stage 7A delegates to the existing Stage 5A policy
+implementation, so baseline behavior is preserved exactly.
+
+Interior theta values use deterministic local scoring and bounded fact
+selection. The sent bitset remains persistent local memory. Stage 7A does
+not add recipient selection because the existing action algebra broadcasts an
+emitted fact-set to all graph neighbors; neighbor choice belongs after that
+transport primitive exists explicitly.
+
+Stage 7A keeps the objective unscalarized:
+
+~~~text
+failure
+rounds
+communication units
+duplicate deliveries
+policy/computation calls
+~~~
+
+Stage 7B may search Pareto fronts or choose scalar weights without changing
+these underlying measurements.
+
+Validate and inspect the bounded control surface:
+
+~~~sh
+zig test src/root.zig
+
+zig run src/stage7a_cli.zig -- validate
+zig run src/stage7a_cli.zig -- plan
+
+zig run -O ReleaseFast src/stage7a_cli.zig -- probe smoke \
+  > trials/stage7a-smoke.tsv
+
+zig run -O ReleaseFast src/stage7a_cli.zig -- probe full \
+  > trials/stage7a-probe.tsv
+~~~
+
+The full probe contains 432 deterministic runs across six fixed theta profiles,
+N={32,64}, F={32,128}, ring/grid, R=2, B={1,2,4}, and seeds 0-2. It is a
+parameterization sanity/control-surface dataset only, not a fitted or selected
+policy result.
