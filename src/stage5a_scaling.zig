@@ -227,7 +227,7 @@ pub fn completeOneRoundCoverage(config: Config) Error!OneRoundCoverage {
 
     var operator_index: usize = 0;
     while (operator_index < config.population_size) : (operator_index += 1) {
-        const action = decide(
+        const action = decideLocal(
             config.policy,
             states[operator_index],
             operator_index,
@@ -235,7 +235,7 @@ pub fn completeOneRoundCoverage(config: Config) Error!OneRoundCoverage {
             config,
         ) orelse continue;
 
-        if (!validateAction(action, states[operator_index], config)) {
+        if (!validateLocalAction(action, states[operator_index], config)) {
             result.rejected_actions +%= 1;
             result.violations +%= 1;
             continue;
@@ -272,7 +272,7 @@ pub fn run(config: Config) Error!Result {
         var operator_index: usize = 0;
         while (operator_index < config.population_size) : (operator_index += 1) {
             result.policy_calls +%= 1;
-            if (decide(
+            if (decideLocal(
                 config.policy,
                 states[operator_index],
                 operator_index,
@@ -292,7 +292,7 @@ pub fn run(config: Config) Error!Result {
         while (sender < config.population_size) : (sender += 1) {
             const action = actions[sender] orelse continue;
 
-            if (!validateAction(action, states[sender], config)) {
+            if (!validateLocalAction(action, states[sender], config)) {
                 result.rejected_actions +%= 1;
                 result.violations +%= 1;
                 continue;
@@ -428,7 +428,7 @@ fn runReference(config: Config) Error!Result {
         var operator_index: usize = 0;
         while (operator_index < config.population_size) : (operator_index += 1) {
             result.policy_calls +%= 1;
-            if (decide(
+            if (decideLocal(
                 config.policy,
                 snapshot[operator_index],
                 operator_index,
@@ -444,7 +444,7 @@ fn runReference(config: Config) Error!Result {
         while (sender < config.population_size) : (sender += 1) {
             const action = actions[sender] orelse continue;
 
-            if (!validateAction(action, snapshot[sender], config)) {
+            if (!validateLocalAction(action, snapshot[sender], config)) {
                 result.rejected_actions +%= 1;
                 result.violations +%= 1;
                 continue;
@@ -582,7 +582,7 @@ pub fn initializeStates(states: *[max_operators]State, config: Config) void {
     }
 }
 
-fn decide(
+pub fn decideLocal(
     policy: PolicyKind,
     state: State,
     operator_index: usize,
@@ -702,7 +702,7 @@ fn selectSeeded(
     };
 }
 
-fn validateAction(action: Action, state: State, config: Config) bool {
+pub fn validateLocalAction(action: Action, state: State, config: Config) bool {
     const selected_count = action.facts.count(config.fact_count);
     if (selected_count == 0) return false;
     if (selected_count != @as(usize, @intCast(action.selected))) return false;
