@@ -298,3 +298,225 @@ Stage 5C is complete when:
 After Stage 5C, the roadmap moves to controlled perturbation/robustness
 experiments rather than further fitting on these same clean deterministic
 populations.
+
+
+## Canonical Stage 5C results
+
+The authoritative local Zig 0.16 run produced complete, structurally valid
+datasets.
+
+~~~text
+root tests: 123 passed
+
+boundary rows: 756
+boundary malformed rows: 0
+boundary violation rows: 0
+boundary SHA-256:
+5fe94854ea42c80a11c743c40672fddfce1ab05f8d797eb65d1afa581c251c80
+
+saturation rows: 576
+saturation malformed rows: 0
+saturation violation rows: 0
+saturation threshold minimality failures: 0
+saturation SHA-256:
+d897ebc7fc8d3e1b724dd1e2d49bb43d7bf165cec1739eabdf29d9879142947b
+~~~
+
+### Boundary outcome classes
+
+Of 756 boundary cases:
+
+~~~text
+censored at H=4096:            228
+converged by H=16384:          152 of those 228
+still censored at H=16384:      76 of those 228
+~~~
+
+Therefore two thirds of Stage-5A-horizon censoring in this sweep represents
+delayed convergence rather than persistent censoring through the extended
+resource envelope.
+
+All reported topology/policy/bandwidth boundary sequences were monotone in the
+sampled F grid at both horizons.
+
+### Horizon-normalized information load
+
+The boundary data suggests a compact empirical coordinate:
+
+~~~text
+lambda = F / (B H)
+~~~
+
+where H is the round horizon.
+
+For ring + round_robin, the sampled all-seed transition is strikingly stable.
+
+At H=4096:
+
+~~~text
+B=1: last all-success F=192   -> lambda=0.046875
+     first censor    F=256   -> lambda=0.062500
+
+B=2: last all-success F=384   -> lambda=0.046875
+     first censor    F=448   -> lambda=0.0546875
+
+B=4: last all-success F=768   -> lambda=0.046875
+     first censor    F=896   -> lambda=0.0546875
+~~~
+
+At H=16384:
+
+~~~text
+B=1: last all-success F=768   -> lambda=0.046875
+     first censor    F=896   -> lambda=0.0546875
+
+B=2: last all-success F=1536  -> lambda=0.046875
+     first censor    F=2048  -> lambda=0.062500
+~~~
+
+The B=4 extended-horizon boundary lies above the F=2048 experiment ceiling.
+
+Within the tested N=128,R=2 ring regime this supports an empirical
+round-robin load envelope approximately bracketed by:
+
+~~~text
+all-seed success: lambda <= 0.046875 on every resolved boundary
+censoring onset:  lambda approximately 0.0547--0.0625
+~~~
+
+This is substantially more compact than separate F and B exponents and is
+consistent with the Stage 5B result that ring round-robin convergence time
+scales approximately linearly with F and inversely with B.
+
+Ring + seeded shows a distinct, lower-throughput regime. Resolved boundaries
+mostly place its censoring onset near:
+
+~~~text
+lambda approximately 0.0195--0.0234
+~~~
+
+Grid + seeded supports a substantially larger load envelope, with resolved
+censoring onset around:
+
+~~~text
+lambda approximately 0.125
+~~~
+
+and grid + round-robin is larger again: its only resolved H=4096 B=1 boundary
+is bracketed between lambda=0.3125 and 0.375.
+
+These values are empirical regime boundaries for N=128,R=2. Stage 5C does not
+yet establish invariance under population size or redundancy.
+
+### Novel-first boundary result
+
+No ring or grid novel-first case censored through:
+
+~~~text
+F = 2048
+B = 1,2,4
+H = 4096
+~~~
+
+or through the extended H=16384 diagnostic.
+
+The most demanding observed B=1,H=4096 point has:
+
+~~~text
+lambda = 2048 / (1 * 4096) = 0.5
+~~~
+
+and still converges.
+
+Therefore the Stage 5B F=1024 ring novel-first extrapolation failure was not a
+convergence phase transition. It was a failure of the smooth fitted
+convergence-time law to predict the magnitude of a still-convergent
+high-information regime.
+
+Within the Stage 5C envelope, local sent-history/novelty memory increases the
+observed convergence load capacity by at least an order of magnitude relative
+to ring seeded and by more than the resolved ring round-robin boundary.
+
+### Complete-graph saturation
+
+The one-round threshold experiment confirms that complete-graph saturation is
+a coverage phenomenon rather than a single universal aggregate-capacity
+threshold.
+
+For fixed policy, redundancy, and F/N, the normalized quantity:
+
+~~~text
+N B* / F
+~~~
+
+often has modest spread across N and seed, including several zero-spread
+groups. This supports it as a useful first-order population-size
+normalization.
+
+However it is not universal across redundancy or information density.
+For round-robin/novel-first, for example, median N B*/F at F/N=4 rises from:
+
+~~~text
+R=1: 2.375
+R=2: 3.125
+R=4: 4.250
+R=8: 7.750
+~~~
+
+Thus increasing initial redundancy does not simply divide the bandwidth
+needed for one-round coverage.
+
+The naive multiplicative normalization:
+
+~~~text
+N R B* / F
+~~~
+
+is strongly rejected as a cross-redundancy collapse. When redundancy values
+are pooled, its normalized spread is much larger than the spread of N B*/F
+for every reported policy/F-N group.
+
+This indicates that redundancy changes emission overlap and local knowledge
+structure; its effect cannot be represented as independent linear capacity.
+
+### Seeded first-round coverage
+
+Round-robin and novel-first are exactly equivalent in round 1 by construction,
+so their saturation thresholds match.
+
+Seeded selection differs because each operator uses an operator/round/seed
+dependent traversal. At higher redundancy it can require substantially less
+normalized aggregate bandwidth than round-robin.
+
+Examples at F/N=4:
+
+~~~text
+R=8:
+round_robin / novel_first median N B*/F = 7.750
+seeded                         median N B*/F = 4.375
+~~~
+
+and at F/N=2,R=8:
+
+~~~text
+round_robin / novel_first median N B*/F = 7.250
+seeded                         median N B*/F = 4.500
+~~~
+
+This is evidence that one-round saturation depends on diversity/overlap of
+local emissions, not merely the number of initially replicated fact copies.
+
+### Stage 5C conclusion
+
+The canonical Stage 5C result supports two distinct mathematical structures:
+
+1. Sparse-graph convergence boundaries are well described, within fixed
+   N,R, by a topology/policy-specific horizon-normalized information load
+   F/(B H).
+2. Complete-graph one-round saturation is a set-coverage threshold whose
+   population dependence is partially normalized by N B*/F, but whose
+   redundancy dependence is controlled by emission overlap rather than a
+   simple multiplicative R factor.
+
+The next stage should therefore perturb these identified control structures
+rather than fit additional smooth laws to the same deterministic data.
