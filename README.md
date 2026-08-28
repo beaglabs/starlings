@@ -394,10 +394,10 @@ configuration may become explicitly unreachable even at B=F.
 zig run src/stage6_cli.zig -- validate
 zig run src/stage6_cli.zig -- plan full
 
-zig run src/stage6_cli.zig -- sparse full \
+zig run -O ReleaseFast src/stage6_cli.zig -- sparse full \
   > trials/stage6-sparse.tsv
 
-zig run src/stage6_cli.zig -- coverage full \
+zig run -O ReleaseFast src/stage6_cli.zig -- coverage full \
   > trials/stage6-coverage.tsv
 
 zig run src/stage6_cli.zig -- summarize-sparse \
