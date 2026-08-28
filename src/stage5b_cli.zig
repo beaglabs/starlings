@@ -113,6 +113,7 @@ fn writeTarget(
 ) !void {
     try writeLine(io, out, "\n=== target: {s} ===\n", .{target.name()});
     try writeCandidateTable(io, out, summary, target);
+    try writeSelectedLaws(io, out, summary, target);
 
     const pooled = try predictive.fitPooled(summary, target);
     try writeLine(io, out, "\nhard holdout comparison\n", .{});
@@ -183,6 +184,47 @@ fn writeCandidateTable(
                         candidate.validation_rows,
                         candidate.validation_score,
                         if (law == selected.law) "yes" else "no",
+                    },
+                );
+            }
+        }
+    }
+}
+
+fn writeSelectedLaws(
+    io: std.Io,
+    out: std.Io.File,
+    summary: *const stage5a.Summary,
+    target: predictive.Target,
+) !void {
+    try writeLine(io, out, "\nselected regime laws (refit on all non-holdout training seeds)\n", .{});
+    try out.writeStreamingAll(
+        io,
+        "topology\tpolicy\tlaw\tterm\tcoefficient\n",
+    );
+
+    const topologies = [_]scaling.TopologyKind{ .ring, .grid, .complete };
+    const policies = [_]scaling.PolicyKind{ .round_robin, .seeded, .novel_first };
+
+    for (topologies) |topology| {
+        for (policies) |policy| {
+            const fitted = try predictive.fitSelectedRegime(summary, .{
+                .topology = topology,
+                .policy = policy,
+            }, target);
+
+            var index: usize = 0;
+            while (index < fitted.model.feature_count) : (index += 1) {
+                try writeLine(
+                    io,
+                    out,
+                    "{s}\t{s}\t{s}\t{s}\t{d}\n",
+                    .{
+                        topology.name(),
+                        policy.name(),
+                        fitted.law.name(),
+                        fitted.law.featureName(index),
+                        fitted.model.coeffs[index],
                     },
                 );
             }
