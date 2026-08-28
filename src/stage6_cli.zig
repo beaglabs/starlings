@@ -428,10 +428,12 @@ fn writeSparseRow(
     trial_seed: u64,
     result: perturb.Result,
 ) !void {
+    // Zig 0.16's formatter supports at most 32 arguments per call.
+    // Emit one logical 36-column TSV row in two bounded writes.
     try writeLine(
         io,
         out,
-        "{s}\t{d}\t{d}\t{s}\t{d}\t{d}\t{d}\t{s}\t{d}\t{d}\t{s}\t{d}\t{d}\t{s}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{s}\n",
+        "{s}\t{d}\t{d}\t{s}\t{d}\t{d}\t{d}\t{s}\t{d}\t{d}\t{s}\t{d}\t{d}\t{s}\t{d}\t{d}\t{d}\t{d}",
         .{
             anchor.id,
             result.base.population_size,
@@ -451,6 +453,13 @@ fn writeSparseRow(
             result.collector_initial_facts,
             result.collector_final_facts,
             result.policy_slots,
+        },
+    );
+    try writeLine(
+        io,
+        out,
+        "\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{s}\n",
+        .{
             result.policy_calls,
             result.operator_omissions,
             result.actions_proposed,
