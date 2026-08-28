@@ -41,13 +41,15 @@ pub fn main(init: std.process.Init) !void {
 
     if (std.mem.eql(u8, args[1], "sparse")) {
         const full = parseProfile(args);
-        try runSparseSweep(io, full);
+        const start_index = try parseStartIndex(args, full);
+        try runSparseSweep(io, full, start_index);
         return;
     }
 
     if (std.mem.eql(u8, args[1], "coverage")) {
         const full = parseProfile(args);
-        try runCoverageSweep(io, full);
+        const start_index = try parseStartIndex(args, full);
+        try runCoverageSweep(io, full, start_index);
         return;
     }
 
@@ -94,6 +96,13 @@ fn parseProfile(args: []const []const u8) bool {
     if (std.mem.eql(u8, args[2], "smoke")) return false;
     if (std.mem.eql(u8, args[2], "full")) return true;
     return false;
+}
+
+fn parseStartIndex(args: []const []const u8, full: bool) !usize {
+    if (!full or args.len < 4) return 1;
+    const start = try std.fmt.parseInt(usize, args[3], 10);
+    if (start == 0) return error.InvalidStartIndex;
+    return start;
 }
 
 fn validate(io: std.Io) !void {
@@ -150,28 +159,34 @@ fn validate(io: std.Io) !void {
     }
 }
 
-fn runSparseSweep(io: std.Io, full: bool) !void {
+fn runSparseSweep(io: std.Io, full: bool, start_index: usize) !void {
     const out = std.Io.File.stdout();
-    try out.writeStreamingAll(
-        io,
-        "anchor\tpopulation\tfacts\ttopology\tdiameter\tredundancy\tbandwidth\tpolicy\tlambda_x1e6\ttrial_seed\tperturbation\tseverity_permille\tperturbation_seed\tsuccess\trounds\tcollector_initial\tcollector_final\tpolicy_slots\tpolicy_calls\toperator_omissions\tactions\trejected\tattempted_messages\tdelivered_messages\tsuppressed_messages\tattempted_units\tdelivered_units\tsuppressed_units\tdelivery_ratio_permille\tuseful\tduplicate\tviolations\tremoved_edges\tcomponent_size\tcomponent_fact_coverage\tstructurally_reachable\n",
-    );
+    if (!full or start_index == 1) {
+        try out.writeStreamingAll(
+            io,
+            "anchor\tpopulation\tfacts\ttopology\tdiameter\tredundancy\tbandwidth\tpolicy\tlambda_x1e6\ttrial_seed\tperturbation\tseverity_permille\tperturbation_seed\tsuccess\trounds\tcollector_initial\tcollector_final\tpolicy_slots\tpolicy_calls\toperator_omissions\tactions\trejected\tattempted_messages\tdelivered_messages\tsuppressed_messages\tattempted_units\tdelivered_units\tsuppressed_units\tdelivery_ratio_permille\tuseful\tduplicate\tviolations\tremoved_edges\tcomponent_size\tcomponent_fact_coverage\tstructurally_reachable\n",
+        );
+    }
 
     if (full) {
         const progress = std.Io.File.stderr();
-        var completed: usize = 0;
+        var ordinal: usize = 0;
         const total = perturb.sparsePlanCount();
+        if (start_index > total + 1) return error.InvalidStartIndex;
 
         for (perturb.sparse_anchors) |anchor| {
             for (perturb.perturbation_kinds) |kind| {
                 for (perturb.sparse_severities_permille) |severity| {
                     for (perturb.trial_seeds) |trial_seed| {
+                        ordinal += 1;
+                        if (ordinal < start_index) continue;
+
                         try writeLine(
                             io,
                             progress,
                             "[{d}/{d}] {s} {s} severity={d} seed={d}\n",
                             .{
-                                completed + 1,
+                                ordinal,
                                 total,
                                 anchor.id,
                                 kind.name(),
@@ -187,7 +202,6 @@ fn runSparseSweep(io: std.Io, full: bool) !void {
                             trial_seed,
                         );
                         try writeSparseRow(io, out, anchor, trial_seed, result);
-                        completed += 1;
                     }
                 }
             }
@@ -213,14 +227,21 @@ fn runSparseSweep(io: std.Io, full: bool) !void {
     }
 }
 
-fn runCoverageSweep(io: std.Io, full: bool) !void {
+fn runCoverageSweep(io: std.Io, full: bool, start_index: usize) !void {
     const out = std.Io.File.stdout();
-    try out.writeStreamingAll(
-        io,
-        "population\tfacts\tfacts_per_operator_x1000\tredundancy\tpolicy\ttrial_seed\tperturbation\tseverity_permille\tperturbation_seed\tbaseline_bandwidth\tperturbed_bandwidth\treachable\tinflation_x1000\tcollector_initial\tcollector_final_at_threshold\tactive_senders\tdelivered_senders\tselected_fact_units\tsuppressed_fact_units\tmax_coverage_full_bandwidth\tviolations\n",
-    );
+    if (!full or start_index == 1) {
+        try out.writeStreamingAll(
+            io,
+            "population\tfacts\tfacts_per_operator_x1000\tredundancy\tpolicy\ttrial_seed\tperturbation\tseverity_permille\tperturbation_seed\tbaseline_bandwidth\tperturbed_bandwidth\treachable\tinflation_x1000\tcollector_initial\tcollector_final_at_threshold\tactive_senders\tdelivered_senders\tselected_fact_units\tsuppressed_fact_units\tmax_coverage_full_bandwidth\tviolations\n",
+        );
+    }
 
     if (full) {
+        const progress = std.Io.File.stderr();
+        var ordinal: usize = 0;
+        const total = perturb.coveragePlanCount();
+        if (start_index > total + 1) return error.InvalidStartIndex;
+
         for (perturb.coverage_populations) |population_size| {
             for (perturb.coverage_ratios_permille) |ratio| {
                 const facts = (population_size * ratio) / 1000;
@@ -229,6 +250,26 @@ fn runCoverageSweep(io: std.Io, full: bool) !void {
                         for (perturb.coverage_kinds) |kind| {
                             for (perturb.coverage_severities_permille) |severity| {
                                 for (perturb.trial_seeds) |trial_seed| {
+                                    ordinal += 1;
+                                    if (ordinal < start_index) continue;
+
+                                    try writeLine(
+                                        io,
+                                        progress,
+                                        "[{d}/{d}] N={d} F={d} R={d} {s} {s} severity={d} seed={d}\n",
+                                        .{
+                                            ordinal,
+                                            total,
+                                            population_size,
+                                            facts,
+                                            redundancy_count,
+                                            policy.name(),
+                                            kind.name(),
+                                            severity,
+                                            trial_seed,
+                                        },
+                                    );
+
                                     const threshold =
                                         try perturb.findCoverageThreshold(
                                             population_size,
@@ -558,8 +599,8 @@ fn usage(io: std.Io) !void {
         "usage:\n" ++
             "  zig run src/stage6_cli.zig -- validate\n" ++
             "  zig run src/stage6_cli.zig -- plan [smoke|full]\n" ++
-            "  zig run src/stage6_cli.zig -- sparse [smoke|full]\n" ++
-            "  zig run src/stage6_cli.zig -- coverage [smoke|full]\n" ++
+            "  zig run src/stage6_cli.zig -- sparse [smoke|full] [start_index]\n" ++
+            "  zig run src/stage6_cli.zig -- coverage [smoke|full] [start_index]\n" ++
             "  zig run src/stage6_cli.zig -- summarize-sparse <sparse.tsv>\n" ++
             "  zig run src/stage6_cli.zig -- summarize-coverage <coverage.tsv>\n",
     );
@@ -579,4 +620,24 @@ fn writeLine(
 test "Stage 6 smoke plan sizes are fixed" {
     try std.testing.expectEqual(@as(usize, 18), smokeSparseCount());
     try std.testing.expectEqual(@as(usize, 32), smokeCoverageCount());
+}
+
+
+test "Stage 6 full sweep start index defaults to one" {
+    const smoke_args = [_][]const u8{ "stage6", "sparse", "smoke" };
+    const full_args = [_][]const u8{ "stage6", "sparse", "full" };
+    const resume_args = [_][]const u8{ "stage6", "sparse", "full", "37" };
+
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        try parseStartIndex(smoke_args[0..], false),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        try parseStartIndex(full_args[0..], true),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 37),
+        try parseStartIndex(resume_args[0..], true),
+    );
 }
