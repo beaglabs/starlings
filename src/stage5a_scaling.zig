@@ -380,7 +380,7 @@ fn decide(
 fn selectRoundRobin(state: State, config: Config, reset_sent: bool) ?Action {
     var selected = BitSet{};
     var selected_count: usize = 0;
-    const start: usize = @as(usize, state.cursor) % config.fact_count;
+    const start: usize = @as(usize, @intCast(state.cursor)) % config.fact_count;
     var offset: usize = 0;
     var next_cursor = start;
 
@@ -404,7 +404,7 @@ fn selectRoundRobin(state: State, config: Config, reset_sent: bool) ?Action {
 fn selectNovel(state: State, config: Config) ?Action {
     var selected = BitSet{};
     var selected_count: usize = 0;
-    const start: usize = @as(usize, state.cursor) % config.fact_count;
+    const start: usize = @as(usize, @intCast(state.cursor)) % config.fact_count;
     var offset: usize = 0;
     var next_cursor = start;
 
