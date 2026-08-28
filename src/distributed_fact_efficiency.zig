@@ -107,7 +107,7 @@ pub fn applyRound(
                     continue;
                 }
                 remaining_budget[sender] -= cost;
-                metrics.communication_units += cost;
+                metrics.communication_units += @as(usize, @intCast(cost));
                 metrics.network_messages += 2;
 
                 for (neighbors) |recipient| {
@@ -131,7 +131,7 @@ pub fn applyRound(
                 }
                 remaining_budget[sender] -= cost;
                 metrics.communication_units += cost;
-                metrics.network_messages += cost;
+                metrics.network_messages += @as(usize, @intCast(cost));
 
                 for (neighbors) |recipient| {
                     if ((snapshot[recipient] & action.facts) == 0) continue;
@@ -165,7 +165,7 @@ pub fn spentBudget(
 ) usize {
     var spent: usize = 0;
     for (remaining_budget) |remaining| {
-        spent += @as(usize, worker_budget - remaining);
+        spent += @as(usize, @intCast(worker_budget - remaining));
     }
     return spent;
 }
@@ -188,7 +188,7 @@ fn parseFactList(text: []const u8) !u16 {
 fn parseSingleFact(text: []const u8) !u16 {
     if (text.len != 1) return error.InvalidFact;
     return switch (text[0]) {
-        'A'...'J' => factBit(text[0] - 'A'),
+        'A'...'J' => factBit(@intCast(text[0] - 'A')),
         else => error.InvalidFact,
     };
 }
