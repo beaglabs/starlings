@@ -169,7 +169,7 @@ pub fn selectLaw(
 ) !Selection {
     var best = Selection{
         .law = .mechanistic,
-        .validation_score = std.math.inf(f64),
+        .validation_score = 1.0e300,
         .fit_rows = 0,
         .validation_rows = 0,
     };
@@ -199,7 +199,7 @@ pub fn selectLaw(
         }
     }
 
-    if (!std.math.isFinite(best.validation_score)) return error.NoValidationRows;
+    if (best.validation_score >= 1.0e299) return error.NoValidationRows;
     return best;
 }
 
@@ -292,6 +292,91 @@ fn fitRegimeSubset(
         try fitLinear(x[0..rows], y[0..rows], feature_count);
 
     return .{ .model = model, .rows = rows };
+}
+
+pub fn scorePrimaryHoldout(
+    summary: *const stage5a.Summary,
+    target: Target,
+    kind: HoldoutKind,
+) !Score {
+    var combined = Score{};
+    const topologies = [_]scaling.TopologyKind{ .ring, .grid, .complete };
+    const policies = [_]scaling.PolicyKind{ .round_robin, .seeded, .novel_first };
+
+    for (topologies) |topology| {
+        for (policies) |policy| {
+            const fitted = try fitSelectedRegime(summary, .{
+                .topology = topology,
+                .policy = policy,
+            }, target);
+            const score = scoreRegimeHoldout(summary, fitted, kind);
+            mergeScore(&combined, score);
+        }
+    }
+    return combined;
+}
+
+fn mergeScore(combined: *Score, incoming: Score) void {
+    if (incoming.rows == 0) return;
+
+    const old_rows = combined.rows;
+    const new_rows = old_rows + incoming.rows;
+
+    combined.mean_abs_log_error =
+        weightedMean(
+            combined.mean_abs_log_error,
+            old_rows,
+            incoming.mean_abs_log_error,
+            incoming.rows,
+        );
+    combined.mean_abs_percent_error =
+        weightedMean(
+            combined.mean_abs_percent_error,
+            old_rows,
+            incoming.mean_abs_percent_error,
+            incoming.rows,
+        );
+    combined.brier_score =
+        weightedMean(
+            combined.brier_score,
+            old_rows,
+            incoming.brier_score,
+            incoming.rows,
+        );
+    combined.accuracy =
+        weightedMean(
+            combined.accuracy,
+            old_rows,
+            incoming.accuracy,
+            incoming.rows,
+        );
+
+    const old_censored = combined.censored_rows;
+    const new_censored = old_censored + incoming.censored_rows;
+    combined.censored_recall = weightedMean(
+        combined.censored_recall,
+        old_censored,
+        incoming.censored_recall,
+        incoming.censored_rows,
+    );
+
+    combined.rows = new_rows;
+    combined.successful_rows += incoming.successful_rows;
+    combined.censored_rows = new_censored;
+}
+
+fn weightedMean(
+    a: f64,
+    a_count: usize,
+    b: f64,
+    b_count: usize,
+) f64 {
+    const count = a_count + b_count;
+    if (count == 0) return 0;
+    return (
+        a * @as(f64, @floatFromInt(a_count)) +
+        b * @as(f64, @floatFromInt(b_count))
+    ) / @as(f64, @floatFromInt(count));
 }
 
 pub fn scoreRegimeHoldout(
@@ -818,7 +903,7 @@ test "hard holdouts are fixed independently of seed and outcome" {
 }
 
 test "training validation split never admits hard holdouts" {
-    var row = stage5a.Row{
+    const row = stage5a.Row{
         .series = .population,
         .population = 500,
         .facts = 32,
@@ -915,8 +1000,6 @@ test "pooled challenger feature contract remains fixed at thirty terms" {
         .useful_per_1000 = 500,
         .violations = 0,
     };
-    _ = &row;
-
     var features: [max_features]f64 = undefined;
     pooledFeatures(row, &features);
     try std.testing.expectEqual(@as(f64, 1), features[0]);
