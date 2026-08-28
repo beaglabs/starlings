@@ -27,12 +27,14 @@ pub const LawKind = enum {
     mechanistic,
     population,
     hybrid,
+    one_class,
 
     pub fn name(self: LawKind) []const u8 {
         return switch (self) {
             .mechanistic => "mechanistic",
             .population => "population",
             .hybrid => "hybrid",
+            .one_class => "one_class",
         };
     }
 
@@ -40,6 +42,7 @@ pub const LawKind = enum {
         return switch (self) {
             .mechanistic, .population => 5,
             .hybrid => 6,
+            .one_class => 1,
         };
     }
 
@@ -68,6 +71,10 @@ pub const LawKind = enum {
                 3 => "log(F)",
                 4 => "log(R)",
                 5 => "log(B)",
+                else => "unused",
+            },
+            .one_class => switch (index) {
+                0 => "intercept",
                 else => "unused",
             },
         };
@@ -220,11 +227,41 @@ pub fn candidateValidation(
     };
 }
 
+const ClassCounts = struct {
+    successes: usize = 0,
+    failures: usize = 0,
+
+    fn hasBoth(self: ClassCounts) bool {
+        return self.successes != 0 and self.failures != 0;
+    }
+};
+
+fn convergenceFitClassCounts(
+    summary: *const stage5a.Summary,
+    regime: Regime,
+) ClassCounts {
+    var counts = ClassCounts{};
+    for (summary.rows[0..summary.row_count]) |row| {
+        if (!regimeMatches(row, regime)) continue;
+        if (!isFitRow(row)) continue;
+        if (row.success) {
+            counts.successes += 1;
+        } else {
+            counts.failures += 1;
+        }
+    }
+    return counts;
+}
+
 pub fn selectLaw(
     summary: *const stage5a.Summary,
     regime: Regime,
     target: Target,
 ) !Selection {
+    if (target == .convergence and !convergenceFitClassCounts(summary, regime).hasBoth()) {
+        return candidateValidation(summary, regime, target, .one_class);
+    }
+
     var best = Selection{
         .law = .mechanistic,
         .validation_score = 1.0e300,
@@ -232,7 +269,10 @@ pub fn selectLaw(
         .validation_rows = 0,
     };
 
-    inline for (.{ LawKind.mechanistic, LawKind.population, LawKind.hybrid }) |law| {
+    // Hybrid remains a predictive diagnostic, not an interpretable primary
+    // law. Within any fixed topology, D is determined by N, so N and D cannot
+    // be identified as independent scaling exponents from Stage 5A.
+    inline for (.{ LawKind.mechanistic, LawKind.population }) |law| {
         const candidate = try candidateValidation(summary, regime, target, law);
         if (candidate.validation_score < best.validation_score) {
             best = candidate;
@@ -312,6 +352,7 @@ fn fitRegimeSubset(
     var x: [max_rows][max_features]f64 = undefined;
     var y: [max_rows]f64 = undefined;
     var rows: usize = 0;
+    var successes: usize = 0;
 
     for (summary.rows[0..summary.row_count]) |row| {
         if (!regimeMatches(row, regime)) continue;
@@ -321,17 +362,29 @@ fn fitRegimeSubset(
 
         regimeFeatures(row, law, &x[rows]);
         y[rows] = targetValue(target, row);
+        if (row.success) successes += 1;
         rows += 1;
     }
     if (rows == 0) return error.NoTrainingRows;
 
     const feature_count = law.featureCount();
-    const model = if (target == .convergence)
+    const model = if (target == .convergence and law == .one_class)
+        fitSmoothedConstant(successes, rows)
+    else if (target == .convergence)
         try fitLogistic(x[0..rows], y[0..rows], feature_count)
     else
         try fitLinear(x[0..rows], y[0..rows], feature_count);
 
     return .{ .model = model, .rows = rows };
+}
+
+fn fitSmoothedConstant(successes: usize, rows: usize) Model {
+    const probability =
+        (@as(f64, @floatFromInt(successes)) + 0.5) /
+        (@as(f64, @floatFromInt(rows)) + 1.0);
+    var model = Model{ .feature_count = 1 };
+    model.coeffs[0] = @log(probability / (1.0 - probability));
+    return model;
 }
 
 pub fn scorePrimaryHoldout(
@@ -712,6 +765,7 @@ fn regimeFeatures(
             output[4] = @log(@as(f64, @floatFromInt(row.redundancy)));
             output[5] = @log(@as(f64, @floatFromInt(row.bandwidth)));
         },
+        .one_class => {},
     }
 }
 
@@ -1047,4 +1101,48 @@ test "pooled challenger feature contract remains fixed at thirty terms" {
     try std.testing.expectEqual(@as(f64, 0), features[7]);
     try std.testing.expectEqual(@as(f64, 0), features[8]);
     try std.testing.expectEqual(@as(f64, 1), features[9]);
+}
+
+
+test "one-class convergence regimes do not manufacture a boundary law" {
+    var summary = stage5a.Summary{};
+    const regime = Regime{ .topology = .complete, .policy = .novel_first };
+
+    var seed: u64 = 0;
+    while (seed < 3) : (seed += 1) {
+        summary.rows[summary.row_count] = .{
+            .series = .population,
+            .population = 100,
+            .facts = 32,
+            .topology = .complete,
+            .diameter = 1,
+            .edges = 4950,
+            .redundancy = 2,
+            .bandwidth = 2,
+            .policy = .novel_first,
+            .seed = seed,
+            .success = true,
+            .rounds = 1,
+            .collector_initial = 1,
+            .collector_final = 32,
+            .policy_calls = 1,
+            .actions = 1,
+            .rejected = 0,
+            .messages = 1,
+            .comm_units = 1,
+            .useful = 1,
+            .duplicate = 0,
+            .useful_per_1000 = 1000,
+            .violations = 0,
+        };
+        summary.row_count += 1;
+    }
+
+    const selected = try selectLaw(&summary, regime, .convergence);
+    try std.testing.expectEqual(LawKind.one_class, selected.law);
+}
+
+test "hybrid law is diagnostic only and cannot become the primary law" {
+    try std.testing.expectEqual(@as(usize, 6), LawKind.hybrid.featureCount());
+    try std.testing.expectEqualStrings("log(D+1)", LawKind.hybrid.featureName(2));
 }
