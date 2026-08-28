@@ -84,7 +84,7 @@ pub const Aggregate = struct {
     pub fn add(self: *Aggregate, result: stage7a.Result) void {
         self.runs += 1;
         if (!result.success) self.failures += 1;
-        self.rounds_sum +%= result.rounds;
+        self.rounds_sum +%= @as(u64, result.rounds);
         self.communication_sum +%= result.communication_units;
         self.duplicate_sum +%= result.duplicate_deliveries;
         self.computation_sum +%= result.policy_calls;
@@ -207,19 +207,15 @@ fn evaluateTrainingLike(
     const ratios = [_]usize{ 1, 2 };
     const topologies = [_]scaling.TopologyKind{ .ring, .grid };
     const bandwidths = [_]usize{ 1, 2, 4 };
-    const seeds = if (split == .training)
-        [_]u64{ 0, 1 }
-    else
-        [_]u64{ 2, 2 };
-
     var aggregate = Aggregate{};
     for (populations) |population| {
         for (ratios) |ratio| {
             for (topologies) |topology| {
                 for (bandwidths) |bandwidth| {
                     if (split == .training) {
-                        for (seeds) |seed| {
-                            const result = try runWorld(
+                        const training_seeds = [_]u64{ 0, 1 };
+                        for (training_seeds) |seed| {
+                            aggregate.add(try runWorld(
                                 candidate.theta,
                                 population,
                                 population * ratio,
@@ -228,11 +224,10 @@ fn evaluateTrainingLike(
                                 bandwidth,
                                 seed,
                                 split.maxRounds(),
-                            );
-                            aggregate.add(result);
+                            ));
                         }
                     } else {
-                        const result = try runWorld(
+                        aggregate.add(try runWorld(
                             candidate.theta,
                             population,
                             population * ratio,
@@ -241,8 +236,7 @@ fn evaluateTrainingLike(
                             bandwidth,
                             2,
                             split.maxRounds(),
-                        );
-                        aggregate.add(result);
+                        ));
                     }
                 }
             }
