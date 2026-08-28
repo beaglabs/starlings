@@ -422,3 +422,41 @@ The architectural invariant remains:
 
 > Starlings owns decisions. P2Panda owns durable distributed state and
 > synchronization. Iroh owns the current network transport.
+
+
+## Frozen first transfer suite
+
+After the one-run smoke passes, generate the first multi-run transfer dataset:
+
+~~~sh
+cd stage7c/p2panda
+
+bash run_suite.sh > ../../trials/stage7c-p2panda.tsv
+~~~
+
+The suite performs 24 runs:
+
+~~~text
+profiles:
+  theta37
+  theta51
+  theta93
+  novel_first
+
+topologies:
+  ring
+  grid
+
+seeds:
+  0
+  1
+  2
+
+N=8
+F=32
+R=2
+B=2
+~~~
+
+The suite is frozen comparison/transfer evidence only. It does not select or
+modify theta.
