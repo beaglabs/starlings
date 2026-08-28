@@ -41,6 +41,7 @@ pub const stage7a_policy = @import("stage7a_policy.zig");
 pub const stage7a_cli = @import("stage7a_cli.zig");
 pub const stage7b_search = @import("stage7b_search.zig");
 pub const stage7b_cli = @import("stage7b_cli.zig");
+pub const stage7c_policy_ffi = @import("stage7c_policy_ffi.zig");
 
 test {
     _ = content_id;
@@ -80,6 +81,7 @@ test {
     _ = stage7a_cli;
     _ = stage7b_search;
     _ = stage7b_cli;
+    _ = stage7c_policy_ffi;
 }
 
 test "messages route deterministically and update operator state" {
