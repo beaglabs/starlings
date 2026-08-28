@@ -184,6 +184,13 @@ The experiment supports up to 1,024 operators and 1,024 independent facts with:
   deliveries, policy calls, rejected actions, topology diameter/edges, and
   violations.
 
+Stage 5A.1 performance hardening keeps the experiment semantics unchanged while
+using word-level bitset delivery/accounting, active-word merges, and a no-copy
+synchronous round path. A test-only reference engine preserves the original
+copy-heavy/per-fact implementation and must produce exactly equal Results
+across topology/policy combinations, including fact counts crossing a 64-bit
+word boundary.
+
 The sweep deliberately separates independent variables into three series
 instead of coupling population size and information volume:
 
