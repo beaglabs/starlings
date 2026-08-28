@@ -41,13 +41,13 @@ pub const Spec = struct {
     pub const Context = SpecContext;
 
     pub fn observe(
-        _: *const Context,
-        snapshot: *const [worker_count]State,
+        _: *const SpecContext,
+        snapshot: *const [worker_count]SpecState,
         topology: *const formal.Topology(worker_count),
         operator_count: usize,
         operator_index: usize,
         round: u32,
-    ) Observation {
+    ) SpecObservation {
         return .{
             .operator_index = operator_index,
             .round = round,
@@ -57,13 +57,13 @@ pub const Spec = struct {
     }
 
     pub fn apply(
-        _: *const Context,
-        snapshot: *const [worker_count]State,
+        _: *const SpecContext,
+        snapshot: *const [worker_count]SpecState,
         topology: *const formal.Topology(worker_count),
         operator_count: usize,
         active: [worker_count]bool,
-        actions: [worker_count]?Action,
-        states: *[worker_count]State,
+        actions: [worker_count]?SpecAction,
+        states: *[worker_count]SpecState,
     ) formal.RoundEffect {
         var effect = formal.RoundEffect{};
 
@@ -97,7 +97,7 @@ pub const Spec = struct {
     }
 
     pub fn evaluate(
-        context: *const Context,
+        context: *const SpecContext,
         states: *const [worker_count]State,
         operator_count: usize,
         _: u32,
