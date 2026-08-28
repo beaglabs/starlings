@@ -323,3 +323,15 @@ test "Stage 7C FFI uses the exact Stage 7A policy" {
         );
     }
 }
+
+
+test "Stage 7C ABI structs have fixed C layout" {
+    try @import("std").testing.expectEqual(
+        @as(usize, 8),
+        @sizeOf(FfiAction),
+    );
+    try @import("std").testing.expectEqual(
+        @as(usize, 56),
+        @sizeOf(FfiSimulation),
+    );
+}
