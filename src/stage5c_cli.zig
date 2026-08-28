@@ -68,7 +68,8 @@ pub fn main(init: std.process.Init) !void {
             .limited(128 * 1024 * 1024),
         );
         defer allocator.free(tsv);
-        try writeBoundarySummary(io, summary.parseBoundaryTsv(tsv));
+        const dataset = summary.parseBoundaryTsv(tsv);
+        try writeBoundarySummary(io, &dataset);
         return;
     }
 
@@ -84,7 +85,8 @@ pub fn main(init: std.process.Init) !void {
             .limited(128 * 1024 * 1024),
         );
         defer allocator.free(tsv);
-        try writeSaturationSummary(io, summary.parseSaturationTsv(tsv));
+        const dataset = summary.parseSaturationTsv(tsv);
+        try writeSaturationSummary(io, &dataset);
         return;
     }
 
@@ -247,7 +249,7 @@ fn runSaturationSweep(io: std.Io, full: bool) !void {
     }
 }
 
-fn writeBoundarySummary(io: std.Io, dataset: summary.BoundaryDataset) !void {
+fn writeBoundarySummary(io: std.Io, dataset: *const summary.BoundaryDataset) !void {
     const out = std.Io.File.stdout();
     try writeLine(io, out, "Stage 5C boundary summary\n", .{});
     try writeLine(io, out, "rows: {d}\n", .{dataset.row_count});
@@ -267,13 +269,13 @@ fn writeBoundarySummary(io: std.Io, dataset: summary.BoundaryDataset) !void {
         for (regimes.all_policies) |policy| {
             for (regimes.boundary_bandwidths) |bandwidth| {
                 const band = summary.boundaryBand(
-                    &dataset,
+                    dataset,
                     topology,
                     policy,
                     bandwidth,
                 );
                 const coordinate = summary.firstCensoredCoordinate4096(
-                    &dataset,
+                    dataset,
                     topology,
                     policy,
                     bandwidth,
@@ -310,7 +312,7 @@ fn writeBoundarySummary(io: std.Io, dataset: summary.BoundaryDataset) !void {
     }
 }
 
-fn writeSaturationSummary(io: std.Io, dataset: summary.SaturationDataset) !void {
+fn writeSaturationSummary(io: std.Io, dataset: *const summary.SaturationDataset) !void {
     const out = std.Io.File.stdout();
     try writeLine(io, out, "Stage 5C saturation summary\n", .{});
     try writeLine(io, out, "rows: {d}\n", .{dataset.row_count});
@@ -331,7 +333,7 @@ fn writeSaturationSummary(io: std.Io, dataset: summary.SaturationDataset) !void 
         for (regimes.saturation_redundancies) |redundancy| {
             for (regimes.saturation_fact_ratio_permille) |ratio| {
                 const stats = summary.saturationStats(
-                    &dataset,
+                    dataset,
                     policy,
                     redundancy,
                     ratio,
@@ -363,7 +365,7 @@ fn writeSaturationSummary(io: std.Io, dataset: summary.SaturationDataset) !void 
     for (regimes.all_policies) |policy| {
         for (regimes.saturation_fact_ratio_permille) |ratio| {
             const stats = summary.saturationStats(
-                &dataset,
+                dataset,
                 policy,
                 null,
                 ratio,
