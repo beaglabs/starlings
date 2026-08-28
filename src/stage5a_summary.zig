@@ -111,13 +111,27 @@ const Filter = struct {
     bandwidth: ?usize = null,
 
     fn matches(self: Filter, row: Row) bool {
-        if (self.series) |v| if (row.series != v) return false;
-        if (self.topology) |v| if (row.topology != v) return false;
-        if (self.policy) |v| if (row.policy != v) return false;
-        if (self.population) |v| if (row.population != v) return false;
-        if (self.facts) |v| if (row.facts != v) return false;
-        if (self.redundancy) |v| if (row.redundancy != v) return false;
-        if (self.bandwidth) |v| if (row.bandwidth != v) return false;
+        if (self.series) |v| {
+            if (row.series != v) return false;
+        }
+        if (self.topology) |v| {
+            if (row.topology != v) return false;
+        }
+        if (self.policy) |v| {
+            if (row.policy != v) return false;
+        }
+        if (self.population) |v| {
+            if (row.population != v) return false;
+        }
+        if (self.facts) |v| {
+            if (row.facts != v) return false;
+        }
+        if (self.redundancy) |v| {
+            if (row.redundancy != v) return false;
+        }
+        if (self.bandwidth) |v| {
+            if (row.bandwidth != v) return false;
+        }
         return true;
     }
 };
@@ -239,8 +253,8 @@ pub fn aggregate(summary: *const Summary, filter: Filter) Metrics {
             successful_rounds[middle]
         else
             @intCast(
-                (@as(u64, successful_rounds[middle - 1]) +
-                    @as(u64, successful_rounds[middle])) / 2,
+                (@as(u64, @intCast(successful_rounds[middle - 1])) +
+                    @as(u64, @intCast(successful_rounds[middle]))) / 2,
             );
     }
 
@@ -393,6 +407,7 @@ fn writeSummary(io: std.Io, out: std.Io.File, summary: *const Summary) !void {
     try writePopulationScaling(io, out, summary);
     try writeInformationScaling(io, out, summary);
     try writeCapacityScaling(io, out, summary);
+    try writeCensoringBoundaries(io, out, summary);
     try writeExtrema(io, out, summary);
     try writeCensored(io, out, summary);
 }
@@ -597,6 +612,90 @@ fn writeCapacityScaling(io: std.Io, out: std.Io.File, summary: *const Summary) !
     }
 }
 
+fn writeCensoringBoundaries(io: std.Io, out: std.Io.File, summary: *const Summary) !void {
+    try writeLine(io, out, "\nfirst observed censoring boundaries\n", .{});
+    try out.writeStreamingAll(
+        io,
+        "series\ttopology\tpolicy\tfirst-censored-value\tcensored-runs-at-boundary\n",
+    );
+
+    const topologies = [_]scaling.TopologyKind{ .ring, .grid, .complete };
+    const policies = [_]scaling.PolicyKind{ .round_robin, .seeded, .novel_first };
+
+    for (topologies) |topology| {
+        for (policies) |policy| {
+            try writeFirstPopulationBoundary(io, out, summary, topology, policy);
+            try writeFirstInformationBoundary(io, out, summary, topology, policy);
+        }
+    }
+}
+
+fn writeFirstPopulationBoundary(
+    io: std.Io,
+    out: std.Io.File,
+    summary: *const Summary,
+    topology: scaling.TopologyKind,
+    policy: scaling.PolicyKind,
+) !void {
+    const populations = [_]usize{ 20, 50, 100, 250, 500, 1000 };
+    for (populations) |population| {
+        const metrics = aggregate(summary, .{
+            .series = .population,
+            .population = population,
+            .topology = topology,
+            .policy = policy,
+        });
+        if (metrics.censored != 0) {
+            try writeLine(
+                io,
+                out,
+                "population\t{s}\t{s}\tN={d}\t{d}\n",
+                .{ topology.name(), policy.name(), population, metrics.censored },
+            );
+            return;
+        }
+    }
+    try writeLine(
+        io,
+        out,
+        "population\t{s}\t{s}\tnone-through-N=1000\t0\n",
+        .{ topology.name(), policy.name() },
+    );
+}
+
+fn writeFirstInformationBoundary(
+    io: std.Io,
+    out: std.Io.File,
+    summary: *const Summary,
+    topology: scaling.TopologyKind,
+    policy: scaling.PolicyKind,
+) !void {
+    const facts_values = [_]usize{ 8, 16, 32, 64, 128, 256, 512, 1024 };
+    for (facts_values) |facts| {
+        const metrics = aggregate(summary, .{
+            .series = .information,
+            .facts = facts,
+            .topology = topology,
+            .policy = policy,
+        });
+        if (metrics.censored != 0) {
+            try writeLine(
+                io,
+                out,
+                "information\t{s}\t{s}\tF={d}\t{d}\n",
+                .{ topology.name(), policy.name(), facts, metrics.censored },
+            );
+            return;
+        }
+    }
+    try writeLine(
+        io,
+        out,
+        "information\t{s}\t{s}\tnone-through-F=1024\t0\n",
+        .{ topology.name(), policy.name() },
+    );
+}
+
 fn writeExtrema(io: std.Io, out: std.Io.File, summary: *const Summary) !void {
     var fastest: ?Row = null;
     var slowest: ?Row = null;
@@ -734,5 +833,14 @@ test "row parser rejects malformed field counts" {
     try std.testing.expectError(
         error.InvalidFieldCount,
         parseRow("population\t20\t32"),
+    );
+}
+
+test "sha256 identity uses canonical lowercase hexadecimal encoding" {
+    var output: [64]u8 = undefined;
+    hashHex("abc", &output);
+    try std.testing.expectEqualStrings(
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        output[0..],
     );
 }
