@@ -270,7 +270,7 @@ pub fn sparseSeverityStats(
         result.rows += 1;
         if (row.success) {
             result.successes += 1;
-            success_round_sum += row.rounds;
+            success_round_sum += @as(u64, @intCast(row.rounds));
         }
         if (row.structurally_reachable) result.structurally_reachable += 1;
         delivery_sum += row.delivery_ratio_permille;
