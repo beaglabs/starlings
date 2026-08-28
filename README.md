@@ -2,7 +2,7 @@
 
 Experimental infrastructure for evidence-backed mathematical agent communication and collective coordination, implemented in Zig.
 
-## Current scope: Stage 0–4
+## Current scope: Stage 0–5A
 
 The foundation contains the machinery needed to run reproducible experiments and compare coordination strategies:
 
@@ -29,6 +29,7 @@ The foundation contains the machinery needed to run reproducible experiments and
 - communication-budget experiments that measure useful vs redundant information transfer
 - an operator-neutral formal population substrate with pluggable local policies
 - deterministic coordination-plane validation without any language-model dependency
+- orthogonal information-diffusion scaling sweeps over population, information volume, topology, redundancy, bandwidth, and local policy
 
 Stage 1 uses five workers and a verifier. The partitioned task assigns one independent fact to each worker, while the overlapping task gives each worker two facts so that every fact exists at two workers. This lets the harness distinguish raw communication efficiency from resilience under information loss.
 
@@ -165,3 +166,95 @@ See docs/stage-4-formal-population-substrate.md and
 docs/adr/0002-operator-neutral-coordination-core.md for the formal mapping,
 architectural decision, validation scope, and progression toward a coordination
 SDK/CLI/serving plane.
+
+
+## Stage 5A information diffusion scaling
+
+Stage 5A uses the operator-neutral coordination philosophy to measure how
+deterministic local information diffusion scales without any LLM dependency.
+
+The experiment supports up to 1,024 operators and 1,024 independent facts with:
+
+- ring, complete, and grid topologies;
+- configurable initial fact redundancy;
+- configurable per-operator fact bandwidth;
+- round-robin, seeded, and novel-first local policy families;
+- collector convergence as the global outcome;
+- exact messages, communication fact-units, useful deliveries, duplicate
+  deliveries, policy calls, rejected actions, topology diameter/edges, and
+  violations.
+
+Stage 5A.1 performance hardening keeps the experiment semantics unchanged while
+using word-level bitset delivery/accounting, active-word merges, and a no-copy
+synchronous round path. A test-only reference engine preserves the original
+copy-heavy/per-fact implementation and must produce exactly equal Results
+across topology/policy combinations, including fact counts crossing a 64-bit
+word boundary.
+
+The sweep deliberately separates independent variables into three series
+instead of coupling population size and information volume:
+
+~~~text
+population   vary N, hold facts/redundancy/bandwidth fixed
+information  vary fact count, hold N/redundancy/bandwidth fixed
+capacity     vary redundancy + bandwidth at fixed N and fact count
+~~~
+
+Validate and inspect the sweep plan:
+
+~~~sh
+zig test src/root.zig
+
+zig run src/stage5a_cli.zig -- validate
+
+zig run src/stage5a_cli.zig -- plan smoke
+zig run src/stage5a_cli.zig -- plan full
+~~~
+
+Run a single configuration:
+
+~~~sh
+zig run src/stage5a_cli.zig -- \
+  run 100 ring 2 2 novel_first 0 4096 32
+~~~
+
+Emit machine-readable TSV:
+
+~~~sh
+zig run src/stage5a_cli.zig -- sweep smoke > trials/stage5a-smoke.tsv
+
+zig run src/stage5a_cli.zig -- sweep full > trials/stage5a-full.tsv
+~~~
+
+The smoke plan contains 63 runs. The full plan contains 918 runs.
+
+See docs/stage-5a-information-diffusion-scaling.md for the experimental
+controls, metric definitions, sweep matrix, and Stage 5A progression gate.
+
+
+### Stage 5A.2 deterministic summary
+
+After producing the canonical full sweep, summarize it without fitting a model:
+
+~~~sh
+zig run src/stage5a_summary.zig -- trials/stage5a-full.tsv
+~~~
+
+The summary:
+
+- verifies the 918-row canonical shape and SHA-256 identity;
+- keeps horizon-exhausted runs right-censored rather than treating 4096 as a
+  convergence time;
+- reports success rate, successful-run round statistics, communication cost,
+  useful-information efficiency, duplicate fraction, and censored completion;
+- groups results by topology/policy and by the population, information, and
+  capacity sweep axes;
+- reports the first observed population/information censoring boundary for each
+  topology/policy family;
+- lists empirical extrema and every censored configuration.
+
+Canonical Stage 5A dataset SHA-256:
+
+~~~text
+92279da22ded432f942b24f96f4f4658ee49174ba45c66239537744bee988fc6
+~~~
