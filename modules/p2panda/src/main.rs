@@ -1469,5 +1469,115 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "requires local mDNS/UDP; run explicitly before the Stage 7C suite"]
+    async fn late_join_history_live_handoff() -> Result<()> {
+        const HISTORY: u32 = 64;
+        const LIVE: u32 = 512;
+        const TOTAL: u32 = HISTORY + LIVE;
+
+        async fn publish_sequence(
+            tx: &StreamPublisher<Envelope>,
+            rx: &mut StreamSubscription<Envelope>,
+            sequence: u32,
+        ) -> Result<()> {
+            let stop = AtomicBool::new(false);
+            let operation = bounded("handoff sender publication", OPERATION_TIMEOUT, async {
+                let processed = tx.publish(Envelope {
+                    run_nonce: 1,
+                    sender: 0,
+                    sequence,
+                    logical_round: sequence + 1,
+                    recipients: vec![1],
+                    facts: vec![(sequence % 32) as u16],
+                }).await?.await?;
+                if !processed.is_completed() || processed.is_failed() {
+                    bail!("sender processing failed at sequence {sequence}: {:?}",
+                        processed.failure_reason());
+                }
+                Ok(())
+            });
+            receive_while(operation, rx, &stop, |event| {
+                match event {
+                    StreamEvent::ProcessingFailed { error, source, .. } =>
+                        bail!("sender processing error: {source:?}: {error:?}"),
+                    StreamEvent::ReplayFailed { error } => bail!("sender replay: {error:?}"),
+                    StreamEvent::DecodeFailed { error, .. } => bail!("sender decode: {error:?}"),
+                    StreamEvent::AckFailed { error, .. } => bail!("sender ack: {error:?}"),
+                    _ => Ok(()),
+                }
+            }).await?.context("sender unexpectedly cancelled")
+        }
+
+        bounded("two-peer history/live handoff", Duration::from_secs(45), async {
+            let topic = Topic::random();
+            let sender = transient_node_builder().spawn().await?;
+            let (tx, mut sender_rx) = sender.stream::<Envelope>(topic.clone()).await?;
+            for sequence in 0..HISTORY {
+                publish_sequence(&tx, &mut sender_rx, sequence).await?;
+            }
+            eprintln!("[handoff] sender history ready: {HISTORY} operations; starting late peer");
+            let receiver = transient_node_builder().spawn().await?;
+            let (_receiver_tx, mut receiver_rx) = receiver.stream::<Envelope>(topic).await?;
+
+            let publish_live = async {
+                for sequence in HISTORY..TOTAL {
+                    publish_sequence(&tx, &mut sender_rx, sequence).await?;
+                    sleep(Duration::from_millis(20)).await;
+                }
+                Ok::<_, anyhow::Error>(())
+            };
+            let receive_all = async {
+                let mut seen = HashSet::new();
+                let mut live_events = 0_u32;
+                let mut sessions = 0_u32;
+                while seen.len() < TOTAL as usize {
+                    let event = timeout(Duration::from_secs(15), receiver_rx.next()).await
+                        .with_context(|| format!("receiver stalled: received={}/{} sessions={sessions} live_events={live_events}", seen.len(), TOTAL))?
+                        .context("receiver stream closed")?;
+                    match event {
+                        StreamEvent::Processed { operation, source } => {
+                            let envelope = operation.message();
+                            if envelope.run_nonce != 1 || envelope.sender != 0 || envelope.sequence >= TOTAL {
+                                bail!("unexpected message in isolated handoff topic");
+                            }
+                            if seen.contains(&envelope.sequence) {
+                                continue;
+                            }
+                            if envelope.sequence != seen.len() as u32 {
+                                bail!("handoff order violation: expected={} received={} source={source:?}",
+                                    seen.len(), envelope.sequence);
+                            }
+                            if matches!(source, Source::SyncSession {
+                                phase: p2panda::streams::SessionPhase::Live, ..
+                            }) {
+                                live_events += 1;
+                            }
+                            seen.insert(envelope.sequence);
+                        }
+                        StreamEvent::SyncStarted { .. } => sessions += 1,
+                        StreamEvent::SyncEnded { error: Some(error), .. } =>
+                            bail!("handoff sync session failed: {error:?}"),
+                        StreamEvent::ProcessingFailed { error, source, .. } =>
+                            bail!("handoff ingest failed: received={}/{} source={source:?} error={error:?}", seen.len(), TOTAL),
+                        StreamEvent::ReplayFailed { error } => bail!("handoff replay: {error:?}"),
+                        StreamEvent::DecodeFailed { error, .. } => bail!("handoff decode: {error:?}"),
+                        StreamEvent::AckFailed { error, .. } => bail!("handoff ack: {error:?}"),
+                        _ => {}
+                    }
+                }
+                if live_events == 0 {
+                    bail!("all operations arrived through history sync; live handoff was not exercised");
+                }
+                eprintln!("[handoff] received={TOTAL}/{TOTAL} in order; sessions={sessions} live_events={live_events}");
+                Ok::<_, anyhow::Error>(())
+            };
+            tokio::try_join!(publish_live, receive_all)?;
+            drop(receiver);
+            drop(sender);
+            Ok(())
+        }).await
+    }
+
 }
 
