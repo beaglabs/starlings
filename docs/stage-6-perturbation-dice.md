@@ -103,7 +103,8 @@ distinct initial facts in the collector component
 
 If the collector component does not contain all F facts, convergence is
 structurally impossible under that static topology. Stage 6 records this
-separately from ordinary horizon censoring.
+separately from ordinary horizon censoring and returns immediately without
+simulating rounds that cannot change the answer.
 
 ## No-fault equivalence
 
