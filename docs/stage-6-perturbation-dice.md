@@ -363,3 +363,31 @@ Before freezing Stage 6 datasets:
 After Stage 6, the next roadmap step is to use the measured robustness surfaces
 to define and optimize a compact coordination-control parameter theta rather
 than continuing to add named hand-written policies.
+
+
+### Resuming full sweeps
+
+Full sparse and coverage sweeps emit progress to stderr and accept an optional
+1-based start index.
+
+A fresh run:
+
+~~~sh
+zig run -O ReleaseFast src/stage6_cli.zig -- sparse full 1 \
+  > trials/stage6-sparse.tsv
+~~~
+
+If interrupted after K completed data rows, preserve the partial file and
+resume at K+1 using append mode:
+
+~~~sh
+# Example: header + 136 completed rows means resume at case 137.
+wc -l trials/stage6-sparse.tsv
+
+zig run -O ReleaseFast src/stage6_cli.zig -- sparse full 137 \
+  >> trials/stage6-sparse.tsv
+~~~
+
+When start_index > 1 the CLI does not emit another TSV header.
+
+The same convention applies to the coverage sweep.
