@@ -182,14 +182,12 @@ fn runBoundarySweep(io: std.Io, full: bool) !void {
     for (facts_values) |facts| {
         for (topologies) |topology| {
             for (regimes.all_policies) |policy| {
-                const record = try regimes.runBoundaryCase(
+                const record = try regimes.runCanonicalBoundaryCase(
                     facts,
                     topology,
                     2,
                     policy,
                     0,
-                    512,
-                    2048,
                 );
                 try writeBoundaryRow(io, out, record);
             }
