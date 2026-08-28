@@ -283,16 +283,17 @@ fn writeSparseSummary(
 
     try out.writeStreamingAll(
         io,
-        "\nanchor\ttopology\tpolicy\tlambda_x1e6\tperturbation\trows\tseverity0_successes\tlast_all_success_permille\tfirst_any_censored_permille\tfirst_all_censored_permille\tfirst_any_structural_permille\tfirst_all_structural_permille\tnonmonotonic_success\n",
+        "\nanchor\ttopology\tpolicy\tlambda_x1e6\tperturbation\trows\tmax_observed_severity_permille\tseverity0_successes\tlast_all_success_permille\tfirst_any_censored_permille\tfirst_all_censored_permille\tfirst_any_structural_permille\tfirst_all_structural_permille\tnonmonotonic_success\n",
     );
 
     for (perturb.sparse_anchors) |anchor| {
         for (perturb.perturbation_kinds) |kind| {
             const boundary = summary.sparseBoundary(dataset, anchor.id, kind);
+            if (boundary.rows == 0) continue;
             try writeLine(
                 io,
                 out,
-                "{s}\t{s}\t{s}\t{d}\t{s}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\n",
+                "{s}\t{s}\t{s}\t{d}\t{s}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\n",
                 .{
                     anchor.id,
                     anchor.topology.name(),
@@ -300,6 +301,7 @@ fn writeSparseSummary(
                     anchor.lambdaX1e6(),
                     kind.name(),
                     boundary.rows,
+                    boundary.max_observed_severity_permille,
                     boundary.severity0_successes,
                     boundary.last_all_success_permille,
                     boundary.first_any_censored_permille,
@@ -325,6 +327,7 @@ fn writeSparseSummary(
                     kind,
                     severity,
                 );
+                if (stats.rows == 0) continue;
                 try writeLine(
                     io,
                     out,
@@ -389,6 +392,7 @@ fn writeCoverageSummary(
                             ratio,
                             severity,
                         );
+                        if (stats.rows == 0) continue;
                         try writeLine(
                             io,
                             out,
