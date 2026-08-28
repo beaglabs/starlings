@@ -364,3 +364,45 @@ minimum B*.
 Stage 5C extends the deterministic fact bitset ceiling from 1024 to 2048. This
 changes capacity only, not transition semantics. Existing Stage 5A behavior in
 the old range must remain regression-identical.
+
+
+## Stage 6 — Perturbation / DICE
+
+Stage 6 perturbs the control structures identified in Stage 5C instead of
+introducing new clean-system laws.
+
+Sparse robustness anchors use the Stage 5C near-boundary configurations and
+apply three deterministic, nested perturbations:
+
+- operator_omission: an operator loses an emission opportunity for one round
+  but can still receive;
+- message_drop: a directed transport attempt is suppressed for one round;
+- edge_removal: an undirected topology edge is removed for the entire run.
+
+The canonical sparse sweep contains 540 runs across six Stage 5C anchors, ten
+severity levels, three perturbation classes, and three deterministic trials.
+Static-edge runs record the collector component and whether that component
+contains every fact, separating structural impossibility from slow dynamics.
+
+Complete-graph coverage robustness perturbs the Stage 5C one-round B* threshold.
+The canonical coverage sweep contains 864 threshold searches across
+N={64,128,256}, F/N={1,2,4}, R={1,4,8}, round_robin/seeded, operator omission
+or message drop, eight severities, and three deterministic trials. A perturbed
+configuration may become explicitly unreachable even at B=F.
+
+~~~sh
+zig run src/stage6_cli.zig -- validate
+zig run src/stage6_cli.zig -- plan full
+
+zig run src/stage6_cli.zig -- sparse full \
+  > trials/stage6-sparse.tsv
+
+zig run src/stage6_cli.zig -- coverage full \
+  > trials/stage6-coverage.tsv
+
+zig run src/stage6_cli.zig -- summarize-sparse \
+  trials/stage6-sparse.tsv
+
+zig run src/stage6_cli.zig -- summarize-coverage \
+  trials/stage6-coverage.tsv
+~~~
