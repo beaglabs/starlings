@@ -129,11 +129,12 @@ pub const CoverageRow = struct {
 
 pub const SparseBoundary = struct {
     rows: usize = 0,
-    last_all_success_permille: u16 = 0,
-    first_any_censored_permille: u16 = 0,
-    first_all_censored_permille: u16 = 0,
-    first_any_structural_permille: u16 = 0,
-    first_all_structural_permille: u16 = 0,
+    max_observed_severity_permille: i32 = -1,
+    last_all_success_permille: i32 = -1,
+    first_any_censored_permille: i32 = -1,
+    first_all_censored_permille: i32 = -1,
+    first_any_structural_permille: i32 = -1,
+    first_all_structural_permille: i32 = -1,
     nonmonotonic_success: usize = 0,
     severity0_successes: usize = 0,
 };
@@ -242,30 +243,31 @@ pub fn sparseBoundary(
         }
 
         if (rows_at_severity == 0) continue;
+        result.max_observed_severity_permille = @intCast(severity);
         if (severity == 0) result.severity0_successes = successes;
 
         if (successes == rows_at_severity) {
-            result.last_all_success_permille = severity;
+            result.last_all_success_permille = @intCast(severity);
             if (seen_censored) result.nonmonotonic_success += 1;
         } else {
             seen_censored = true;
-            if (result.first_any_censored_permille == 0) {
-                result.first_any_censored_permille = severity;
+            if (result.first_any_censored_permille < 0) {
+                result.first_any_censored_permille = @intCast(severity);
             }
-            if (successes == 0 and result.first_all_censored_permille == 0) {
-                result.first_all_censored_permille = severity;
+            if (successes == 0 and result.first_all_censored_permille < 0) {
+                result.first_all_censored_permille = @intCast(severity);
             }
         }
 
         if (structural_failures != 0 and
-            result.first_any_structural_permille == 0)
+            result.first_any_structural_permille < 0)
         {
-            result.first_any_structural_permille = severity;
+            result.first_any_structural_permille = @intCast(severity);
         }
         if (structural_failures == rows_at_severity and
-            result.first_all_structural_permille == 0)
+            result.first_all_structural_permille < 0)
         {
-            result.first_all_structural_permille = severity;
+            result.first_all_structural_permille = @intCast(severity);
         }
     }
 
@@ -528,4 +530,24 @@ test "coverage parser preserves unreachable thresholds" {
     try std.testing.expectEqual(@as(usize, 1), dataset.row_count);
     try std.testing.expectEqual(@as(usize, 1), dataset.unreachableRows());
     try std.testing.expectEqual(@as(usize, 0), dataset.violationRows());
+}
+
+
+test "sparse boundary distinguishes real zero severity from not observed" {
+    const tsv =
+        "anchor\tpopulation\tfacts\ttopology\tdiameter\tredundancy\tbandwidth\tpolicy\tlambda_x1e6\ttrial_seed\tperturbation\tseverity_permille\tperturbation_seed\tsuccess\trounds\tcollector_initial\tcollector_final\tpolicy_slots\tpolicy_calls\toperator_omissions\tactions\trejected\tattempted_messages\tdelivered_messages\tsuppressed_messages\tattempted_units\tdelivered_units\tsuppressed_units\tdelivery_ratio_permille\tuseful\tduplicate\tviolations\tremoved_edges\tcomponent_size\tcomponent_fact_coverage\tstructurally_reachable\n" ++
+        "ring_round_robin_edge\t128\t384\tring\t64\t2\t2\tround_robin\t46875\t0\tmessage_drop\t0\t42\tyes\t3732\t5\t384\t1\t1\t0\t1\t0\t2\t2\t0\t4\t4\t0\t1000\t2\t2\t0\t0\t128\t384\tyes\n" ++
+        "ring_round_robin_edge\t128\t384\tring\t64\t2\t2\tround_robin\t46875\t0\tmessage_drop\t100\t42\tno\t4096\t5\t300\t1\t1\t0\t1\t0\t2\t1\t1\t4\t2\t2\t500\t1\t1\t0\t0\t128\t384\tyes\n";
+
+    const dataset = parseSparseTsv(tsv);
+    const boundary = sparseBoundary(
+        &dataset,
+        "ring_round_robin_edge",
+        .message_drop,
+    );
+    try std.testing.expectEqual(@as(i32, 100), boundary.max_observed_severity_permille);
+    try std.testing.expectEqual(@as(i32, 0), boundary.last_all_success_permille);
+    try std.testing.expectEqual(@as(i32, 100), boundary.first_any_censored_permille);
+    try std.testing.expectEqual(@as(i32, 100), boundary.first_all_censored_permille);
+    try std.testing.expectEqual(@as(i32, -1), boundary.first_any_structural_permille);
 }
