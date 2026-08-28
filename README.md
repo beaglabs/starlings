@@ -309,3 +309,58 @@ eta_info | success  successful rows only
 ~~~
 
 Censored observations are never assigned a fake convergence time of 4096.
+
+
+## Stage 5C — Regime Boundaries and Saturation
+
+Stage 5C follows the specific failures exposed by Stage 5B rather than adding
+another generic model family.
+
+It asks two questions:
+
+1. Where does the high-information ring/grid regime leave the Stage 5A
+   4096-round convergence envelope, and which cases merely converge slowly
+   versus remain censored at an extended 16384-round horizon?
+2. For complete graphs, what is the exact minimum local bandwidth B* that
+   permits one-round saturation?
+
+Plan and validate:
+
+~~~sh
+zig run src/stage5c_cli.zig -- plan full
+zig run src/stage5c_cli.zig -- validate
+~~~
+
+Generate the canonical Stage 5C datasets:
+
+~~~sh
+zig run src/stage5c_cli.zig -- boundary full \
+  > trials/stage5c-boundary.tsv
+
+zig run src/stage5c_cli.zig -- saturation full \
+  > trials/stage5c-saturation.tsv
+~~~
+
+Summarize them deterministically:
+
+~~~sh
+zig run src/stage5c_cli.zig -- summarize-boundary \
+  trials/stage5c-boundary.tsv
+
+zig run src/stage5c_cli.zig -- summarize-saturation \
+  trials/stage5c-saturation.tsv
+~~~
+
+The boundary experiment contains 756 base cases at N=128, R=2 across dense
+F values through 2048, B={1,2,4}, ring/grid, all three local policies, and
+seeds 0-2. Runs censored at 4096 are automatically rerun from the same initial
+condition to a 16384-round horizon.
+
+The saturation experiment contains 576 threshold searches across N={32,64,128,
+256}, F/N={0.5,1,2,4}, R={1,2,4,8}, all three policies, and seeds 0-2. It uses
+an exact complete-graph one-round coverage oracle and binary-searches the
+minimum B*.
+
+Stage 5C extends the deterministic fact bitset ceiling from 1024 to 2048. This
+changes capacity only, not transition semantics. Existing Stage 5A behavior in
+the old range must remain regression-identical.

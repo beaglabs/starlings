@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub const max_operators: usize = 1024;
-pub const max_facts: usize = 1024;
+pub const max_facts: usize = 2048;
 pub const word_count: usize = max_facts / 64;
 pub const collector_index: usize = 0;
 
@@ -11,6 +11,7 @@ pub const Error = error{
     InvalidRedundancy,
     InvalidBandwidth,
     InvalidMaxRounds,
+    RequiresCompleteTopology,
 };
 
 pub const TopologyKind = enum {
@@ -171,6 +172,16 @@ pub const Config = struct {
     }
 };
 
+pub const OneRoundCoverage = struct {
+    success: bool,
+    collector_initial_facts: usize,
+    collector_final_facts: usize,
+    active_senders: usize,
+    selected_fact_units: u64,
+    rejected_actions: u64,
+    violations: u64,
+};
+
 pub const Result = struct {
     config: Config,
     success: bool,
@@ -193,6 +204,52 @@ pub const Result = struct {
         return (self.useful_deliveries * 1000) / self.communication_units;
     }
 };
+
+pub fn completeOneRoundCoverage(config: Config) Error!OneRoundCoverage {
+    try config.validate();
+    if (config.topology != .complete) return error.RequiresCompleteTopology;
+
+    var states = [_]State{.{}} ** max_operators;
+    initializeStates(&states, config);
+
+    var collector = states[collector_index].knowledge;
+    const initial_facts = collector.count(config.fact_count);
+    var result = OneRoundCoverage{
+        .success = initial_facts == config.fact_count,
+        .collector_initial_facts = initial_facts,
+        .collector_final_facts = initial_facts,
+        .active_senders = 0,
+        .selected_fact_units = 0,
+        .rejected_actions = 0,
+        .violations = 0,
+    };
+    if (result.success) return result;
+
+    var operator_index: usize = 0;
+    while (operator_index < config.population_size) : (operator_index += 1) {
+        const action = decide(
+            config.policy,
+            states[operator_index],
+            operator_index,
+            1,
+            config,
+        ) orelse continue;
+
+        if (!validateAction(action, states[operator_index], config)) {
+            result.rejected_actions +%= 1;
+            result.violations +%= 1;
+            continue;
+        }
+
+        result.active_senders += 1;
+        result.selected_fact_units +%= @as(u64, @intCast(action.selected));
+        collector.unionWithFacts(action.facts, config.fact_count);
+    }
+
+    result.collector_final_facts = collector.count(config.fact_count);
+    result.success = collector.containsAll(config.fact_count);
+    return result;
+}
 
 pub fn run(config: Config) Error!Result {
     try config.validate();
@@ -884,12 +941,16 @@ test "word-level bitset operations respect partial tail words" {
     bits.set(64);
     bits.set(129);
     bits.set(1023);
+    bits.set(1535);
+    bits.set(2047);
 
     try std.testing.expectEqual(@as(usize, 1), bits.count(1));
     try std.testing.expectEqual(@as(usize, 2), bits.count(64));
     try std.testing.expectEqual(@as(usize, 3), bits.count(65));
     try std.testing.expectEqual(@as(usize, 4), bits.count(130));
     try std.testing.expectEqual(@as(usize, 5), bits.count(1024));
+    try std.testing.expectEqual(@as(usize, 6), bits.count(1536));
+    try std.testing.expectEqual(@as(usize, 7), bits.count(2048));
 
     var full = BitSet{};
     var i: usize = 0;
@@ -943,4 +1004,92 @@ test "optimized engine is result-equivalent to reference semantics" {
             }
         }
     }
+}
+
+
+test "complete one-round coverage oracle matches full simulator" {
+    const configs = [_]Config{
+        .{
+            .population_size = 32,
+            .fact_count = 64,
+            .topology = .complete,
+            .redundancy = 1,
+            .bandwidth = 2,
+            .policy = .round_robin,
+            .seed = 0,
+            .max_rounds = 1,
+        },
+        .{
+            .population_size = 64,
+            .fact_count = 256,
+            .topology = .complete,
+            .redundancy = 2,
+            .bandwidth = 4,
+            .policy = .seeded,
+            .seed = 1,
+            .max_rounds = 1,
+        },
+        .{
+            .population_size = 128,
+            .fact_count = 1536,
+            .topology = .complete,
+            .redundancy = 4,
+            .bandwidth = 8,
+            .policy = .novel_first,
+            .seed = 2,
+            .max_rounds = 1,
+        },
+    };
+
+    for (configs) |config| {
+        const oracle_result = try completeOneRoundCoverage(config);
+        const full_result = try run(config);
+        try std.testing.expectEqual(full_result.success, oracle_result.success);
+        try std.testing.expectEqual(
+            full_result.collector_initial_facts,
+            oracle_result.collector_initial_facts,
+        );
+        try std.testing.expectEqual(
+            full_result.collector_final_facts,
+            oracle_result.collector_final_facts,
+        );
+        try std.testing.expectEqual(full_result.violations, oracle_result.violations);
+    }
+}
+
+test "complete one-round coverage requires complete topology" {
+    try std.testing.expectError(
+        error.RequiresCompleteTopology,
+        completeOneRoundCoverage(.{
+            .population_size = 16,
+            .fact_count = 16,
+            .topology = .ring,
+            .redundancy = 1,
+            .bandwidth = 1,
+            .policy = .round_robin,
+        }),
+    );
+}
+
+test "extended fact capacity validates through 2048 facts" {
+    try (Config{
+        .population_size = 128,
+        .fact_count = 2048,
+        .topology = .ring,
+        .redundancy = 2,
+        .bandwidth = 4,
+        .policy = .novel_first,
+    }).validate();
+
+    try std.testing.expectError(
+        error.InvalidFactCount,
+        (Config{
+            .population_size = 128,
+            .fact_count = 2049,
+            .topology = .ring,
+            .redundancy = 2,
+            .bandwidth = 4,
+            .policy = .novel_first,
+        }).validate(),
+    );
 }
