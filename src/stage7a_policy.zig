@@ -364,29 +364,6 @@ pub fn decide(
         }
     }
 
-    var reset_sent = false;
-    if (heap_len == 0 and !has_unsent) {
-        // A completed local memory epoch starts a new retransmission epoch.
-        var candidate = state;
-        candidate.sent.clear();
-        const retry_observation = Observation{
-            .state = candidate,
-            .operator_index = observation.operator_index,
-            .round = observation.round,
-            .population_size = observation.population_size,
-            .fact_count = observation.fact_count,
-            .topology = observation.topology,
-            .redundancy = observation.redundancy,
-            .max_bandwidth = observation.max_bandwidth,
-            .seed = observation.seed,
-            .local_degree = observation.local_degree,
-        };
-        var action = decideWithoutEpochReset(theta, retry_observation) orelse
-            return null;
-        action.reset_sent = true;
-        return action;
-    }
-
     if (heap_len == 0) return null;
 
     var selected = scaling.BitSet{};
@@ -409,81 +386,7 @@ pub fn decide(
         .facts = selected,
         .selected = @intCast(heap_len),
         .next_cursor = @intCast(next_cursor),
-        .reset_sent = reset_sent,
-    };
-}
-
-fn decideWithoutEpochReset(
-    theta: Theta,
-    observation: Observation,
-) ?scaling.Action {
-    const bandwidth = effectiveBandwidth(
-        observation.max_bandwidth,
-        theta,
-    );
-
-    var seeded_ranks: [scaling.max_facts]u16 = undefined;
-    if (theta.exploration_permille != 0) {
-        fillSeededRanks(
-            &seeded_ranks,
-            observation.operator_index,
-            observation.round,
-            observation.fact_count,
-            observation.seed,
-        );
-    }
-
-    var heap: [scaling.max_facts]Candidate = undefined;
-    var heap_len: usize = 0;
-    const cursor_start =
-        @as(usize, @intCast(observation.state.cursor)) %
-        observation.fact_count;
-    const exploration = @as(i64, theta.exploration_permille);
-    const cursor_weight = 1000 - exploration;
-
-    var fact: usize = 0;
-    while (fact < observation.fact_count) : (fact += 1) {
-        if (!observation.state.knowledge.has(fact)) continue;
-        const cursor_rank =
-            (fact + observation.fact_count - cursor_start) %
-            observation.fact_count;
-        const seeded_rank: usize = if (theta.exploration_permille == 0)
-            cursor_rank
-        else
-            @as(usize, @intCast(seeded_ranks[fact]));
-        const score =
-            cursor_weight * @as(i64, @intCast(cursor_rank)) +
-            exploration * @as(i64, @intCast(seeded_rank));
-        keepBest(
-            &heap,
-            &heap_len,
-            bandwidth,
-            .{ .fact = @intCast(fact), .score = score },
-        );
-    }
-
-    if (heap_len == 0) return null;
-
-    var selected = scaling.BitSet{};
-    var next_cursor = cursor_start;
-    var worst_cursor_rank: usize = 0;
-    var i: usize = 0;
-    while (i < heap_len) : (i += 1) {
-        const selected_fact = @as(usize, heap[i].fact);
-        selected.set(selected_fact);
-        const rank =
-            (selected_fact + observation.fact_count - cursor_start) %
-            observation.fact_count;
-        if (i == 0 or rank >= worst_cursor_rank) {
-            worst_cursor_rank = rank;
-            next_cursor = (selected_fact + 1) % observation.fact_count;
-        }
-    }
-
-    return .{
-        .facts = selected,
-        .selected = @intCast(heap_len),
-        .next_cursor = @intCast(next_cursor),
+        .reset_sent = false,
     };
 }
 
