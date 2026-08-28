@@ -640,3 +640,15 @@ results remain external structural evidence rather than optimizer feedback.
 Stage 7C is the planned real distributed transfer test using P2Panda, where
 partitions, reconnection, stale state, and asynchronous execution can test
 whether the simulator-selected theta transfers.
+
+
+Stage 7B canonical result: deterministic search over 134 compact theta
+candidates produced a ten-point training frontier and a three-point
+validation-selected frontier. All three selected interior policies have zero
+validation failures and strictly dominate novel-first on validation resource
+cost. The strongest general-purpose point, theta=(354,141,0,994), transfers
+with zero failures to unseen N=128, F/N=4, R=4, B=8, complete topology, and a
+compound multi-axis stress set. It substantially dominates the named controls
+on the sparse ring/grid holdouts, while complete connectivity is approximately
+a parity regime rather than a broad win. Stage 7B therefore supports a compact
+Pareto family rather than one universal optimal theta.
