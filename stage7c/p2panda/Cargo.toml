@@ -1,0 +1,17 @@
+[package]
+name = "starlings-stage7c-p2panda"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+publish = false
+
+[dependencies]
+anyhow = "1"
+futures-util = "0.3"
+p2panda = "=0.7.0"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
