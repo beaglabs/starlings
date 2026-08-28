@@ -261,11 +261,12 @@ fn writeRegimeHoldouts(
                 .policy = policy,
             }, target);
 
-            inline for (.{
-                predictive.HoldoutKind.population_extrapolation,
-                predictive.HoldoutKind.information_extrapolation,
-                predictive.HoldoutKind.capacity_interpolation,
-            }) |kind| {
+            const holdouts = [_]predictive.HoldoutKind{
+                .population_extrapolation,
+                .information_extrapolation,
+                .capacity_interpolation,
+            };
+            for (holdouts) |kind| {
                 const score = predictive.scoreRegimeHoldout(summary, fitted, kind);
                 if (score.rows == 0) continue;
 
