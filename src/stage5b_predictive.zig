@@ -162,6 +162,34 @@ pub fn regimeMatches(row: stage5a.Row, regime: Regime) bool {
     return row.topology == regime.topology and row.policy == regime.policy;
 }
 
+pub fn candidateValidation(
+    summary: *const stage5a.Summary,
+    regime: Regime,
+    target: Target,
+    law: LawKind,
+) !Selection {
+    const fitted = try fitRegimeSubset(summary, regime, target, law, true);
+    const score = scoreRegimeSubset(
+        summary,
+        regime,
+        target,
+        law,
+        fitted.model,
+        .validation,
+    );
+    if (score.rows == 0) return error.NoValidationRows;
+
+    return .{
+        .law = law,
+        .validation_score = if (target == .convergence)
+            score.brier_score
+        else
+            score.mean_abs_log_error,
+        .fit_rows = fitted.rows,
+        .validation_rows = score.rows,
+    };
+}
+
 pub fn selectLaw(
     summary: *const stage5a.Summary,
     regime: Regime,
@@ -175,27 +203,9 @@ pub fn selectLaw(
     };
 
     inline for (.{ LawKind.mechanistic, LawKind.population, LawKind.hybrid }) |law| {
-        const fitted = try fitRegimeSubset(summary, regime, target, law, true);
-        const score = scoreRegimeSubset(
-            summary,
-            regime,
-            target,
-            law,
-            fitted.model,
-            .validation,
-        );
-        const candidate_score = if (target == .convergence)
-            score.brier_score
-        else
-            score.mean_abs_log_error;
-
-        if (score.rows != 0 and candidate_score < best.validation_score) {
-            best = .{
-                .law = law,
-                .validation_score = candidate_score,
-                .fit_rows = fitted.rows,
-                .validation_rows = score.rows,
-            };
+        const candidate = try candidateValidation(summary, regime, target, law);
+        if (candidate.validation_score < best.validation_score) {
+            best = candidate;
         }
     }
 
