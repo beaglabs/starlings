@@ -98,7 +98,7 @@ pub const Spec = struct {
 
     pub fn evaluate(
         context: *const SpecContext,
-        states: *const [worker_count]State,
+        states: *const [worker_count]SpecState,
         operator_count: usize,
         _: u32,
     ) formal.Outcome {
