@@ -24,16 +24,21 @@ pub const Context = struct {
     target_mask: u8 = full_mask,
 };
 
+const SpecState = State;
+const SpecObservation = Observation;
+const SpecAction = Action;
+const SpecContext = Context;
+
 pub const PolicyMode = enum {
     rotating_claim,
     silent,
 };
 
 pub const Spec = struct {
-    pub const State = @import("stage4_population_experiment.zig").State;
-    pub const Observation = @import("stage4_population_experiment.zig").Observation;
-    pub const Action = @import("stage4_population_experiment.zig").Action;
-    pub const Context = @import("stage4_population_experiment.zig").Context;
+    pub const State = SpecState;
+    pub const Observation = SpecObservation;
+    pub const Action = SpecAction;
+    pub const Context = SpecContext;
 
     pub fn observe(
         _: *const Context,
