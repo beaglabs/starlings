@@ -10,12 +10,16 @@ fn main() {
         .join("../..")
         .canonicalize()
         .expect("resolve Starlings repo root");
-    let zig_source = repo_root.join("src/experiments/stage7/stage7c_policy_ffi.zig");
+    let zig_source = repo_root.join("src/root.zig");
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     let output = out_dir.join("starlings_stage7c.o");
     let zig = env::var("ZIG").unwrap_or_else(|_| "zig".to_string());
 
     println!("cargo:rerun-if-changed={}", zig_source.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        repo_root.join("src/experiments/stage7/stage7c_policy_ffi.zig").display()
+    );
     println!(
         "cargo:rerun-if-changed={}",
         repo_root.join("src/experiments/stage7/stage7a_policy.zig").display()
