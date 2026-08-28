@@ -7,14 +7,14 @@ pub const FfiAction = extern struct {
     selected: u16,
     next_cursor: u16,
     reset_sent: u8,
-    _padding: [3]u8 = .{ 0, 0, 0 },
+    _padding: [3]u8,
 };
 
 pub const FfiSimulation = extern struct {
     success: u8,
-    _padding: [7]u8 = .{ 0, 0, 0, 0, 0, 0, 0 },
+    _padding: [7]u8,
     rounds: u32,
-    _padding2: u32 = 0,
+    _padding2: u32,
     communication_units: u64,
     useful_deliveries: u64,
     duplicate_deliveries: u64,
@@ -178,6 +178,7 @@ pub export fn starlings_stage7c_decide(
             .selected = 0,
             .next_cursor = cursor,
             .reset_sent = 0,
+            ._padding = .{ 0, 0, 0 },
         };
         return 0;
     };
@@ -191,6 +192,7 @@ pub export fn starlings_stage7c_decide(
         .selected = action.selected,
         .next_cursor = action.next_cursor,
         .reset_sent = if (action.reset_sent) 1 else 0,
+        ._padding = .{ 0, 0, 0 },
     };
     return 1;
 }
@@ -232,7 +234,9 @@ pub export fn starlings_stage7c_simulate(
     const result = stage7a.run(config, theta) catch return -4;
     out_simulation.* = .{
         .success = if (result.success) 1 else 0,
+        ._padding = .{ 0, 0, 0, 0, 0, 0, 0 },
         .rounds = result.rounds,
+        ._padding2 = 0,
         .communication_units = result.communication_units,
         .useful_deliveries = result.useful_deliveries,
         .duplicate_deliveries = result.duplicate_deliveries,
@@ -276,6 +280,7 @@ test "Stage 7C FFI uses the exact Stage 7A policy" {
         .selected = 0,
         .next_cursor = 0,
         .reset_sent = 0,
+        ._padding = .{ 0, 0, 0 },
     };
 
     const status = starlings_stage7c_decide(
@@ -292,10 +297,10 @@ test "Stage 7C FFI uses the exact Stage 7A policy" {
         141,
         0,
         994,
-        &state.knowledge.words,
-        &state.sent.words,
+        state.knowledge.words[0..].ptr,
+        state.sent.words[0..].ptr,
         scaling.word_count,
-        &output,
+        output[0..].ptr,
         scaling.word_count,
         &ffi_action,
     );
