@@ -19,7 +19,7 @@ pub fn main(init: std.process.Init) !void {
     );
     defer allocator.free(tsv);
 
-    var dataset = robust.parseDataset(tsv);
+    const dataset = robust.parseDataset(tsv);
     const out = std.Io.File.stdout();
 
     try writeDatasetAudit(io, out, &dataset);
