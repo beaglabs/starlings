@@ -24,16 +24,29 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    if (std.mem.eql(u8, args[1], "sweep")) {
-        const profile = if (args.len >= 3) args[2] else "smoke";
-        if (!std.mem.eql(u8, profile, "smoke") and !std.mem.eql(u8, profile, "full")) {
-            try usage(io);
-            std.process.exit(2);
-        }
-        try sweep(io, std.mem.eql(u8, profile, "full"));
+    if (std.mem.eql(u8, args[1], "plan")) {
+        const full = try parseProfile(io, args);
+        const out = std.Io.File.stdout();
+        try write(io, out, "Stage 5A sweep plan\n", .{});
+        try write(io, out, "profile: {s}\n", .{if (full) "full" else "smoke"});
+        try write(io, out, "runs: {d}\n", .{sweepPlanCount(full)});
         return;
     }
 
+    if (std.mem.eql(u8, args[1], "sweep")) {
+        const full = try parseProfile(io, args);
+        try sweep(io, full);
+        return;
+    }
+
+    try usage(io);
+    std.process.exit(2);
+}
+
+fn parseProfile(io: std.Io, args: []const []const u8) !bool {
+    const profile = if (args.len >= 3) args[2] else "smoke";
+    if (std.mem.eql(u8, profile, "smoke")) return false;
+    if (std.mem.eql(u8, profile, "full")) return true;
     try usage(io);
     std.process.exit(2);
 }
@@ -141,77 +154,129 @@ fn runOne(io: std.Io, args: []const []const u8) !void {
 }
 
 fn sweep(io: std.Io, full: bool) !void {
-    const smoke_populations = [_]usize{ 5, 10, 20, 50 };
-    const full_populations = [_]usize{ 5, 10, 20, 50, 100, 250, 500, 1000 };
-    const topologies = [_]scaling.TopologyKind{ .ring, .grid, .complete };
-    const redundancies = [_]usize{ 1, 2, 4 };
-    const bandwidths = [_]usize{ 1, 2, 4, 8 };
-    const policies = [_]scaling.PolicyKind{ .round_robin, .seeded, .novel_first };
-    const seeds = [_]u64{ 0, 1, 2 };
-
     const out = std.Io.File.stdout();
     try out.writeStreamingAll(
         io,
-        "population\tfacts\ttopology\tdiameter\tedges\tredundancy\tbandwidth\tpolicy\tseed\tsuccess\trounds\tcollector_initial\tcollector_final\tpolicy_calls\tactions\trejected\tmessages\tcomm_units\tuseful\tduplicate\tuseful_per_1000\tviolations\n",
+        "series\tpopulation\tfacts\ttopology\tdiameter\tedges\tredundancy\tbandwidth\tpolicy\tseed\tsuccess\trounds\tcollector_initial\tcollector_final\tpolicy_calls\tactions\trejected\tmessages\tcomm_units\tuseful\tduplicate\tuseful_per_1000\tviolations\n",
     );
 
     if (full) {
+        try sweepPopulationSeries(io, out, true);
+        try sweepInformationSeries(io, out, true);
+        try sweepCapacitySeries(io, out);
+    } else {
+        try sweepPopulationSeries(io, out, false);
+        try sweepInformationSeries(io, out, false);
+    }
+}
+
+fn sweepPopulationSeries(io: std.Io, out: std.Io.File, full: bool) !void {
+    const smoke_populations = [_]usize{ 20, 50, 100 };
+    const full_populations = [_]usize{ 20, 50, 100, 250, 500, 1000 };
+    const topologies = [_]scaling.TopologyKind{ .ring, .grid, .complete };
+    const policies = [_]scaling.PolicyKind{ .round_robin, .seeded, .novel_first };
+    const seeds = [_]u64{ 0, 1, 2 };
+
+    if (full) {
         for (full_populations) |population_size| {
-            try sweepPopulation(
-                io,
-                out,
-                population_size,
-                &topologies,
-                &redundancies,
-                &bandwidths,
-                &policies,
-                &seeds,
-                true,
-            );
+            for (topologies) |topology| {
+                for (policies) |policy| {
+                    for (seeds) |seed| {
+                        try emitRun(io, out, "population", .{
+                            .population_size = population_size,
+                            .fact_count = 32,
+                            .topology = topology,
+                            .redundancy = 2,
+                            .bandwidth = 2,
+                            .policy = policy,
+                            .seed = seed,
+                            .max_rounds = 4096,
+                        });
+                    }
+                }
+            }
         }
     } else {
         for (smoke_populations) |population_size| {
-            try sweepPopulation(
-                io,
-                out,
-                population_size,
-                &topologies,
-                &redundancies,
-                &bandwidths,
-                &policies,
-                &seeds,
-                false,
-            );
+            for (topologies) |topology| {
+                for (policies) |policy| {
+                    try emitRun(io, out, "population", .{
+                        .population_size = population_size,
+                        .fact_count = 20,
+                        .topology = topology,
+                        .redundancy = 2,
+                        .bandwidth = 2,
+                        .policy = policy,
+                        .seed = 0,
+                        .max_rounds = 2048,
+                    });
+                }
+            }
         }
     }
 }
 
-fn sweepPopulation(
-    io: std.Io,
-    out: std.Io.File,
-    population_size: usize,
-    topologies: []const scaling.TopologyKind,
-    redundancies: []const usize,
-    bandwidths: []const usize,
-    policies: []const scaling.PolicyKind,
-    seeds: []const u64,
-    full: bool,
-) !void {
-    for (topologies) |topology| {
-        for (redundancies) |redundancy| {
-            if (!full and redundancy > 2) continue;
+fn sweepInformationSeries(io: std.Io, out: std.Io.File, full: bool) !void {
+    const smoke_facts = [_]usize{ 16, 32, 64, 128 };
+    const full_facts = [_]usize{ 8, 16, 32, 64, 128, 256, 512, 1024 };
+    const topologies = [_]scaling.TopologyKind{ .ring, .grid, .complete };
+    const policies = [_]scaling.PolicyKind{ .round_robin, .seeded, .novel_first };
+    const seeds = [_]u64{ 0, 1, 2 };
 
-            for (bandwidths) |bandwidth| {
-                if (bandwidth > population_size) continue;
-                if (!full and bandwidth != 1 and bandwidth != 4) continue;
-
+    if (full) {
+        for (full_facts) |fact_count| {
+            for (topologies) |topology| {
                 for (policies) |policy| {
                     for (seeds) |seed| {
-                        if (!full and seed > 1) continue;
+                        try emitRun(io, out, "information", .{
+                            .population_size = 128,
+                            .fact_count = fact_count,
+                            .topology = topology,
+                            .redundancy = 2,
+                            .bandwidth = 2,
+                            .policy = policy,
+                            .seed = seed,
+                            .max_rounds = 4096,
+                        });
+                    }
+                }
+            }
+        }
+    } else {
+        for (smoke_facts) |fact_count| {
+            for (topologies) |topology| {
+                for (policies) |policy| {
+                    try emitRun(io, out, "information", .{
+                        .population_size = 64,
+                        .fact_count = fact_count,
+                        .topology = topology,
+                        .redundancy = 2,
+                        .bandwidth = 2,
+                        .policy = policy,
+                        .seed = 0,
+                        .max_rounds = 2048,
+                    });
+                }
+            }
+        }
+    }
+}
 
-                        const result = try scaling.run(.{
-                            .population_size = population_size,
-                            .fact_count = population_size,
+fn sweepCapacitySeries(io: std.Io, out: std.Io.File) !void {
+    const topologies = [_]scaling.TopologyKind{ .ring, .grid, .complete };
+    const policies = [_]scaling.PolicyKind{ .round_robin, .seeded, .novel_first };
+    const redundancies = [_]usize{ 1, 2, 4, 8 };
+    const bandwidths = [_]usize{ 1, 2, 4, 8, 16 };
+    const seeds = [_]u64{ 0, 1, 2 };
+
+    for (topologies) |topology| {
+        for (policies) |policy| {
+            for (redundancies) |redundancy| {
+                for (bandwidths) |bandwidth| {
+                    for (seeds) |seed| {
+                        try emitRun(io, out, "capacity", .{
+                            .population_size = 128,
+                            .fact_count = 128,
                             .topology = topology,
                             .redundancy = redundancy,
                             .bandwidth = bandwidth,
@@ -219,7 +284,6 @@ fn sweepPopulation(
                             .seed = seed,
                             .max_rounds = 4096,
                         });
-                        try writeTsvRow(io, out, result);
                     }
                 }
             }
@@ -227,12 +291,41 @@ fn sweepPopulation(
     }
 }
 
-fn writeTsvRow(io: std.Io, out: std.Io.File, result: scaling.Result) !void {
+fn emitRun(
+    io: std.Io,
+    out: std.Io.File,
+    series: []const u8,
+    config: scaling.Config,
+) !void {
+    const result = try scaling.run(config);
+    try writeTsvRow(io, out, series, result);
+}
+
+pub fn sweepPlanCount(full: bool) usize {
+    if (full) {
+        const population_runs = 6 * 3 * 3 * 3;
+        const information_runs = 8 * 3 * 3 * 3;
+        const capacity_runs = 3 * 3 * 4 * 5 * 3;
+        return population_runs + information_runs + capacity_runs;
+    }
+
+    const population_runs = 3 * 3 * 3;
+    const information_runs = 4 * 3 * 3;
+    return population_runs + information_runs;
+}
+
+fn writeTsvRow(
+    io: std.Io,
+    out: std.Io.File,
+    series: []const u8,
+    result: scaling.Result,
+) !void {
     try write(
         io,
         out,
-        "{d}\t{d}\t{s}\t{d}\t{d}\t{d}\t{d}\t{s}\t{d}\t{s}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\n",
+        "{s}\t{d}\t{d}\t{s}\t{d}\t{d}\t{d}\t{d}\t{s}\t{d}\t{s}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\n",
         .{
+            series,
             result.config.population_size,
             result.config.fact_count,
             result.config.topology.name(),
@@ -279,6 +372,7 @@ fn usage(io: std.Io) !void {
         "usage:\n" ++
             "  zig run src/stage5a_cli.zig -- validate\n" ++
             "  zig run src/stage5a_cli.zig -- run <population> <ring|grid|complete> <redundancy> <bandwidth> <round_robin|seeded|novel_first> [seed] [max_rounds] [fact_count]\n" ++
+            "  zig run src/stage5a_cli.zig -- plan [smoke|full]\n" ++
             "  zig run src/stage5a_cli.zig -- sweep [smoke|full]\n",
     );
 }
@@ -294,4 +388,9 @@ test "CLI enum parsers reject unknown values" {
     try std.testing.expect(parseTopology("mesh") == null);
     try std.testing.expectEqual(scaling.PolicyKind.novel_first, parsePolicy("novel_first").?);
     try std.testing.expect(parsePolicy("llm") == null);
+}
+
+test "sweep plans have stable row counts" {
+    try std.testing.expectEqual(@as(usize, 63), sweepPlanCount(false));
+    try std.testing.expectEqual(@as(usize, 918), sweepPlanCount(true));
 }
