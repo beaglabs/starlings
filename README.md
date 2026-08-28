@@ -77,7 +77,7 @@ Start a llama.cpp server, then validate and run the paired experiment:
 python3 tools/stage3e1_llama_cpp.py --self-test
 python3 tools/stage3e1_llama_cpp.py --dry-run
 python3 tools/stage3e1_llama_cpp.py --seeds 100 --output trials/stage3e1.tsv
-zig run src/stage3e1_summary.zig -- trials/stage3e1.tsv
+zig run src/experiments/stage3/stage3e1_summary.zig -- trials/stage3e1.tsv
 ```
 
 See `docs/stage-3e1-llama-cpp.md` for the experimental controls and runbook.
@@ -99,7 +99,7 @@ python3 tools/stage3f0_llama_cpp.py \
   --sampling-seeds 4 \
   --output trials/stage3f0-gemma4-e2b-v2.tsv
 
-zig run src/stage3f0_summary.zig -- \
+zig run src/experiments/stage3/stage3f0_summary.zig -- \
   trials/stage3f0-gemma4-e2b-v2.tsv
 ```
 
@@ -126,7 +126,7 @@ python3 tools/stage3f1_llama_cpp.py \
   --worker-budget 16 \
   --output trials/stage3f1-gemma4-e2b-budget16.tsv
 
-zig run src/stage3f1_summary.zig -- \
+zig run src/experiments/stage3/stage3f1_summary.zig -- \
   trials/stage3f1-gemma4-e2b-budget16.tsv
 ~~~
 
@@ -146,7 +146,7 @@ P = (A, G, X, M, F, Pi, C, Phi, J)
 
 where populations, topology, local state, actions, transition semantics,
 policies, constraints, global observables, and costs are represented by the
-generic Zig substrate in src/formal_population.zig.
+generic Zig substrate in src/core/formal_population.zig.
 
 The core has no dependency on prompts, tokenizers, model providers, or
 completion APIs. Language models remain a supported downstream policy/operator
@@ -157,9 +157,9 @@ Validate the deterministic Stage 4 substrate:
 ~~~sh
 zig test src/root.zig
 
-zig run src/stage4_cli.zig -- validate
+zig run src/experiments/stage4/stage4_cli.zig -- validate
 
-zig run src/stage4_cli.zig -- simulate 0 8
+zig run src/experiments/stage4/stage4_cli.zig -- simulate 0 8
 ~~~
 
 See docs/stage-4-formal-population-substrate.md and
@@ -205,25 +205,25 @@ Validate and inspect the sweep plan:
 ~~~sh
 zig test src/root.zig
 
-zig run src/stage5a_cli.zig -- validate
+zig run src/experiments/stage5/stage5a_cli.zig -- validate
 
-zig run src/stage5a_cli.zig -- plan smoke
-zig run src/stage5a_cli.zig -- plan full
+zig run src/experiments/stage5/stage5a_cli.zig -- plan smoke
+zig run src/experiments/stage5/stage5a_cli.zig -- plan full
 ~~~
 
 Run a single configuration:
 
 ~~~sh
-zig run src/stage5a_cli.zig -- \
+zig run src/experiments/stage5/stage5a_cli.zig -- \
   run 100 ring 2 2 novel_first 0 4096 32
 ~~~
 
 Emit machine-readable TSV:
 
 ~~~sh
-zig run src/stage5a_cli.zig -- sweep smoke > trials/stage5a-smoke.tsv
+zig run src/experiments/stage5/stage5a_cli.zig -- sweep smoke > trials/stage5a-smoke.tsv
 
-zig run src/stage5a_cli.zig -- sweep full > trials/stage5a-full.tsv
+zig run src/experiments/stage5/stage5a_cli.zig -- sweep full > trials/stage5a-full.tsv
 ~~~
 
 The smoke plan contains 63 runs. The full plan contains 918 runs.
@@ -237,7 +237,7 @@ controls, metric definitions, sweep matrix, and Stage 5A progression gate.
 After producing the canonical full sweep, summarize it without fitting a model:
 
 ~~~sh
-zig run src/stage5a_summary.zig -- trials/stage5a-full.tsv
+zig run src/experiments/stage5/stage5a_summary.zig -- trials/stage5a-full.tsv
 ~~~
 
 The summary:
@@ -268,7 +268,7 @@ configurations that are deliberately hidden before fitting.
 Run against the frozen canonical dataset:
 
 ~~~sh
-zig run src/stage5b_cli.zig -- trials/stage5a-full.tsv
+zig run src/experiments/stage5/stage5b_cli.zig -- trials/stage5a-full.tsv
 ~~~
 
 The primary approach fits a separate compact law for each topology × policy
@@ -327,27 +327,27 @@ It asks two questions:
 Plan and validate:
 
 ~~~sh
-zig run src/stage5c_cli.zig -- plan full
-zig run src/stage5c_cli.zig -- validate
+zig run src/experiments/stage5/stage5c_cli.zig -- plan full
+zig run src/experiments/stage5/stage5c_cli.zig -- validate
 ~~~
 
 Generate the canonical Stage 5C datasets:
 
 ~~~sh
-zig run src/stage5c_cli.zig -- boundary full \
+zig run src/experiments/stage5/stage5c_cli.zig -- boundary full \
   > trials/stage5c-boundary.tsv
 
-zig run src/stage5c_cli.zig -- saturation full \
+zig run src/experiments/stage5/stage5c_cli.zig -- saturation full \
   > trials/stage5c-saturation.tsv
 ~~~
 
 Summarize them deterministically:
 
 ~~~sh
-zig run src/stage5c_cli.zig -- summarize-boundary \
+zig run src/experiments/stage5/stage5c_cli.zig -- summarize-boundary \
   trials/stage5c-boundary.tsv
 
-zig run src/stage5c_cli.zig -- summarize-saturation \
+zig run src/experiments/stage5/stage5c_cli.zig -- summarize-saturation \
   trials/stage5c-saturation.tsv
 ~~~
 
@@ -391,19 +391,19 @@ or message drop, eight severities, and three deterministic trials. A perturbed
 configuration may become explicitly unreachable even at B=F.
 
 ~~~sh
-zig run src/stage6_cli.zig -- validate
-zig run src/stage6_cli.zig -- plan full
+zig run src/experiments/stage6/stage6_cli.zig -- validate
+zig run src/experiments/stage6/stage6_cli.zig -- plan full
 
-zig run -O ReleaseFast src/stage6_cli.zig -- sparse full \
+zig run -O ReleaseFast src/experiments/stage6/stage6_cli.zig -- sparse full \
   > trials/stage6-sparse.tsv
 
-zig run -O ReleaseFast src/stage6_cli.zig -- coverage full \
+zig run -O ReleaseFast src/experiments/stage6/stage6_cli.zig -- coverage full \
   > trials/stage6-coverage.tsv
 
-zig run src/stage6_cli.zig -- summarize-sparse \
+zig run src/experiments/stage6/stage6_cli.zig -- summarize-sparse \
   trials/stage6-sparse.tsv
 
-zig run src/stage6_cli.zig -- summarize-coverage \
+zig run src/experiments/stage6/stage6_cli.zig -- summarize-coverage \
   trials/stage6-coverage.tsv
 ~~~
 
@@ -450,7 +450,7 @@ training box on two or more axes.
 Run:
 
 ~~~sh
-zig run -O ReleaseFast src/stage6_1_cli.zig -- \
+zig run -O ReleaseFast src/experiments/stage6/stage6_1_cli.zig -- \
   trials/stage6-coverage.tsv
 ~~~
 
@@ -538,13 +538,13 @@ Validate and inspect the bounded control surface:
 ~~~sh
 zig test src/root.zig
 
-zig run src/stage7a_cli.zig -- validate
-zig run src/stage7a_cli.zig -- plan
+zig run src/experiments/stage7/stage7a_cli.zig -- validate
+zig run src/experiments/stage7/stage7a_cli.zig -- plan
 
-zig run -O ReleaseFast src/stage7a_cli.zig -- probe smoke \
+zig run -O ReleaseFast src/experiments/stage7/stage7a_cli.zig -- probe smoke \
   > trials/stage7a-smoke.tsv
 
-zig run -O ReleaseFast src/stage7a_cli.zig -- probe full \
+zig run -O ReleaseFast src/experiments/stage7/stage7a_cli.zig -- probe full \
   > trials/stage7a-probe.tsv
 ~~~
 
@@ -625,10 +625,10 @@ Run:
 ~~~sh
 zig test src/root.zig
 
-zig run src/stage7b_cli.zig -- validate
-zig run src/stage7b_cli.zig -- plan
+zig run src/experiments/stage7/stage7b_cli.zig -- validate
+zig run src/experiments/stage7/stage7b_cli.zig -- plan
 
-zig run -O ReleaseFast src/stage7b_cli.zig -- search \
+zig run -O ReleaseFast src/experiments/stage7/stage7b_cli.zig -- search \
   > trials/stage7b-search.txt
 ~~~
 
@@ -710,7 +710,7 @@ Build and test:
 ~~~sh
 zig test src/root.zig
 
-cd stage7c/p2panda
+cd modules/p2panda
 cargo test
 cargo run --release -- \
   --profile theta51 \
@@ -745,9 +745,14 @@ operation/sync-byte instrumentation.
 After the Stage 7C single-run smoke passes:
 
 ~~~sh
-cd stage7c/p2panda
+cd modules/p2panda
 bash run_suite.sh > ../../trials/stage7c-p2panda.tsv
 ~~~
 
 This runs the three frozen Stage 7B theta values plus novel-first across ring
 and grid with seeds 0-2 (24 runs total).
+
+
+## Generated experiment outputs
+
+The root `trials/` directory is an ignored local workspace for generated experiment TSV/text outputs. It is not source and is safe to clear between runs. Canonical scientific results, hashes, and conclusions belong in the corresponding stage documentation rather than as loose committed trial files.

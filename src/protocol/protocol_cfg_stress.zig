@@ -1,7 +1,7 @@
 const std = @import("std");
-const message = @import("message.zig");
+const message = @import("../core/message.zig");
 const protocol_cfg = @import("protocol_cfg.zig");
-const rng_mod = @import("rng.zig");
+const rng_mod = @import("../core/rng.zig");
 
 pub const max_events: usize = protocol_cfg.max_run_events;
 const production_count: usize = @typeInfo(protocol_cfg.Production).@"enum".fields.len;

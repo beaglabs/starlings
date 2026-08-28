@@ -10,7 +10,7 @@ fn main() {
         .join("../..")
         .canonicalize()
         .expect("resolve Starlings repo root");
-    let zig_source = repo_root.join("src/stage7c_policy_ffi.zig");
+    let zig_source = repo_root.join("src/experiments/stage7/stage7c_policy_ffi.zig");
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     let output = out_dir.join("starlings_stage7c.o");
     let zig = env::var("ZIG").unwrap_or_else(|_| "zig".to_string());
@@ -18,11 +18,11 @@ fn main() {
     println!("cargo:rerun-if-changed={}", zig_source.display());
     println!(
         "cargo:rerun-if-changed={}",
-        repo_root.join("src/stage7a_policy.zig").display()
+        repo_root.join("src/experiments/stage7/stage7a_policy.zig").display()
     );
     println!(
         "cargo:rerun-if-changed={}",
-        repo_root.join("src/stage5a_scaling.zig").display()
+        repo_root.join("src/experiments/stage5/stage5a_scaling.zig").display()
     );
 
     let status = Command::new(&zig)

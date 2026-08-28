@@ -68,7 +68,7 @@ Those are exactly the measurements needed for a transfer experiment.
 
 The Rust harness must not reimplement pi_theta.
 
-The file src/stage7c_policy_ffi.zig exposes a small C ABI:
+The file src/experiments/stage7/stage7c_policy_ffi.zig exposes a small C ABI:
 
 ~~~text
 starlings_stage7c_abi_version
@@ -128,7 +128,7 @@ Therefore every Stage 7C row contains its own exact synchronous control result.
 The Stage 7C Rust crate lives at:
 
 ~~~text
-stage7c/p2panda/
+modules/p2panda/
 ~~~
 
 Starlings Core itself still has:
@@ -323,7 +323,7 @@ synchronous horizon: 4096
 Run:
 
 ~~~sh
-cd stage7c/p2panda
+cd modules/p2panda
 
 cargo test
 
@@ -429,7 +429,7 @@ The architectural invariant remains:
 After the one-run smoke passes, generate the first multi-run transfer dataset:
 
 ~~~sh
-cd stage7c/p2panda
+cd modules/p2panda
 
 bash run_suite.sh > ../../trials/stage7c-p2panda.tsv
 ~~~
@@ -475,7 +475,7 @@ Rust 1.98.0
 in:
 
 ~~~text
-stage7c/p2panda/rust-toolchain.toml
+modules/p2panda/rust-toolchain.toml
 ~~~
 
 When rustup manages the local toolchain, entering the Stage 7C crate and running
@@ -484,7 +484,7 @@ Cargo will automatically select/install the pinned compiler.
 Check with:
 
 ~~~sh
-cd stage7c/p2panda
+cd modules/p2panda
 rustc --version
 cargo --version
 ~~~

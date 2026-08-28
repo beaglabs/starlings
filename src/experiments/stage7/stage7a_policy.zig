@@ -1,5 +1,5 @@
 const std = @import("std");
-const scaling = @import("stage5a_scaling.zig");
+const scaling = @import("../stage5/stage5a_scaling.zig");
 
 pub const Error = scaling.Error || error{
     InvalidNovelty,

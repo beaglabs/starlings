@@ -340,7 +340,7 @@ zig test src/root.zig
 Then:
 
 ~~~sh
-zig run src/stage7a_cli.zig -- validate
+zig run src/experiments/stage7/stage7a_cli.zig -- validate
 ~~~
 
 The CLI checks exact whole-run equivalence of all three control corners across:
@@ -367,20 +367,20 @@ interior_determinism_mismatches: 0
 Plan:
 
 ~~~sh
-zig run src/stage7a_cli.zig -- plan
+zig run src/experiments/stage7/stage7a_cli.zig -- plan
 ~~~
 
 Smoke:
 
 ~~~sh
-zig run -O ReleaseFast src/stage7a_cli.zig -- probe smoke \
+zig run -O ReleaseFast src/experiments/stage7/stage7a_cli.zig -- probe smoke \
   > trials/stage7a-smoke.tsv
 ~~~
 
 Full probe:
 
 ~~~sh
-zig run -O ReleaseFast src/stage7a_cli.zig -- probe full \
+zig run -O ReleaseFast src/experiments/stage7/stage7a_cli.zig -- probe full \
   > trials/stage7a-probe.tsv
 ~~~
 

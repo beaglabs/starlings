@@ -1,5 +1,5 @@
 const std = @import("std");
-const content_id = @import("content_id.zig");
+const content_id = @import("../core/content_id.zig");
 
 pub const ContentId = content_id.ContentId;
 pub const zero_id = content_id.zero;

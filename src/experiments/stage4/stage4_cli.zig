@@ -1,6 +1,6 @@
 const std = @import("std");
 const experiment = @import("stage4_population_experiment.zig");
-const formal = @import("formal_population.zig");
+const formal = @import("../../core/formal_population.zig");
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;

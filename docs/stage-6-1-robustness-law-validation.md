@@ -352,7 +352,7 @@ large flexible model.
 ~~~sh
 zig test src/root.zig
 
-zig run -O ReleaseFast src/stage6_1_cli.zig -- \
+zig run -O ReleaseFast src/experiments/stage6/stage6_1_cli.zig -- \
   trials/stage6-coverage.tsv
 ~~~
 

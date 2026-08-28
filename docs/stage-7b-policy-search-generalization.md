@@ -341,7 +341,7 @@ rather than allowing Stage 7B to pre-adapt to those effects.
 Run:
 
 ~~~sh
-zig run -O ReleaseFast src/stage7b_cli.zig -- search \
+zig run -O ReleaseFast src/experiments/stage7/stage7b_cli.zig -- search \
   > trials/stage7b-search.txt
 ~~~
 
@@ -391,9 +391,9 @@ Run on the Stage 7B branch:
 ~~~sh
 zig test src/root.zig
 
-zig run src/stage7a_cli.zig -- validate
-zig run src/stage7b_cli.zig -- validate
-zig run src/stage7b_cli.zig -- plan
+zig run src/experiments/stage7/stage7a_cli.zig -- validate
+zig run src/experiments/stage7/stage7b_cli.zig -- validate
+zig run src/experiments/stage7/stage7b_cli.zig -- plan
 ~~~
 
 Expected Stage 7B shape:

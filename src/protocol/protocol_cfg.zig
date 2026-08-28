@@ -1,5 +1,5 @@
 const std = @import("std");
-const message = @import("message.zig");
+const message = @import("../core/message.zig");
 const protocol_trace = @import("protocol_trace.zig");
 
 /// Stage 3C candidate grammar:

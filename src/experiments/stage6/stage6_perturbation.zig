@@ -1,6 +1,6 @@
 const std = @import("std");
-const scaling = @import("stage5a_scaling.zig");
-const stage5c = @import("stage5c_regimes.zig");
+const scaling = @import("../stage5/stage5a_scaling.zig");
+const stage5c = @import("../stage5/stage5c_regimes.zig");
 
 pub const horizon: u32 = 4096;
 pub const population: usize = 128;

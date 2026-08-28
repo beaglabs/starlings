@@ -1,5 +1,5 @@
 const stage7a = @import("stage7a_policy.zig");
-const scaling = @import("stage5a_scaling.zig");
+const scaling = @import("../stage5/stage5a_scaling.zig");
 
 pub const abi_version: u32 = 1;
 

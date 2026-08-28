@@ -226,7 +226,7 @@ python3 tools/stage3f1_llama_cpp.py \
 Then replay independently:
 
 ~~~sh
-zig run src/stage3f1_summary.zig -- \
+zig run src/experiments/stage3/stage3f1_summary.zig -- \
   trials/stage3f1-gemma4-e2b-budget16.tsv
 ~~~
 

@@ -1,6 +1,6 @@
 const std = @import("std");
 const stage7a = @import("stage7a_policy.zig");
-const scaling = @import("stage5a_scaling.zig");
+const scaling = @import("../stage5/stage5a_scaling.zig");
 
 const full_populations = [_]usize{ 32, 64 };
 const full_facts = [_]usize{ 32, 128 };

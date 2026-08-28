@@ -1,8 +1,8 @@
 const std = @import("std");
-const benchmark = @import("benchmark.zig");
-const message = @import("message.zig");
+const benchmark = @import("../core/benchmark.zig");
+const message = @import("../core/message.zig");
 const protocol_workflow = @import("protocol_workflow.zig");
-const runtime = @import("runtime.zig");
+const runtime = @import("../core/runtime.zig");
 
 pub const max_events: usize = 4096;
 
