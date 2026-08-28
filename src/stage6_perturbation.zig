@@ -699,6 +699,13 @@ pub fn findCoverageThreshold(
     full_config.bandwidth = low;
     const threshold = try completeOneRoundCoverage(full_config, perturbation);
 
+    if (low > 1) {
+        full_config.bandwidth = low - 1;
+        const below = try completeOneRoundCoverage(full_config, perturbation);
+        if (below.success) return error.NonMinimalThreshold;
+        full_config.bandwidth = low;
+    }
+
     return .{
         .population_size = population_size,
         .facts = facts,
@@ -1159,6 +1166,30 @@ test "full static ring removal isolates the collector component" {
         result.collector_component_fact_coverage <=
             result.collector_initial_facts,
     );
+}
+
+test "zero-severity coverage threshold matches Stage 5C for both perturbation mechanisms" {
+    const kinds = [_]PerturbationKind{ .operator_omission, .message_drop };
+    for (kinds) |kind| {
+        const threshold = try findCoverageThreshold(
+            128,
+            256,
+            8,
+            .seeded,
+            2,
+            .{
+                .kind = kind,
+                .severity_permille = 0,
+                .seed = 999,
+            },
+        );
+        try std.testing.expect(threshold.reachable);
+        try std.testing.expectEqual(
+            threshold.baseline_bandwidth,
+            threshold.perturbed_bandwidth,
+        );
+        try std.testing.expectEqual(@as(u64, 1000), threshold.inflation_x1000);
+    }
 }
 
 test "coverage threshold cannot improve below the unperturbed minimum at zero severity" {
