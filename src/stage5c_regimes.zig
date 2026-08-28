@@ -376,3 +376,42 @@ test "saturation fact ratios map exactly for canonical populations" {
     try std.testing.expectEqual(@as(usize, 128), saturationFactCount(64, 2000));
     try std.testing.expectEqual(@as(usize, 1024), saturationFactCount(256, 4000));
 }
+
+
+test "round robin and novel first are one-round equivalent before sent history exists" {
+    const cases = [_]struct {
+        population: usize,
+        facts: usize,
+        redundancy: usize,
+        bandwidth: usize,
+        seed: u64,
+    }{
+        .{ .population = 32, .facts = 64, .redundancy = 1, .bandwidth = 3, .seed = 0 },
+        .{ .population = 64, .facts = 128, .redundancy = 2, .bandwidth = 7, .seed = 1 },
+        .{ .population = 128, .facts = 512, .redundancy = 4, .bandwidth = 11, .seed = 2 },
+    };
+
+    for (cases) |case| {
+        const round_robin = try scaling.completeOneRoundCoverage(.{
+            .population_size = case.population,
+            .fact_count = case.facts,
+            .topology = .complete,
+            .redundancy = case.redundancy,
+            .bandwidth = case.bandwidth,
+            .policy = .round_robin,
+            .seed = case.seed,
+            .max_rounds = 1,
+        });
+        const novel_first = try scaling.completeOneRoundCoverage(.{
+            .population_size = case.population,
+            .fact_count = case.facts,
+            .topology = .complete,
+            .redundancy = case.redundancy,
+            .bandwidth = case.bandwidth,
+            .policy = .novel_first,
+            .seed = case.seed,
+            .max_rounds = 1,
+        });
+        try std.testing.expectEqualDeep(round_robin, novel_first);
+    }
+}
