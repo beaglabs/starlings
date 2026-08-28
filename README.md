@@ -411,3 +411,53 @@ zig run src/stage6_cli.zig -- summarize-coverage \
 Full Stage 6 sweeps are resumable and print the current deterministic case to
 stderr. Use an optional 1-based start index with append mode after an
 interruption; start_index > 1 suppresses the duplicate TSV header.
+
+
+## Stage 6.1 — Robustness Law Validation
+
+Stage 6.1 tests whether the one-round reachability phase discovered in Stage 6
+has a compact predictive law before Starlings moves to learned coordination
+control.
+
+It consumes the frozen canonical Stage 6 coverage dataset:
+
+~~~text
+rows: 2592
+SHA-256:
+86f15137ee2c3d1b066daeb6e61fa9f052ddf55cb5eb4f4c4f44aed2a11bdb04
+~~~
+
+Because round-robin and seeded have identical full-bandwidth reachability,
+Stage 6.1 first verifies that invariant and then keeps one representative copy
+per reachability world, leaving 1296 independent deterministic cases.
+
+The primary parameter-free candidate uses only facts missing from the
+collector:
+
+~~~text
+M = F - K0
+P(reachable) = (1 - p^R)^M
+~~~
+
+and compares it against the original exponential approximation plus one- and
+two-parameter hazard-scale corrections.
+
+Hard holdouts are disjoint and unseen during fitting:
+
+~~~text
+N = 256
+then F/N = 4
+then R = 8
+then p = 0.5
+~~~
+
+Run:
+
+~~~sh
+zig run -O ReleaseFast src/stage6_1_cli.zig -- \
+  trials/stage6-coverage.tsv
+~~~
+
+The CLI refuses non-canonical input, reports seed-2 validation metrics, refits
+the scalar corrections on all non-holdout seeds, evaluates every hard holdout,
+and prints a direct hazard-collapse calibration table.
