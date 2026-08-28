@@ -230,3 +230,31 @@ The smoke plan contains 63 runs. The full plan contains 918 runs.
 
 See docs/stage-5a-information-diffusion-scaling.md for the experimental
 controls, metric definitions, sweep matrix, and Stage 5A progression gate.
+
+
+### Stage 5A.2 deterministic summary
+
+After producing the canonical full sweep, summarize it without fitting a model:
+
+~~~sh
+zig run src/stage5a_summary.zig -- trials/stage5a-full.tsv
+~~~
+
+The summary:
+
+- verifies the 918-row canonical shape and SHA-256 identity;
+- keeps horizon-exhausted runs right-censored rather than treating 4096 as a
+  convergence time;
+- reports success rate, successful-run round statistics, communication cost,
+  useful-information efficiency, duplicate fraction, and censored completion;
+- groups results by topology/policy and by the population, information, and
+  capacity sweep axes;
+- reports the first observed population/information censoring boundary for each
+  topology/policy family;
+- lists empirical extrema and every censored configuration.
+
+Canonical Stage 5A dataset SHA-256:
+
+~~~text
+92279da22ded432f942b24f96f4f4658ee49174ba45c66239537744bee988fc6
+~~~
