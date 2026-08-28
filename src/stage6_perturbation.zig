@@ -40,7 +40,8 @@ pub const SparseAnchor = struct {
     pub fn lambdaX1e6(self: SparseAnchor) u64 {
         return scaledRatio(
             @as(u64, @intCast(self.facts)),
-            @as(u64, @intCast(self.bandwidth)) * horizon,
+            @as(u64, @intCast(self.bandwidth)) *
+                @as(u64, @intCast(horizon)),
             1_000_000,
         );
     }
@@ -756,7 +757,7 @@ pub fn eventOccurs(
         (@as(u64, @intCast(right)) *% 0x94d049bb133111eb);
 
     return (mix64(input) % 1000) <
-        @as(u64, perturbation.severity_permille);
+        @as(u64, @intCast(perturbation.severity_permille));
 }
 
 fn edgeRemoved(
