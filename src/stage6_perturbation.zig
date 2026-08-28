@@ -289,6 +289,15 @@ pub fn run(config: scaling.Config, perturbation: Perturbation) !Result {
 
     if (result.success) return result;
 
+    // Static topology damage can make convergence impossible regardless of
+    // bandwidth or horizon. Do not spend 4,096 rounds simulating a collector
+    // component that does not contain every fact.
+    if (perturbation.kind == .edge_removal and
+        component.fact_coverage < config.fact_count)
+    {
+        return result;
+    }
+
     var round: u32 = 1;
     while (round <= config.max_rounds) : (round += 1) {
         var actions = [_]?scaling.Action{null} ** scaling.max_operators;
@@ -1166,6 +1175,9 @@ test "full static ring removal isolates the collector component" {
         result.collector_component_fact_coverage <=
             result.collector_initial_facts,
     );
+    try std.testing.expectEqual(@as(u32, 0), result.rounds);
+    try std.testing.expectEqual(@as(u64, 0), result.policy_slots);
+    try std.testing.expectEqual(@as(u64, 0), result.attempted_messages);
 }
 
 test "zero-severity coverage threshold matches Stage 5C for both perturbation mechanisms" {
