@@ -390,12 +390,12 @@ fn fitScale(
     // Optimize log(c), keeping c positive. The broad interval is intentionally
     // conservative; Stage 6.1 is testing whether a single scalar correction
     // is enough, not trying to hide misspecification with a flexible model.
-    var left = @log(1.0e-3);
-    var right = @log(1.0e3);
+    var left: f64 = @log(@as(f64, 1.0e-3));
+    var right: f64 = @log(@as(f64, 1.0e3));
     const golden: f64 = 0.6180339887498948482;
 
-    var x1 = right - golden * (right - left);
-    var x2 = left + golden * (right - left);
+    var x1: f64 = right - golden * (right - left);
+    var x2: f64 = left + golden * (right - left);
     var f1 = negativeLogLikelihood(
         dataset,
         subset,
@@ -666,7 +666,11 @@ test "exact missing-fact law uses only collector-missing facts" {
         true,
         10,
     );
-    const expected = std.math.pow(f64, 0.9, 90.0);
+    const expected: f64 = std.math.pow(
+        f64,
+        @as(f64, 0.9),
+        @as(f64, 90.0),
+    );
     const actual = predict(row, .missing_exact, .{});
     try std.testing.expectApproxEqAbs(expected, actual, 1.0e-12);
 }
