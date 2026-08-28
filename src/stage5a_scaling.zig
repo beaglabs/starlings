@@ -112,7 +112,7 @@ pub const BitSet = struct {
         const tail_mask = activeTailMask(fact_count);
         var i: usize = 0;
         while (i < words) : (i += 1) {
-            const expected = if (i + 1 == words) tail_mask else std.math.maxInt(u64);
+            const expected = if (i + 1 == words) tail_mask else ~@as(u64, 0);
             if ((self.words[i] & expected) != expected) return false;
         }
         return true;
@@ -351,6 +351,151 @@ fn assertAccounting(result: Result) void {
     );
 }
 
+fn runReference(config: Config) Error!Result {
+    try config.validate();
+
+    var states = [_]State{.{}} ** max_operators;
+    initializeStates(&states, config);
+
+    const initial_facts = states[collector_index].knowledge.count(config.fact_count);
+    var result = initialResult(config, initial_facts);
+    if (result.success) return result;
+
+    var round: u32 = 1;
+    while (round <= config.max_rounds) : (round += 1) {
+        const snapshot = states;
+        var next = snapshot;
+        var actions = [_]?Action{null} ** max_operators;
+        var received = [_]BitSet{.{}} ** max_operators;
+
+        var operator_index: usize = 0;
+        while (operator_index < config.population_size) : (operator_index += 1) {
+            result.policy_calls +%= 1;
+            if (decide(
+                config.policy,
+                snapshot[operator_index],
+                operator_index,
+                round,
+                config,
+            )) |action| {
+                actions[operator_index] = action;
+                result.actions_proposed +%= 1;
+            }
+        }
+
+        var sender: usize = 0;
+        while (sender < config.population_size) : (sender += 1) {
+            const action = actions[sender] orelse continue;
+
+            if (!validateAction(action, snapshot[sender], config)) {
+                result.rejected_actions +%= 1;
+                result.violations +%= 1;
+                continue;
+            }
+
+            if (action.reset_sent) next[sender].sent.clear();
+            next[sender].sent.unionWith(action.facts);
+            next[sender].cursor = action.next_cursor;
+
+            switch (config.topology) {
+                .ring => {
+                    const left = (sender + config.population_size - 1) % config.population_size;
+                    const right = (sender + 1) % config.population_size;
+                    deliverReference(
+                        action,
+                        snapshot[left].knowledge,
+                        &received[left],
+                        &result,
+                    );
+                    if (right != left) {
+                        deliverReference(
+                            action,
+                            snapshot[right].knowledge,
+                            &received[right],
+                            &result,
+                        );
+                    }
+                },
+                .complete => {
+                    var recipient: usize = 0;
+                    while (recipient < config.population_size) : (recipient += 1) {
+                        if (recipient == sender) continue;
+                        deliverReference(
+                            action,
+                            snapshot[recipient].knowledge,
+                            &received[recipient],
+                            &result,
+                        );
+                    }
+                },
+                .grid => {
+                    const width = gridWidth(config.population_size);
+                    const row = sender / width;
+                    const col = sender % width;
+
+                    if (col > 0) {
+                        const recipient = sender - 1;
+                        deliverReference(action, snapshot[recipient].knowledge, &received[recipient], &result);
+                    }
+                    if (col + 1 < width and sender + 1 < config.population_size) {
+                        const recipient = sender + 1;
+                        if (recipient / width == row) {
+                            deliverReference(action, snapshot[recipient].knowledge, &received[recipient], &result);
+                        }
+                    }
+                    if (sender >= width) {
+                        const recipient = sender - width;
+                        deliverReference(action, snapshot[recipient].knowledge, &received[recipient], &result);
+                    }
+                    if (sender + width < config.population_size) {
+                        const recipient = sender + width;
+                        deliverReference(action, snapshot[recipient].knowledge, &received[recipient], &result);
+                    }
+                },
+            }
+        }
+
+        operator_index = 0;
+        while (operator_index < config.population_size) : (operator_index += 1) {
+            next[operator_index].knowledge.unionWith(received[operator_index]);
+        }
+
+        states = next;
+        result.rounds = round;
+        result.collector_final_facts = states[collector_index].knowledge.count(config.fact_count);
+
+        if (states[collector_index].knowledge.containsAll(config.fact_count)) {
+            result.success = true;
+            break;
+        }
+    }
+
+    assertAccounting(result);
+    return result;
+}
+
+fn deliverReference(
+    action: Action,
+    snapshot_knowledge: BitSet,
+    received: *BitSet,
+    result: *Result,
+) void {
+    result.messages +%= 1;
+    result.communication_units +%= @as(u64, @intCast(action.selected));
+
+    var fact: usize = 0;
+    while (fact < result.config.fact_count) : (fact += 1) {
+        if (!action.facts.has(fact)) continue;
+
+        if (!snapshot_knowledge.has(fact) and !received.has(fact)) {
+            result.useful_deliveries +%= 1;
+        } else {
+            result.duplicate_deliveries +%= 1;
+        }
+        received.set(fact);
+    }
+}
+
 pub fn initializeStates(states: *[max_operators]State, config: Config) void {
     var i: usize = 0;
     while (i < max_operators) : (i += 1) states[i] = .{};
@@ -546,7 +691,7 @@ fn activeWordCount(fact_count: usize) usize {
 fn activeTailMask(fact_count: usize) u64 {
     std.debug.assert(fact_count >= 1 and fact_count <= max_facts);
     const remainder = fact_count % 64;
-    if (remainder == 0) return std.math.maxInt(u64);
+    if (remainder == 0) return ~@as(u64, 0);
     return (@as(u64, 1) << @intCast(remainder)) - 1;
 }
 
@@ -729,4 +874,73 @@ test "configuration validation rejects impossible dimensions" {
         .bandwidth = 1,
         .policy = .round_robin,
     }).validate());
+}
+
+
+test "word-level bitset operations respect partial tail words" {
+    var bits = BitSet{};
+    bits.set(0);
+    bits.set(63);
+    bits.set(64);
+    bits.set(129);
+    bits.set(1023);
+
+    try std.testing.expectEqual(@as(usize, 1), bits.count(1));
+    try std.testing.expectEqual(@as(usize, 2), bits.count(64));
+    try std.testing.expectEqual(@as(usize, 3), bits.count(65));
+    try std.testing.expectEqual(@as(usize, 4), bits.count(130));
+    try std.testing.expectEqual(@as(usize, 5), bits.count(1024));
+
+    var full = BitSet{};
+    var i: usize = 0;
+    while (i < 65) : (i += 1) full.set(i);
+    try std.testing.expect(full.containsAll(65));
+    try std.testing.expect(!full.containsAll(66));
+
+    var sent = full;
+    try std.testing.expect(!full.hasDifference(sent, 65));
+    sent.words[1] &= ~@as(u64, 1);
+    try std.testing.expect(full.hasDifference(sent, 65));
+}
+
+test "optimized engine is result-equivalent to reference semantics" {
+    const topologies = [_]TopologyKind{ .ring, .grid, .complete };
+    const policies = [_]PolicyKind{ .round_robin, .seeded, .novel_first };
+
+    const configs = [_]Config{
+        .{
+            .population_size = 7,
+            .fact_count = 9,
+            .topology = .ring,
+            .redundancy = 2,
+            .bandwidth = 2,
+            .policy = .round_robin,
+            .seed = 3,
+            .max_rounds = 64,
+        },
+        .{
+            .population_size = 11,
+            .fact_count = 65,
+            .topology = .ring,
+            .redundancy = 3,
+            .bandwidth = 4,
+            .policy = .round_robin,
+            .seed = 7,
+            .max_rounds = 96,
+        },
+    };
+
+    for (configs) |base| {
+        for (topologies) |topology| {
+            for (policies) |policy| {
+                var config = base;
+                config.topology = topology;
+                config.policy = policy;
+
+                const optimized = try run(config);
+                const reference = try runReference(config);
+                try std.testing.expectEqualDeep(reference, optimized);
+            }
+        }
+    }
 }
