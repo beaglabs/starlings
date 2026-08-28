@@ -372,3 +372,236 @@ policy_invariant_mismatches: 0
 
 Stage 6.1 should be interpreted only after the authoritative local Zig 0.16
 run produces the validation and hard-holdout scores.
+
+
+## Canonical Stage 6.1 results
+
+Authoritative local evaluation used the frozen Stage 6 coverage dataset and
+passed the canonical input/policy-invariant audit:
+
+~~~text
+dataset SHA-256:
+86f15137ee2c3d1b066daeb6e61fa9f052ddf55cb5eb4f4c4f44aed2a11bdb04
+
+rows: 2592
+malformed rows: 0
+violation rows: 0
+severity-zero anomalies: 0
+
+representative rows after policy de-duplication: 1296
+policy-invariant pairs: 1296
+missing policy pairs: 0
+policy-invariant mismatches: 0
+~~~
+
+### Seed-2 validation
+
+The hard holdouts remained unseen while the scalar corrections were fitted on
+non-holdout seeds 0-1.
+
+~~~text
+law                     params   Brier       log-loss    accuracy
+naive_F_exp               0     0.031485    0.101848    95.54%
+missing_exact              0     0.032672    0.105357    95.54%
+global_scaled_exact        1     0.043141    0.139429    93.75%
+mechanism_scaled_exact     2     0.043995    0.146544    94.64%
+~~~
+
+Observed validation reachability was 41.96%.
+
+~~~text
+naive_F_exp predicted:       44.94%
+missing_exact predicted:     45.23%
+global_scaled predicted:     48.18%
+mechanism_scaled predicted:  48.04%
+~~~
+
+The validation Brier winner was the zero-parameter naive law. Both
+zero-parameter laws outperformed the fitted corrections.
+
+This is important: the Stage 6 transition does not require a fitted scale to
+predict held-out deterministic worlds.
+
+### Refit scalar diagnostics
+
+Refitting the optional scalar corrections on all non-holdout seeds produced:
+
+~~~text
+global c:             0.824710
+operator-omission c:  1.230805
+message-drop c:       0.615599
+~~~
+
+For this one-round collector-only target, omission and sender-to-collector
+message loss are distributionally equivalent Bernoulli sender-contribution
+events. The difference between the mechanism-specific coefficients is therefore
+a finite deterministic fault-domain diagnostic, not evidence of two distinct
+coverage laws.
+
+### Single-axis hard extrapolation
+
+#### Population: N=256
+
+~~~text
+law                     Brier       accuracy   observed   predicted
+naive_F_exp             0.022132     96.43%     40.48%     39.89%
+missing_exact           0.022099     96.43%     40.48%     39.95%
+global_scaled_exact     0.022055     96.43%     40.48%     40.70%
+mechanism_scaled_exact  0.020606     97.02%     40.48%     40.56%
+~~~
+
+All compact laws extrapolate well to unseen population size.
+
+#### Information density: F/N=4
+
+~~~text
+law                     Brier       accuracy   observed   predicted
+naive_F_exp             0.018923     97.02%     38.69%     39.89%
+missing_exact           0.019504     97.02%     38.69%     40.11%
+global_scaled_exact     0.021690     95.83%     38.69%     40.87%
+mechanism_scaled_exact  0.026028     95.24%     38.69%     40.73%
+~~~
+
+The zero-parameter laws are strongest on unseen density.
+
+#### Redundancy: R=8
+
+Training saw only R={1,4}. The R=8 holdout contained 167 reachable rows and
+1 unreachable row.
+
+~~~text
+law                     Brier       accuracy   observed   predicted
+naive_F_exp             0.006385     99.40%     99.40%     98.59%
+missing_exact           0.006296     99.40%     99.40%     98.70%
+global_scaled_exact     0.006077     99.40%     99.40%     98.92%
+mechanism_scaled_exact  0.006536     99.40%     99.40%     98.81%
+~~~
+
+Classification accuracy alone is weak evidence in this highly imbalanced
+holdout, but the probability calibration is also close. The p^R structure
+therefore extrapolates successfully to an unseen redundancy regime.
+
+#### Severity: p=0.5
+
+The severity holdout contained only 2 reachable rows out of 48.
+
+~~~text
+law                     Brier       log-loss    accuracy   predicted
+naive_F_exp             0.040931    0.252002    95.83%      0.24%
+missing_exact           0.040788    0.245808    95.83%      0.29%
+global_scaled_exact     0.040036    0.205718    95.83%      0.58%
+mechanism_scaled_exact  0.037932    0.155539    95.83%      0.77%
+~~~
+
+Observed reachability was 4.17%.
+
+All models correctly identify the high-severity regime as overwhelmingly
+unreachable, but every compact law under-predicts the rare reachable tail.
+This is the clearest remaining calibration miss.
+
+### Compound extrapolation
+
+The compound holdout contains 408 worlds outside the training box on two or
+more axes simultaneously.
+
+~~~text
+law                     Brier       log-loss    accuracy   observed   predicted
+naive_F_exp             0.051488    0.150701    92.16%     62.25%     61.67%
+missing_exact           0.051507    0.150784    92.16%     62.25%     62.07%
+global_scaled_exact     0.051326    0.150972    92.16%     62.25%     63.23%
+mechanism_scaled_exact  0.050295    0.149588    92.65%     62.25%     62.85%
+~~~
+
+This is the strongest Stage 6.1 result.
+
+The two zero-parameter laws predict compound extrapolation with approximately
+0.0515 Brier, 92.2% classification accuracy, and aggregate probability
+calibration within 0.6 percentage points of the observed reachability rate.
+
+The fitted corrections improve Brier only marginally and do not justify
+promoting extra parameters as part of the structural law.
+
+### Parameter-free hazard collapse
+
+Binning all 1296 representative rows by:
+
+~~~text
+h = -M log(1 - p^R)
+~~~
+
+produces a strong monotone collapse:
+
+~~~text
+h interval       observed reachable   M1 predicted
+0 - 0.05              100.0%             99.65%
+0.05 - 0.10            86.67%            93.03%
+0.10 - 0.25            78.57%            84.65%
+0.25 - 0.50            64.58%            67.17%
+0.50 - 1.0             43.75%            42.08%
+1.0 - 2.0              25.00%            17.73%
+2.0 - 4.0              12.96%             5.80%
+4.0 - 8.0               1.28%             0.39%
+>= 8                    0.00%             approximately 0
+~~~
+
+The coordinate orders the phase transition correctly across population size,
+density, redundancy, severity, and fault-domain labels.
+
+The parameter-free exact probability is not perfectly calibrated in the
+intermediate/high-hazard tail: it under-predicts rare successful worlds for
+roughly h>1. Therefore Stage 6.1 should distinguish:
+
+~~~text
+validated structural coordinate:
+  h = -M log(1 - p^R)
+  approximately M p^R at low hazard
+
+compact probability approximation:
+  P(reachable) approximately exp(-h)
+~~~
+
+from the stronger and unsupported statement that P=exp(-h) is an exact law.
+
+## Stage 6.1 conclusion
+
+Stage 6.1 validates a compact predictive robustness coordinate within the
+tested deterministic one-round coverage envelope.
+
+The central empirical result is:
+
+~~~text
+reachability is primarily organized by a missing-information hazard whose
+leading structure is M p^R (or exactly -M log(1-p^R) under the independence
+null).
+~~~
+
+This coordinate predicts unseen:
+
+~~~text
+population size
+information density
+redundancy
+fault severity
+simultaneous multi-axis extrapolation
+~~~
+
+without fitted parameters.
+
+The optional fitted hazard scales do not consistently improve unseen
+prediction and should not be part of the primary Starlings robustness law.
+
+The current evidence therefore supports:
+
+~~~text
+h = -M log(1-p^R)
+
+P(reachable) approximately exp(-h)
+~~~
+
+as a compact operator-neutral structural robustness law, with an explicit
+caveat that rare successful worlds at high hazard are under-predicted.
+
+Stage 7 can now treat structural reachability as an external constraint and
+focus learned coordination parameter theta on dynamical questions: trajectory
+selection, retransmission, novelty, neighbor choice, bandwidth allocation, and
+stopping.
