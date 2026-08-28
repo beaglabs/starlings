@@ -68,6 +68,7 @@ pub const SaturationDataset = struct {
 
 pub const BoundaryBand = struct {
     rows: usize = 0,
+    max_observed_f: usize = 0,
     last_all_success_4096: usize = 0,
     first_any_censored_4096: usize = 0,
     first_all_censored_4096: usize = 0,
@@ -188,6 +189,7 @@ pub fn boundaryBand(
         }
 
         if (rows_at_f == 0) continue;
+        result.max_observed_f = facts;
 
         if (success_4096 == rows_at_f) {
             result.last_all_success_4096 = facts;
