@@ -570,6 +570,114 @@ and keep the four-dimensional policy as the validated surface.
 
 Dataset: `trials/f3-inference-control.tsv`.
 
+### F3 completion record — 2026-08-29
+
+F3 completed in two mechanism-specific subexperiments.
+
+#### F3a — blind inference gating
+
+~~~text
+rows: 187
+dataset bytes: 25506
+SHA-256:
+42e60db5b999d19319f00a254eafda0eebe3ae5c1c37a824ca155bcbd074bfb2
+
+byte_identical_replay: yes
+violations: 0
+inference_accounting_failures: 0
+c1000_corner_mismatches: 0
+stage7b_anchor: PASS
+~~~
+
+F3a produced a valid **LIMITATION**. Its validation frontier contained only
+`c=1000` always-refresh policies. Blind seed/operator/round-indexed cache
+reuse was therefore not promoted.
+
+#### F3b — state-aware inference control
+
+F3b held the frozen Stage 7B ids 37/51/93 fixed and varied only deterministic
+local refresh control.
+
+~~~text
+rows: 85
+dataset bytes: 11329
+SHA-256:
+eb4237fdf5e6ac309b29f01c16345f9ff6507b8806ab986b15fbb3c9e080347a
+
+byte_identical_replay: yes
+violations: 0
+inference_accounting_failures: 0
+communication_accounting_failures: 0
+paired_baseline_mismatches: 0
+~~~
+
+The `knowledge_or_stale` controller was promoted for all three frozen base
+policies with lower inference and zero failures across all six hard holdout
+families.
+
+Paired validation deltas against exact always-refresh twins:
+
+~~~text
+base37:
+  inference       -1167
+  rounds              0
+  communication    -723
+  duplicates       -711
+  computation         0
+  hard failures       0
+
+base51:
+  inference       -1559
+  rounds              0
+  communication   -2148
+  duplicates      -2147
+  computation         0
+  hard failures       0
+
+base93:
+  inference       -1003
+  rounds             +2
+  communication    +256
+  duplicates       +215
+  computation      +128
+  hard failures       0
+~~~
+
+F3 therefore closes as a **PASS** with a mechanistic qualification:
+
+~~~text
+blind probabilistic/round-indexed gating:
+  LIMITATION
+
+state-aware knowledge/staleness gating:
+  PASS
+~~~
+
+The architectural consequence is recorded in ADR 0003:
+
+~~~text
+communication policy:
+  theta=(n,e,r,u)
+
+local inference control:
+  separate deterministic state-aware controller
+~~~
+
+The validated controller refreshes when no cache exists, local knowledge has
+changed, the cached action became invalid, or it is decision-stale because
+unsent local facts remain while its selected facts are already sent.
+Otherwise the cached action may be reused.
+
+Detailed evidence is frozen in `docs/f3-local-inference-control.md`.
+
+Canonical verdict:
+
+~~~text
+F3 PASS:
+state-aware local inference control reduces fresh inference while preserving
+zero-failure validation and hard-holdout behavior
+~~~
+
 ## F4 — Neutral heterogeneous AI operators
 
 The core is operator-neutral by ADR 0002. F4 exercises that neutrality with
