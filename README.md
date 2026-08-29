@@ -90,6 +90,7 @@ src/
   core/                    deterministic runtime and formal population substrate
   protocol/                typed protocol, CFG, traces, and model-eval machinery
   provenance/              content-addressed causal provenance
+  tests/                   root-level integration/regression tests
 
 grammars/                  constrained-generation grammars
 docs/                      stage reports and architecture decisions
