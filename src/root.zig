@@ -41,18 +41,7 @@ pub const stage7a_policy = @import("experiments/stage7/stage7a_policy.zig");
 pub const stage7a_cli = @import("experiments/stage7/stage7a_cli.zig");
 pub const stage7b_search = @import("experiments/stage7/stage7b_search.zig");
 pub const stage7b_cli = @import("experiments/stage7/stage7b_cli.zig");
-pub const stage7c_policy_ffi = @import("experiments/stage7/stage7c_policy_ffi.zig");
 
-comptime {
-    // Stage 7C native ABI exports are intentionally retained when src/root.zig
-    // is compiled as an object for the optional Rust/P2Panda module. Keeping
-    // src/root.zig as the Zig module root allows experiment modules to import
-    // sibling stage directories without escaping the module boundary.
-    _ = stage7c_policy_ffi.starlings_stage7c_abi_version;
-    _ = stage7c_policy_ffi.starlings_stage7c_init_state;
-    _ = stage7c_policy_ffi.starlings_stage7c_decide;
-    _ = stage7c_policy_ffi.starlings_stage7c_simulate;
-}
 
 test {
     _ = content_id;
@@ -92,7 +81,6 @@ test {
     _ = stage7a_cli;
     _ = stage7b_search;
     _ = stage7b_cli;
-    _ = stage7c_policy_ffi;
 }
 
 test "messages route deterministically and update operator state" {

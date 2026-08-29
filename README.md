@@ -2,7 +2,7 @@
 
 Experimental infrastructure for evidence-backed mathematical agent communication and collective coordination, implemented in Zig.
 
-## Current scope: Stage 0–7C
+## Current scope: Stage 0–7B; Stage 7C planned
 
 The foundation contains the machinery needed to run reproducible experiments and compare coordination strategies:
 
@@ -46,10 +46,8 @@ src/
     stage4/                operator-neutral population experiment
     stage5/                scaling, prediction, and regime experiments
     stage6/                perturbation and robustness-law experiments
-    stage7/                parameterized policy, search, and transfer ABI
+    stage7/                parameterized policy and search
 
-modules/
-  p2panda/                 optional native Rust P2Panda Stage 7C runtime adapter
 
 tools/                     external experiment runners
 grammars/                  constrained-generation grammars
@@ -57,9 +55,7 @@ docs/                      stage reports and architecture decisions
 trials/                    local generated outputs only; ignored by Git
 ~~~
 
-Core Starlings code does not depend on the optional modules. Generated trial
-outputs are intentionally kept out of version control; canonical hashes and
-scientific conclusions belong in the stage documentation.
+Generated trial outputs are intentionally kept out of version control; canonical hashes and scientific conclusions belong in the stage documentation.
 
 ## Validated architecture: content-addressed provenance
 
@@ -665,9 +661,10 @@ stdout.
 
 Stage 7B intentionally searches clean coordination dynamics. Stage 6/6.1 fault
 results remain external structural evidence rather than optimizer feedback.
-Stage 7C is the planned real distributed transfer test using P2Panda, where
-partitions, reconnection, stale state, and asynchronous execution can test
-whether the simulator-selected theta transfers.
+Stage 7C is the planned deterministic asynchronous transfer test in Zig, where
+seeded latency, loss, duplication, reordering, partitions, reconnection, stale
+state, and independent local clocks can test whether the simulator-selected
+theta transfers.
 
 
 Stage 7B canonical result: deterministic search over 134 compact theta
@@ -682,104 +679,24 @@ a parity regime rather than a broad win. Stage 7B therefore supports a compact
 Pareto family rather than one universal optimal theta.
 
 
-## Stage 7C — Native P2Panda Distributed Transfer
+## Stage 7C — Deterministic Asynchronous Transfer (planned)
 
-Stage 7C freezes the Stage 7B-selected policy family and transfers the exact
-Zig policy into a real asynchronous P2Panda runtime.
+Stage 7B is the current completed research boundary. Stage 7C has not yet
+passed a validation gate.
 
-The canonical adapter uses native Rust P2Panda 0.7.0 directly. There is no
-GObject binding in the measurement path.
+Stage 7C will keep the frozen Stage 7B policy family unchanged and replace
+synchronous rounds with a seeded Zig event runtime. The canonical experiment
+will model independent local clocks, latency and jitter, loss, duplication,
+reordering, partitions and reconnection, stale observations, and crash/restart.
+Every delivery schedule must be replayable from recorded configuration and
+seed.
 
-The architecture is:
+A real socket or replication substrate is not part of the Stage 7C gate. It
+can be evaluated later as a separable candidate only after the deterministic
+asynchronous semantics and transfer criteria are established.
 
-~~~text
-Stage 7A / 7B Zig pi_theta
-        |
-        | tiny C ABI
-        v
-Rust Stage 7C harness
-        |
-        v
-native p2panda::Node / topic streams
-        |
-        v
-P2Panda synchronization + Iroh transport
-~~~
-
-Rust does not reimplement the policy. Zig owns:
-
-~~~text
-deterministic initial fact placement
-local pi_theta action selection
-exact named-policy corner behavior
-synchronous Stage 7A comparison baseline
-~~~
-
-Rust owns:
-
-~~~text
-independent asynchronous node clocks
-P2Panda node/topic lifecycle
-real operation publication and synchronization
-application-level logical topology
-idempotent at-least-once event handling
-P2Panda sync/session instrumentation
-~~~
-
-The first Stage 7C experiment is deliberately a distributed-runtime transfer
-test rather than an OS-level network-partition claim. Multiple actual P2Panda
-nodes run concurrently in one process, while Starlings ring/grid/complete
-recipient semantics are encoded in the application envelope. Later 7C
-experiments can place the same harness in separate processes/network
-namespaces without changing pi_theta.
-
-Build and test:
-
-~~~sh
-zig test src/root.zig
-
-cd modules/p2panda
-cargo test
-cargo run --release -- \
-  --profile theta51 \
-  --nodes 8 \
-  --facts 32 \
-  --topology ring \
-  --redundancy 2 \
-  --bandwidth 2 \
-  --seed 0
-~~~
-
-The Rust build script invokes Zig automatically to build the Stage 7C static
-policy ABI. Set ZIG=/path/to/zig only if zig is not available on PATH.
-
-The Stage 7C crate includes rust-toolchain.toml pinned to Rust 1.98.0, so rustup
-selects a toolchain new enough for P2Panda 0.7.x automatically. P2Panda's
-minimum supported Rust version is 1.96.
-
-Frozen Stage 7B profiles:
-
-~~~text
-theta37 = (244, 94, 15, 958)
-theta51 = (354, 141, 0, 994)
-theta93 = (685, 283, 960, 344)
-~~~
-
-The TSV output reports the exact synchronous simulation result next to the
-distributed P2Panda result, including logical communication and P2Panda
-operation/sync-byte instrumentation.
-
-
-After the Stage 7C single-run smoke passes:
-
-~~~sh
-cd modules/p2panda
-bash run_suite.sh > ../../trials/stage7c-p2panda.tsv
-~~~
-
-This runs the three frozen Stage 7B theta values plus novel-first across ring
-and grid with seeds 0-2 (24 runs total).
-
+See `docs/stage-7c-deterministic-asynchronous-transfer.md` for current status,
+the validation gates, and the follow-on PR stack.
 
 ## Generated experiment outputs
 

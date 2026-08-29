@@ -2,4 +2,3 @@
 zig-out/
 *.o
 /trials/
-/modules/*/target/
