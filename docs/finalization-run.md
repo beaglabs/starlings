@@ -13,7 +13,8 @@ decentralized-coordination and agentic-communication research position:
 ~~~text
 F1  contested-environment evidence
       F1a canonical fault matrix on the deterministic substrate
-      F1b P2Panda-wired transfer as a candidate measurement substrate
+      F1b P2Panda-wired transfer candidate (runtime limitation)
+      F1c thin zquic transport candidate (validated)
 F2  asynchrony cost and scaling (delete after validation)
 F3  local inference control
 F4  neutral heterogeneous AI operators (gemma-4-E2B-it-Q4_K_M.gguf)
@@ -266,6 +267,97 @@ Outcome semantics are explicit:
 
 Dataset: `trials/f1b-p2panda-wired.tsv` plus a determinism-audit record.
 
+#### F1b disposition — 2026-08-29
+
+The P2Panda candidate did not become the validated real-transport substrate.
+
+During local validation, the pinned P2Panda/iroh dependency stack repeatedly
+panicked in a background thread inside `futures-lite` after an
+`Unfold` stream had already terminated. The panic recurred in independent
+fault-free worlds while the child process itself continued returning success,
+which meant the candidate runtime could conceal a transport failure from a
+naive process-exit gate.
+
+The verifier was hardened to capture background stderr/panics explicitly, but
+the transport was not upgraded in place because changing the pinned dependency
+would change the candidate under evaluation.
+
+F1b therefore remains the recorded P2Panda limitation that motivated a thinner
+replacement candidate rather than a validated transport result.
+
+### F1c — thin zquic transport candidate
+
+F1c replaces the P2Panda runtime with a deliberately smaller boundary:
+
+~~~text
+Starlings semantics
+  -> minimal length-prefixed envelope
+  -> zquic raw application stream
+  -> QUIC / TLS 1.3 / loss recovery / congestion control
+  -> UDP loopback
+~~~
+
+Frozen dependency:
+
+~~~text
+zigstack/zquic
+tag:          v1.7.48
+commit:       4bd041ac95425fb0aa229b74c9d3316c74aaf829
+package hash: zquic-1.7.0-2zRc1PSAFgDCESpm-vZsUr4O02HM0dpzmVJSx5WXW6ES
+Zig:          0.16.0
+~~~
+
+There is no discovery, mDNS, DHT, libp2p, replication runtime, database, HTTP,
+WebSocket, Rust runtime, or FFI in the F1c path.
+
+Starlings remains authoritative for policy, topology, logical attempt identity,
+fact semantics, idempotent merge, the frozen Stage 7C asynchronous schedule,
+fault injection, accounting, and completion. QUIC retransmissions remain
+transport-internal and never create new Starlings attempts.
+
+#### F1c completion record — 2026-08-29
+
+F1c passed the canonical local verifier on macOS with Zig 0.16.0.
+
+~~~text
+canonical rows: 42
+dataset bytes:  8007
+SHA-256:
+6ef0b88e5c06c1ceb3ce41ec08e1fcec89a08743e7e2440e5d48a097b3e66ddb
+
+fault-free successes: 24/24
+determinism audit:    12 rows, K=3
+contested rows:        6
+
+envelope_accounting_failures:      0
+missing_accounting_failures:       0
+communication_accounting_failures: 0
+protocol_violations:                0
+send_failures:                      0
+malformed_frames:                   0
+unattributed_missing:               0
+pending_at_censor:                  0
+transport_panics:                   0
+backpressure_events:                0
+
+udp_datagrams: 37396
+~~~
+
+All four fixed determinism worlds were full-row stable across K=3 reruns:
+
+~~~text
+novel_first / grid / seed 2  6d24eee242cc7dbc
+theta37     / ring / seed 0  45f9f003bc89eab4
+theta51     / grid / seed 1  9926f2289bf713c8
+theta93     / ring / seed 2  608d12243989469e
+~~~
+
+F1c therefore closes as a PASS. The deterministic Zig substrate remains the
+authoritative measurement layer; the pinned zquic path is a validated
+real-transport candidate beneath the Starlings protocol boundary.
+
+Detailed evidence is frozen in `docs/f1c-zquic-transport.md`.
+
 ## F2 — Asynchrony cost and scaling (delete after validation)
 
 Two questions, one disposable scaffold.
@@ -438,7 +530,9 @@ S0  experiments repository bootstrap
     |
     +-> F1a deterministic fault matrix          (pure Zig)
     |     |
-    |     +-> F1b P2Panda-wired candidate       (Rust toolchain)
+    |     +-> F1b P2Panda candidate             (runtime limitation)
+    |           |
+    |           +-> F1c zquic candidate         (pure Zig, PASS)
     |
     +-> F2 asynchrony gap + scaling             (pure Zig, delete after)
     |
@@ -447,9 +541,10 @@ S0  experiments repository bootstrap
     +-> F4 heterogeneous operators              (llama.cpp + weights)
 ~~~
 
-F1a is the prerequisite for F1b only. F2 and F3 are independent of the
-P2Panda toolchain and can proceed in parallel with F1b. F4 last, because it
-carries the most external dependencies.
+F1a is the prerequisite for the real-transport candidate sequence. F1b
+records the P2Panda runtime limitation; F1c records the validated thin zquic
+replacement. F2 and F3 remain independent of the transport candidate. F4
+last, because it carries the most external dependencies.
 
 ## Exit criteria for the run
 
@@ -458,7 +553,8 @@ The finalization run is complete when:
 1. S0 reproduces the frozen Stage 7C dataset byte-for-byte through the
    package dependency;
 2. F1a is frozen with complete fault attribution;
-3. F1b has a recorded PASS or LIMITATION verdict with attributed cause;
+3. F1b has its P2Panda runtime limitation recorded and F1c has a frozen
+   PASS/LIMITATION verdict for the replacement real-transport candidate;
 4. F2 hashes are frozen into documentation before its scaffold is deleted;
 5. F3 has a frozen result or a recorded limitation;
 6. F4 has aggregates over swept sampling seeds with trajectory-hash
