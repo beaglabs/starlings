@@ -181,6 +181,41 @@ a dedicated fault-matrix report.
 Gate: every world fully accounted, byte-identical replay, and no fault world
 loses a fact without an attributed cause.
 
+#### F1a completion record — 2026-08-29
+
+F1a passed through `starling-experiments` PR #4.
+
+~~~text
+canonical rows: 432
+successes:      397
+non-convergent: 35
+
+byte_identical_replay:          yes
+envelope_accounting_failures:   0
+missing_accounting_failures:    0
+unattributed_missing:           0
+violations:                     0
+
+dataset bytes: 68973
+SHA-256:
+c9d6b93937467ebf363ee14a02b2028ba0993d50a282770c547eaa3d35ed3ae5
+~~~
+
+Per-profile fault-tolerance summary:
+
+~~~text
+novel_first  successes=66/72  terminal_missing=22  communication_units=181035
+round_robin  successes=67/72  terminal_missing=18  communication_units=176508
+seeded       successes=66/72  terminal_missing=17  communication_units=238524
+theta37      successes=66/72  terminal_missing=19  communication_units=181687
+theta51      successes=66/72  terminal_missing=21  communication_units=180593
+theta93      successes=66/72  terminal_missing=21  communication_units=116470
+~~~
+
+All 35 non-convergent canonical worlds terminate with fully attributed missing
+facts. F1a therefore closes as a successful contested-environment evidence
+stage; convergence under every injected fault is not required by the gate.
+
 ### F1b — P2Panda-wired transfer as a candidate substrate
 
 History: the 2026-08-28 P2Panda candidate was rejected because identical
