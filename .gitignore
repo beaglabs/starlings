@@ -1,7 +1,8 @@
 .zig-cache/
 zig-out/
 *.o
-/trials/
+/trials/*
+!/trials/README.md
 models/
 .DS_Store
 /modules/*/target/
