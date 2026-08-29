@@ -93,6 +93,39 @@ The byte-for-byte reproduction is the proof that the frozen policy and
 harness semantics survived extraction. Nothing else in the run starts until
 S0 passes.
 
+#### S0 completion record — 2026-08-29
+
+S0 passed on macOS with Zig 0.16.0 through
+`starling-experiments` PR #2.
+
+~~~text
+frozen sources: 6 byte-identical blobs
+
+Stage 5A:
+  runs:       27
+  successes:  27
+  violations: 0
+
+Stage 7A:
+  baseline_corner_checks:          18
+  baseline_corner_mismatches:      0
+  interior_determinism_checks:      6
+  interior_determinism_mismatches:  0
+
+Stage 7C:
+  theta37:      success=yes accounted=yes violations=0
+  theta51:      success=yes accounted=yes violations=0
+  theta93:      success=yes accounted=yes violations=0
+  novel_first:  success=yes accounted=yes violations=0
+
+dataset bytes: 2961
+SHA-256:
+c89d1985af0479191126fca91265b1fe7f49e7b34db471e13c74e8bb28195a36
+~~~
+
+The reproduced SHA-256 exactly matches the frozen Stage 7C first-suite hash.
+The S0 dependency gate is therefore closed and F1a may proceed.
+
 ## F1 — Contested-environment evidence
 
 ### F1a — canonical fault matrix on the deterministic substrate
