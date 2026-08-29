@@ -450,6 +450,60 @@ censors under the fixed budget, per density and topology.
 
 Dataset: `trials/f2-scaling.tsv`.
 
+#### F2.2 completion record — 2026-08-29
+
+F2.2 passed the canonical local verifier on macOS with Zig 0.16.0.
+
+~~~text
+canonical rows: 240
+dataset bytes: 35712
+SHA-256:
+25f828b00b74b93f27826c91193057b3bfb1148ae0127c32be1afa79f1911773
+
+byte_identical_replay: yes
+successes: 240/240
+censored: 0
+violations: 0
+accounting_failures: 0
+communication_failures: 0
+queue_overflow: 0
+unexpected_fault_terminals: 0
+~~~
+
+Per-profile totals:
+
+~~~text
+theta37      successes=60/60  communication=1816013  duplicate=1434263
+theta51      successes=60/60  communication=1720228  duplicate=1338138
+theta93      successes=60/60  communication=1737538  duplicate=1355694
+novel_first  successes=60/60  communication=7575655  duplicate=7193975
+~~~
+
+All 16 `profile × topology × F/N` groups are 3/3 successful at every tested
+population:
+
+~~~text
+N=8    3/3
+N=16   3/3
+N=32   3/3
+N=64   3/3
+N=128  3/3
+~~~
+
+Thus no feasibility boundary was observed inside the frozen F2.2 box.
+The correct measured conclusion is a lower bound, not a threshold:
+
+~~~text
+observed feasibility boundary:
+  N > 128
+~~~
+
+F2.2 therefore closes as a PASS. Together with F2.1, F2 is scientifically
+complete: F2.1 quantifies the N=8 asynchrony cost, while F2.2 establishes that
+the tested policies remain feasible throughout the frozen scaling range.
+
+Detailed evidence is frozen in `docs/f2-2-asynchronous-scaling.md`.
+
 ### Freeze and delete
 
 After both datasets are generated:
