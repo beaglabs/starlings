@@ -108,6 +108,8 @@ fn runOne(io: std.Io, args: []const []const u8) !void {
             .max_rounds = 4096,
         },
         .schedule_seed = schedule_seed,
+        // Match the frozen suite so `run` reproduces suite worlds exactly.
+        .latency_jitter = 4,
     };
     const result = try transfer.run(config, profile.theta);
     const out = std.Io.File.stdout();

@@ -40,7 +40,9 @@ pub const stage6_1_cli = @import("experiments/stage6/stage6_1_cli.zig");
 pub const stage7a_policy = @import("experiments/stage7/stage7a_policy.zig");
 pub const stage7a_cli = @import("experiments/stage7/stage7a_cli.zig");
 pub const stage7b_search = @import("experiments/stage7/stage7b_search.zig");
-pub const stage7b_cli = @import("experiments/stage7/stage7b_cli.zig");\npub const stage7c_async_transfer = @import("experiments/stage7/stage7c_async_transfer.zig");\npub const stage7c_cli = @import("experiments/stage7/stage7c_cli.zig");
+pub const stage7b_cli = @import("experiments/stage7/stage7b_cli.zig");
+pub const stage7c_async_transfer = @import("experiments/stage7/stage7c_async_transfer.zig");
+pub const stage7c_cli = @import("experiments/stage7/stage7c_cli.zig");
 
 
 test {
@@ -80,7 +82,9 @@ test {
     _ = stage7a_policy;
     _ = stage7a_cli;
     _ = stage7b_search;
-    _ = stage7b_cli;\n    _ = stage7c_async_transfer;\n    _ = stage7c_cli;
+    _ = stage7b_cli;
+    _ = stage7c_async_transfer;
+    _ = stage7c_cli;
 }
 
 test "messages route deterministically and update operator state" {
