@@ -570,6 +570,91 @@ and keep the four-dimensional policy as the validated surface.
 
 Dataset: `trials/f3-inference-control.tsv`.
 
+### F3 completion record — 2026-08-29
+
+F3 completed the canonical local verifier on macOS with Zig 0.16.0 as a
+scientifically valid **LIMITATION**.
+
+~~~text
+canonical rows: 187
+dataset bytes: 25506
+SHA-256:
+42e60db5b999d19319f00a254eafda0eebe3ae5c1c37a824ca155bcbd074bfb2
+
+byte_identical_replay: yes
+violations: 0
+inference_accounting_failures: 0
+c1000_corner_mismatches: 0
+stage7b_anchor: PASS
+~~~
+
+Candidate and historical-corner gates:
+
+~~~text
+candidate_count: 134
+gated_candidates: 127
+invalid_theta: 0
+duplicate_theta: 0
+
+c=1000 candidates: 134
+aggregate_checks: 268
+mismatches: 0
+~~~
+
+The validation-selected frontier contains only ungated policies:
+
+~~~text
+id=3
+theta=(500,0,250,1000,1000)
+failures=0
+rounds=1044
+communication=265191
+duplicates=177280
+computation=55968
+inference=55968
+reuse=0
+
+id=5
+theta=(750,250,0,500,1000)
+failures=0
+rounds=1448
+communication=250833
+duplicates=162874
+computation=77408
+inference=77408
+reuse=0
+~~~
+
+No candidate with `c<1000` survived feasibility-first validation Pareto
+selection. Therefore the tested cached-action inference gate did not produce a
+zero-failure validation-selected policy with strictly lower inference use.
+
+This result does not reject local inference control in general. It rejects this
+specific parameterization as a validated protocol-core extension:
+
+~~~text
+refresh eligibility:
+  deterministic function of seed/operator/local round
+
+when refresh is skipped:
+  reuse previous cached action
+~~~
+
+The architectural consequence is recorded in ADR 0003:
+
+~~~text
+retain theta=(n,e,r,u) as the validated policy surface
+do not promote the tested c gate into the protocol core
+~~~
+
+Detailed evidence is frozen in `docs/f3-local-inference-control.md`.
+
+Canonical verdict:
+
+~~~text
+F3 LIMITATION: local inference-control evidence complete
+~~~
+
 ## F4 — Neutral heterogeneous AI operators
 
 The core is operator-neutral by ADR 0002. F4 exercises that neutrality with
