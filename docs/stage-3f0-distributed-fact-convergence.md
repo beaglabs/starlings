@@ -272,7 +272,7 @@ depend on prior generated actions, so an interrupted replication should be resta
 ## Summarize and replay in Zig
 
 \`\`\`sh
-zig run src/stage3f0_summary.zig -- \
+zig run src/experiments/stage3/stage3f0_summary.zig -- \
   trials/stage3f0-gemma4-e2b-v2.tsv
 \`\`\`
 

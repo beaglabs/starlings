@@ -1,6 +1,6 @@
 const std = @import("std");
-const convergence = @import("distributed_fact_convergence.zig");
-const model_eval = @import("protocol_model_eval.zig");
+const efficiency = @import("distributed_fact_efficiency.zig");
+const model_eval = @import("../../protocol/protocol_model_eval.zig");
 
 pub const backend_error_sentinel = "__BACKEND_ERROR__";
 pub const max_completion_bytes: usize = 4096;
@@ -18,8 +18,10 @@ pub const ModeMetrics = struct {
     invalid_actions: usize = 0,
     backend_errors: usize = 0,
     semantic_violations: usize = 0,
+    budget_rejections: usize = 0,
     rounds: usize = 0,
     network_messages: usize = 0,
+    communication_units: usize = 0,
     useful_fact_deliveries: usize = 0,
     duplicate_fact_transmissions: usize = 0,
     completion_tokens: usize = 0,
@@ -42,9 +44,9 @@ pub const ModeMetrics = struct {
         return (self.rounds * 1000) / self.runs;
     }
 
-    pub fn usefulFactsPerMessagePermille(self: ModeMetrics) usize {
-        if (self.network_messages == 0) return 0;
-        return (self.useful_fact_deliveries * 1000) / self.network_messages;
+    pub fn usefulFactsPerUnitPermille(self: ModeMetrics) usize {
+        if (self.communication_units == 0) return 0;
+        return (self.useful_fact_deliveries * 1000) / self.communication_units;
     }
 };
 
@@ -56,14 +58,17 @@ pub const RunKey = struct {
 pub const RunResult = struct {
     key: RunKey,
     mode: model_eval.DecodeMode,
+    worker_budget: u16,
     success: bool,
     model_calls: usize,
     protocol_actions: usize,
     invalid_actions: usize,
     backend_errors: usize,
     semantic_violations: usize,
+    budget_rejections: usize,
     rounds: usize,
     network_messages: usize,
+    communication_units: usize,
     useful_fact_deliveries: usize,
     duplicate_fact_transmissions: usize,
     completion_tokens: usize,
@@ -105,11 +110,13 @@ pub const Summary = struct {
             switch (run.mode) {
                 .typed_unconstrained => {
                     typed_count += 1;
-                    if (findRun(self, run.key, .cfg_constrained) == null) return false;
+                    const peer = findRun(self, run.key, .cfg_constrained) orelse return false;
+                    if (peer.worker_budget != run.worker_budget) return false;
                 },
                 .cfg_constrained => {
                     constrained_count += 1;
-                    if (findRun(self, run.key, .typed_unconstrained) == null) return false;
+                    const peer = findRun(self, run.key, .typed_unconstrained) orelse return false;
+                    if (peer.worker_budget != run.worker_budget) return false;
                 },
             }
         }
@@ -143,7 +150,9 @@ const RawRecord = struct {
     mode: model_eval.DecodeMode,
     round: u32,
     worker: u8,
-    knowledge_before: u8,
+    knowledge_before: u16,
+    budget_before: u16,
+    worker_budget: u16,
     generation_seed: u32,
     completion_tokens: usize,
     latency_us: u64,
@@ -153,17 +162,21 @@ const RawRecord = struct {
 const RunAccumulator = struct {
     key: RunKey,
     mode: model_eval.DecodeMode,
-    knowledge: [convergence.worker_count]u8,
+    worker_budget: u16,
+    knowledge: [efficiency.worker_count]u16,
+    remaining_budget: [efficiency.worker_count]u16,
     current_round: u32 = 1,
-    seen_workers: [convergence.worker_count]bool = [_]bool{false} ** convergence.worker_count,
-    actions: [convergence.worker_count]?convergence.Action = [_]?convergence.Action{null} ** convergence.worker_count,
+    seen_workers: [efficiency.worker_count]bool = [_]bool{false} ** efficiency.worker_count,
+    actions: [efficiency.worker_count]?efficiency.Action = [_]?efficiency.Action{null} ** efficiency.worker_count,
     model_calls: usize = 0,
     protocol_actions: usize = 0,
     invalid_actions: usize = 0,
     backend_errors: usize = 0,
     semantic_violations: usize = 0,
+    budget_rejections: usize = 0,
     rounds: usize = 0,
     network_messages: usize = 0,
+    communication_units: usize = 0,
     useful_fact_deliveries: usize = 0,
     duplicate_fact_transmissions: usize = 0,
     completion_tokens: usize = 0,
@@ -172,11 +185,13 @@ const RunAccumulator = struct {
     trajectory_hash: u64 = fnv_offset,
     solved: bool = false,
 
-    fn init(key: RunKey, mode: model_eval.DecodeMode) RunAccumulator {
+    fn init(key: RunKey, mode: model_eval.DecodeMode, worker_budget: u16) RunAccumulator {
         return .{
             .key = key,
             .mode = mode,
-            .knowledge = convergence.initialKnowledge(key.environment_seed),
+            .worker_budget = worker_budget,
+            .knowledge = efficiency.initialKnowledge(key.environment_seed),
+            .remaining_budget = efficiency.initialBudgets(worker_budget),
         };
     }
 
@@ -188,15 +203,17 @@ const RunAccumulator = struct {
     ) !void {
         if (self.solved) return error.RecordAfterSuccess;
         if (!keyEql(record.key, self.key) or record.mode != self.mode) return error.WrongRun;
+        if (record.worker_budget != self.worker_budget) return error.WorkerBudgetMismatch;
         if (record.round != self.current_round) return error.UnexpectedRound;
-        if (record.worker == 0 or @as(usize, record.worker) > convergence.worker_count) {
+        if (record.worker == 0 or @as(usize, record.worker) > efficiency.worker_count) {
             return error.InvalidWorker;
         }
 
         const worker_index: usize = @intCast(record.worker - 1);
         if (self.seen_workers[worker_index]) return error.DuplicateWorker;
         if (record.knowledge_before != self.knowledge[worker_index]) return error.KnowledgeMismatch;
-        if (record.generation_seed != convergence.generationSeed(
+        if (record.budget_before != self.remaining_budget[worker_index]) return error.BudgetMismatch;
+        if (record.generation_seed != efficiency.generationSeed(
             record.key.sampling_seed,
             record.round,
             record.worker,
@@ -216,7 +233,7 @@ const RunAccumulator = struct {
             self.backend_errors += 1;
         } else {
             self.generated_bytes += completion.len;
-            const action = convergence.parseAction(completion) catch {
+            const action = efficiency.parseAction(completion) catch {
                 self.invalid_actions += 1;
                 summary.recordInvalid(record);
                 self.seen_workers[worker_index] = true;
@@ -236,16 +253,22 @@ const RunAccumulator = struct {
             if (!seen) return;
         }
 
-        const round_metrics = convergence.applyRound(&self.knowledge, self.actions);
+        const round_metrics = efficiency.applyRound(
+            &self.knowledge,
+            &self.remaining_budget,
+            self.actions,
+        );
         self.semantic_violations += round_metrics.semantic_violations;
+        self.budget_rejections += round_metrics.budget_rejections;
         self.network_messages += round_metrics.network_messages;
+        self.communication_units += round_metrics.communication_units;
         self.useful_fact_deliveries += round_metrics.useful_fact_deliveries;
         self.duplicate_fact_transmissions += round_metrics.duplicate_fact_transmissions;
         self.rounds += 1;
-        self.solved = convergence.collectorSolved(self.knowledge);
+        self.solved = efficiency.collectorSolved(self.knowledge);
         self.current_round += 1;
-        self.seen_workers = [_]bool{false} ** convergence.worker_count;
-        self.actions = [_]?convergence.Action{null} ** convergence.worker_count;
+        self.seen_workers = [_]bool{false} ** efficiency.worker_count;
+        self.actions = [_]?efficiency.Action{null} ** efficiency.worker_count;
     }
 
     fn complete(self: *const RunAccumulator) bool {
@@ -259,14 +282,17 @@ const RunAccumulator = struct {
         return .{
             .key = self.key,
             .mode = self.mode,
+            .worker_budget = self.worker_budget,
             .success = self.solved,
             .model_calls = self.model_calls,
             .protocol_actions = self.protocol_actions,
             .invalid_actions = self.invalid_actions,
             .backend_errors = self.backend_errors,
             .semantic_violations = self.semantic_violations,
+            .budget_rejections = self.budget_rejections,
             .rounds = self.rounds,
             .network_messages = self.network_messages,
+            .communication_units = self.communication_units,
             .useful_fact_deliveries = self.useful_fact_deliveries,
             .duplicate_fact_transmissions = self.duplicate_fact_transmissions,
             .completion_tokens = self.completion_tokens,
@@ -299,14 +325,14 @@ pub fn summarizeTsv(tsv: []const u8) Summary {
         };
 
         if (active == null) {
-            active = RunAccumulator.init(record.key, record.mode);
+            active = RunAccumulator.init(record.key, record.mode, record.worker_budget);
         } else if (!keyEql(active.?.key, record.key) or active.?.mode != record.mode) {
             if (active) |*run| {
                 finishRun(&summary, run) catch {
                     summary.replay_errors += 1;
                 };
             }
-            active = RunAccumulator.init(record.key, record.mode);
+            active = RunAccumulator.init(record.key, record.mode, record.worker_budget);
         }
 
         if (active) |*run| {
@@ -347,8 +373,10 @@ fn finishRun(summary: *Summary, run: *RunAccumulator) !void {
     metrics.invalid_actions += run_result.invalid_actions;
     metrics.backend_errors += run_result.backend_errors;
     metrics.semantic_violations += run_result.semantic_violations;
+    metrics.budget_rejections += run_result.budget_rejections;
     metrics.rounds += run_result.rounds;
     metrics.network_messages += run_result.network_messages;
+    metrics.communication_units += run_result.communication_units;
     metrics.useful_fact_deliveries += run_result.useful_fact_deliveries;
     metrics.duplicate_fact_transmissions += run_result.duplicate_fact_transmissions;
     metrics.completion_tokens += run_result.completion_tokens;
@@ -425,7 +453,7 @@ fn countSuccessfulRuns(
 }
 
 fn parseRawLine(line: []const u8) !RawRecord {
-    var fields: [10][]const u8 = undefined;
+    var fields: [12][]const u8 = undefined;
     var count: usize = 0;
     var iterator = std.mem.splitScalar(u8, line, '\t');
 
@@ -435,7 +463,7 @@ fn parseRawLine(line: []const u8) !RawRecord {
         count += 1;
     }
     if (count != fields.len) return error.InvalidRecord;
-    for (fields[0..9]) |field| {
+    for (fields[0..11]) |field| {
         if (field.len == 0) return error.InvalidRecord;
     }
 
@@ -447,11 +475,13 @@ fn parseRawLine(line: []const u8) !RawRecord {
         .mode = try parseMode(fields[2]),
         .round = try std.fmt.parseInt(u32, fields[3], 10),
         .worker = try std.fmt.parseInt(u8, fields[4], 10),
-        .knowledge_before = try std.fmt.parseInt(u8, fields[5], 10),
-        .generation_seed = try std.fmt.parseInt(u32, fields[6], 10),
-        .completion_tokens = try std.fmt.parseInt(usize, fields[7], 10),
-        .latency_us = try std.fmt.parseInt(u64, fields[8], 10),
-        .escaped_completion = fields[9],
+        .knowledge_before = try std.fmt.parseInt(u16, fields[5], 10),
+        .budget_before = try std.fmt.parseInt(u16, fields[6], 10),
+        .worker_budget = try std.fmt.parseInt(u16, fields[7], 10),
+        .generation_seed = try std.fmt.parseInt(u32, fields[8], 10),
+        .completion_tokens = try std.fmt.parseInt(usize, fields[9], 10),
+        .latency_us = try std.fmt.parseInt(u64, fields[10], 10),
+        .escaped_completion = fields[11],
     };
 }
 
@@ -528,7 +558,7 @@ pub fn main(init: std.process.Init) !void {
     const result = summarizeTsv(tsv);
     const out = std.Io.File.stdout();
 
-    try writeLine(io, out, "Stage 3F.0 Distributed Fact Convergence v2\n", .{});
+    try writeLine(io, out, "Stage 3F.1 Communication Efficiency\n", .{});
     try writeLine(io, out, "records: {d}\n", .{result.records});
     try writeLine(io, out, "population_runs: {d}\n", .{result.run_count});
     try writeLine(io, out, "malformed_records: {d}\n", .{result.malformed_records});
@@ -545,15 +575,15 @@ pub fn main(init: std.process.Init) !void {
     const validity_delta =
         @as(i64, @intCast(result.constrained.protocolValidityPermille())) -
         @as(i64, @intCast(result.typed.protocolValidityPermille()));
-    const message_delta =
-        @as(i64, @intCast(result.constrained.network_messages)) -
-        @as(i64, @intCast(result.typed.network_messages));
+    const units_delta =
+        @as(i64, @intCast(result.constrained.communication_units)) -
+        @as(i64, @intCast(result.typed.communication_units));
 
     try writeLine(
         io,
         out,
-        "\ndeltas (constrained - typed): success={d} permille, protocol_validity={d} permille, network_messages={d}\n",
-        .{ success_delta, validity_delta, message_delta },
+        "\ndeltas (constrained - typed): success={d} permille, protocol_validity={d} permille, communication_units={d}\n",
+        .{ success_delta, validity_delta, units_delta },
     );
 
     try writePairs(io, out, &result);
@@ -574,26 +604,26 @@ pub fn main(init: std.process.Init) !void {
 fn usage(io: std.Io) !void {
     try std.Io.File.stderr().writeStreamingAll(
         io,
-        "usage: zig run src/stage3f0_summary.zig -- <trials-v2.tsv>\n",
+        "usage: zig run src/stage3f1_summary.zig -- <trials.tsv>\n",
     );
 }
 
 fn writeHeader(io: std.Io, out: std.Io.File) !void {
     try out.writeStreamingAll(
         io,
-        "mode\truns\tsuccess\tprotocol-valid\tinvalid\tbackend\tsem-viol\tavg-rounds\tmessages\tuseful\tduplicate\tuseful/msg\ttokens\tbytes\tavg-latency-us\tunique-success-trajectories\n",
+        "mode\truns\tsuccess\tprotocol-valid\tinvalid\tbackend\tsem-viol\tbudget-rej\tavg-rounds\tcomm-units\tmessages\tuseful\tduplicate\tuseful/unit\ttokens\tbytes\tavg-latency-us\tunique-success-trajectories\n",
     );
 }
 
 fn writeMetrics(io: std.Io, out: std.Io.File, name: []const u8, metrics: ModeMetrics) !void {
     const avg_latency = if (metrics.model_calls == 0) 0 else metrics.latency_us / metrics.model_calls;
     const avg_rounds = metrics.averageRoundsPermille();
-    const useful_ratio = metrics.usefulFactsPerMessagePermille();
+    const useful_ratio = metrics.usefulFactsPerUnitPermille();
 
     try writeLine(
         io,
         out,
-        "{s}\t{d}\t{d}.{d}%\t{d}.{d}%\t{d}\t{d}\t{d}\t{d}.{d}\t{d}\t{d}\t{d}\t{d}.{d}\t{d}\t{d}\t{d}\t{d}\n",
+        "{s}\t{d}\t{d}.{d}%\t{d}.{d}%\t{d}\t{d}\t{d}\t{d}\t{d}.{d}\t{d}\t{d}\t{d}\t{d}\t{d}.{d}\t{d}\t{d}\t{d}\t{d}\n",
         .{
             name,
             metrics.runs,
@@ -604,8 +634,10 @@ fn writeMetrics(io: std.Io, out: std.Io.File, name: []const u8, metrics: ModeMet
             metrics.invalid_actions,
             metrics.backend_errors,
             metrics.semantic_violations,
+            metrics.budget_rejections,
             avg_rounds / 1000,
             (avg_rounds % 1000) / 100,
+            metrics.communication_units,
             metrics.network_messages,
             metrics.useful_fact_deliveries,
             metrics.duplicate_fact_transmissions,
@@ -622,7 +654,7 @@ fn writeMetrics(io: std.Io, out: std.Io.File, name: []const u8, metrics: ModeMet
 fn writePairs(io: std.Io, out: std.Io.File, summary: *const Summary) !void {
     try out.writeStreamingAll(
         io,
-        "\npaired runs\nenv\tsampling\ttyped-success\tcfg-success\ttyped-rounds\tcfg-rounds\ttyped-valid\tcfg-valid\ttyped-msg\tcfg-msg\ttyped-tokens\tcfg-tokens\ttyped-bytes\tcfg-bytes\n",
+        "\npaired runs\nenv\tsampling\tbudget\ttyped-success\tcfg-success\ttyped-rounds\tcfg-rounds\ttyped-valid\tcfg-valid\ttyped-budget-rej\tcfg-budget-rej\ttyped-units\tcfg-units\ttyped-useful\tcfg-useful\ttyped-duplicate\tcfg-duplicate\ttyped-tokens\tcfg-tokens\ttyped-bytes\tcfg-bytes\n",
     );
 
     for (summary.runs[0..summary.run_count]) |typed| {
@@ -632,10 +664,11 @@ fn writePairs(io: std.Io, out: std.Io.File, summary: *const Summary) !void {
         try writeLine(
             io,
             out,
-            "{d}\t{d}\t{s}\t{s}\t{d}\t{d}\t{d}.{d}%\t{d}.{d}%\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\n",
+            "{d}\t{d}\t{d}\t{s}\t{s}\t{d}\t{d}\t{d}.{d}%\t{d}.{d}%\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\t{d}\n",
             .{
                 typed.key.environment_seed,
                 typed.key.sampling_seed,
+                typed.worker_budget,
                 if (typed.success) "yes" else "no",
                 if (constrained.success) "yes" else "no",
                 typed.rounds,
@@ -644,8 +677,14 @@ fn writePairs(io: std.Io, out: std.Io.File, summary: *const Summary) !void {
                 typed.protocolValidityPermille() % 10,
                 constrained.protocolValidityPermille() / 10,
                 constrained.protocolValidityPermille() % 10,
-                typed.network_messages,
-                constrained.network_messages,
+                typed.budget_rejections,
+                constrained.budget_rejections,
+                typed.communication_units,
+                constrained.communication_units,
+                typed.useful_fact_deliveries,
+                constrained.useful_fact_deliveries,
+                typed.duplicate_fact_transmissions,
+                constrained.duplicate_fact_transmissions,
                 typed.completion_tokens,
                 constrained.completion_tokens,
                 typed.generated_bytes,
@@ -734,28 +773,28 @@ fn writeLine(io: std.Io, out: std.Io.File, comptime format: []const u8, args: an
     try out.writeStreamingAll(io, line);
 }
 
-test "summary pairs environment and sampling seeds and measures same-state diversity" {
+test "summary replays paired budgeted convergence runs" {
     const tsv =
-        "0\t0\ttyped_unconstrained\t1\t1\t3\t102\t2\t100\tCLAIM A,B\n" ++
-        "0\t0\ttyped_unconstrained\t1\t2\t6\t103\t2\t100\tCLAIM B,C\n" ++
-        "0\t0\ttyped_unconstrained\t1\t3\t12\t104\t2\t100\tCLAIM C,D\n" ++
-        "0\t0\ttyped_unconstrained\t1\t4\t24\t105\t2\t100\tCLAIM D,E\n" ++
-        "0\t0\ttyped_unconstrained\t1\t5\t17\t106\t2\t100\tCLAIM A,E\n" ++
-        "0\t0\ttyped_unconstrained\t2\t1\t23\t203\t3\t100\tQUERY EVIDENCE D\n" ++
-        "0\t0\ttyped_unconstrained\t2\t2\t15\t204\t2\t100\tCLAIM D\n" ++
-        "0\t0\ttyped_unconstrained\t2\t3\t30\t205\t2\t100\tCLAIM C\n" ++
-        "0\t0\ttyped_unconstrained\t2\t4\t29\t206\t2\t100\tCLAIM D\n" ++
-        "0\t0\ttyped_unconstrained\t2\t5\t27\t207\t2\t100\tCLAIM E\n" ++
-        "0\t0\tcfg_constrained\t1\t1\t3\t102\t2\t100\tCLAIM A,B\n" ++
-        "0\t0\tcfg_constrained\t1\t2\t6\t103\t2\t100\tCLAIM B,C\n" ++
-        "0\t0\tcfg_constrained\t1\t3\t12\t104\t2\t100\tCLAIM C,D\n" ++
-        "0\t0\tcfg_constrained\t1\t4\t24\t105\t2\t100\tCLAIM D,E\n" ++
-        "0\t0\tcfg_constrained\t1\t5\t17\t106\t2\t100\tCLAIM A,E\n" ++
-        "0\t0\tcfg_constrained\t2\t1\t23\t203\t2\t100\tCLAIM A,B,C,E\n" ++
-        "0\t0\tcfg_constrained\t2\t2\t15\t204\t2\t100\tCLAIM D\n" ++
-        "0\t0\tcfg_constrained\t2\t3\t30\t205\t2\t100\tCLAIM C\n" ++
-        "0\t0\tcfg_constrained\t2\t4\t29\t206\t2\t100\tCLAIM D\n" ++
-        "0\t0\tcfg_constrained\t2\t5\t27\t207\t2\t100\tCLAIM E\n";
+        "0\t0\ttyped_unconstrained\t1\t1\t15\t16\t16\t102\t2\t100\tCLAIM A,B\n" ++
+        "0\t0\ttyped_unconstrained\t1\t2\t60\t16\t16\t103\t2\t100\tCLAIM E,F\n" ++
+        "0\t0\ttyped_unconstrained\t1\t3\t240\t16\t16\t104\t2\t100\tCLAIM G,H\n" ++
+        "0\t0\ttyped_unconstrained\t1\t4\t960\t16\t16\t105\t2\t100\tCLAIM G,H\n" ++
+        "0\t0\ttyped_unconstrained\t1\t5\t771\t16\t16\t106\t2\t100\tCLAIM I,J\n" ++
+        "0\t0\ttyped_unconstrained\t2\t1\t831\t12\t16\t203\t2\t100\tCLAIM A\n" ++
+        "0\t0\ttyped_unconstrained\t2\t2\t255\t12\t16\t204\t2\t100\tCLAIM G,H\n" ++
+        "0\t0\ttyped_unconstrained\t2\t3\t240\t12\t16\t205\t2\t100\tCLAIM E\n" ++
+        "0\t0\ttyped_unconstrained\t2\t4\t960\t12\t16\t206\t2\t100\tCLAIM G\n" ++
+        "0\t0\ttyped_unconstrained\t2\t5\t963\t12\t16\t207\t2\t100\tCLAIM I\n" ++
+        "0\t0\tcfg_constrained\t1\t1\t15\t16\t16\t102\t2\t100\tCLAIM A,B\n" ++
+        "0\t0\tcfg_constrained\t1\t2\t60\t16\t16\t103\t2\t100\tCLAIM E,F\n" ++
+        "0\t0\tcfg_constrained\t1\t3\t240\t16\t16\t104\t2\t100\tCLAIM G,H\n" ++
+        "0\t0\tcfg_constrained\t1\t4\t960\t16\t16\t105\t2\t100\tCLAIM G,H\n" ++
+        "0\t0\tcfg_constrained\t1\t5\t771\t16\t16\t106\t2\t100\tCLAIM I,J\n" ++
+        "0\t0\tcfg_constrained\t2\t1\t831\t12\t16\t203\t2\t100\tCLAIM A\n" ++
+        "0\t0\tcfg_constrained\t2\t2\t255\t12\t16\t204\t2\t100\tCLAIM G,H\n" ++
+        "0\t0\tcfg_constrained\t2\t3\t240\t12\t16\t205\t2\t100\tCLAIM E\n" ++
+        "0\t0\tcfg_constrained\t2\t4\t960\t12\t16\t206\t2\t100\tCLAIM G\n" ++
+        "0\t0\tcfg_constrained\t2\t5\t963\t12\t16\t207\t2\t100\tCLAIM I\n";
 
     const result = summarizeTsv(tsv);
     try std.testing.expectEqual(@as(usize, 20), result.records);
@@ -765,102 +804,76 @@ test "summary pairs environment and sampling seeds and measures same-state diver
     try std.testing.expect(result.balanced());
     try std.testing.expectEqual(@as(usize, 1), result.typed.successes);
     try std.testing.expectEqual(@as(usize, 1), result.constrained.successes);
-    try std.testing.expectEqual(@as(usize, 1), countUniqueSuccessfulTrajectories(
-        &result,
-        .typed_unconstrained,
-        0,
-    ));
+    try std.testing.expectEqual(@as(usize, 32), result.typed.communication_units);
+    try std.testing.expectEqual(@as(usize, 32), result.constrained.communication_units);
 }
 
-test "sampling seed is independently verified during replay" {
+test "replay rejects mismatched remaining budget" {
     var summary = Summary{};
-    var run = RunAccumulator.init(.{
-        .environment_seed = 0,
-        .sampling_seed = 7,
-    }, .typed_unconstrained);
+    var run = RunAccumulator.init(
+        .{ .environment_seed = 0, .sampling_seed = 0 },
+        .typed_unconstrained,
+        16,
+    );
     const record = RawRecord{
-        .key = .{ .environment_seed = 0, .sampling_seed = 7 },
+        .key = .{ .environment_seed = 0, .sampling_seed = 0 },
         .mode = .typed_unconstrained,
         .round = 1,
         .worker = 1,
-        .knowledge_before = 3,
-        .generation_seed = convergence.generationSeed(8, 1, 1),
+        .knowledge_before = 15,
+        .budget_before = 15,
+        .worker_budget = 16,
+        .generation_seed = efficiency.generationSeed(0, 1, 1),
         .completion_tokens = 2,
         .latency_us = 100,
         .escaped_completion = "CLAIM A",
     };
 
     try std.testing.expectError(
-        error.GenerationSeedMismatch,
+        error.BudgetMismatch,
         run.ingest(&summary, record, "CLAIM A"),
     );
 }
 
+test "budget rejection is measured independently from syntax validity" {
+    var knowledge = efficiency.initialKnowledge(0);
+    var budgets = efficiency.initialBudgets(2);
+    var actions = [_]?efficiency.Action{null} ** efficiency.worker_count;
+    actions[0] = try efficiency.parseAction("CLAIM A,B,C,D");
+
+    const metrics = efficiency.applyRound(&knowledge, &budgets, actions);
+    try std.testing.expectEqual(@as(usize, 1), metrics.budget_rejections);
+    try std.testing.expectEqual(@as(usize, 0), metrics.semantic_violations);
+}
+
 test "invalid completion is retained for diagnostics" {
     var summary = Summary{};
-    var run = RunAccumulator.init(.{
-        .environment_seed = 0,
-        .sampling_seed = 0,
-    }, .typed_unconstrained);
+    var run = RunAccumulator.init(
+        .{ .environment_seed = 0, .sampling_seed = 0 },
+        .typed_unconstrained,
+        16,
+    );
     const record = RawRecord{
         .key = .{ .environment_seed = 0, .sampling_seed = 0 },
         .mode = .typed_unconstrained,
         .round = 1,
         .worker = 1,
-        .knowledge_before = 3,
-        .generation_seed = convergence.generationSeed(0, 1, 1),
-        .completion_tokens = 3,
+        .knowledge_before = 15,
+        .budget_before = 16,
+        .worker_budget = 16,
+        .generation_seed = efficiency.generationSeed(0, 1, 1),
+        .completion_tokens = 2,
         .latency_us = 100,
-        .escaped_completion = "I think CLAIM A",
+        .escaped_completion = "CLAIMA,B",
     };
 
-    try run.ingest(&summary, record, "I think CLAIM A");
+    try run.ingest(&summary, record, "CLAIMA,B");
     try std.testing.expectEqual(@as(usize, 1), run.invalid_actions);
     try std.testing.expectEqual(@as(usize, 1), summary.invalid_example_count);
 }
 
-test "empty completion remains a protocol-invalid record, not malformed TSV" {
-    const line = "0\t0\ttyped_unconstrained\t1\t1\t3\t102\t0\t100\t";
+test "empty completion remains a protocol-invalid record" {
+    const line = "0\t0\ttyped_unconstrained\t1\t1\t15\t16\t16\t102\t0\t100\t";
     const record = try parseRawLine(line);
     try std.testing.expectEqual(@as(usize, 0), record.escaped_completion.len);
-}
-
-
-test "same environment can contain multiple successful sampling trajectories" {
-    var summary = Summary{};
-    summary.runs[0] = .{
-        .key = .{ .environment_seed = 2, .sampling_seed = 10 },
-        .mode = .typed_unconstrained,
-        .success = true,
-        .model_calls = 10,
-        .protocol_actions = 10,
-        .invalid_actions = 0,
-        .backend_errors = 0,
-        .semantic_violations = 0,
-        .rounds = 2,
-        .network_messages = 20,
-        .useful_fact_deliveries = 8,
-        .duplicate_fact_transmissions = 10,
-        .completion_tokens = 30,
-        .generated_bytes = 60,
-        .latency_us = 1000,
-        .trajectory_hash = 111,
-    };
-    summary.runs[1] = summary.runs[0];
-    summary.runs[1].key.sampling_seed = 11;
-    summary.runs[1].trajectory_hash = 222;
-    summary.runs[2] = summary.runs[0];
-    summary.runs[2].key.environment_seed = 3;
-    summary.runs[2].key.sampling_seed = 10;
-    summary.runs[2].trajectory_hash = 333;
-    summary.run_count = 3;
-
-    try std.testing.expectEqual(
-        @as(usize, 2),
-        countUniqueSuccessfulTrajectories(&summary, .typed_unconstrained, 2),
-    );
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        countUniqueSuccessfulTrajectories(&summary, .typed_unconstrained, 3),
-    );
 }

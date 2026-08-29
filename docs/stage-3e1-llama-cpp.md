@@ -271,7 +271,7 @@ Already recorded workflow/seed/mode keys are skipped.
 The authoritative summary command is:
 
 ```sh
-zig run src/stage3e1_summary.zig -- trials/stage3e1-model-a.tsv
+zig run src/experiments/stage3/stage3e1_summary.zig -- trials/stage3e1-model-a.tsv
 ```
 
 It reports overall and per-workflow metrics for:

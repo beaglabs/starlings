@@ -320,28 +320,29 @@ Stage 7B therefore selects theta on clean coordination dynamics.
 The Stage 6 results remain external structural evidence and later robustness
 tests.
 
-Stage 7C is planned as the first distributed transfer stage using P2Panda,
-where the selected theta can be tested unchanged under:
+Stage 7C is planned as the first deterministic asynchronous transfer stage
+in Zig, where the selected theta can be tested unchanged under:
 
 ~~~text
-independent processes
-partitions
-reconnection
+independent local clocks
+seeded latency and jitter
+loss and duplication
+delivery reordering
+partitions and reconnection
 stale local views
-causal synchronization
-duplicate/replayed state
-asynchronous timing
+crash and restart
 ~~~
 
-Optional 7C fine-tuning can then measure the sim-to-distributed transfer gap
-rather than allowing Stage 7B to pre-adapt to those effects.
+Every delivery schedule must be replayable. Optional Stage 7C fine-tuning can
+then measure the synchronous-to-asynchronous transfer gap rather than allowing
+Stage 7B to pre-adapt to those effects.
 
 ## Deterministic report
 
 Run:
 
 ~~~sh
-zig run -O ReleaseFast src/stage7b_cli.zig -- search \
+zig run -O ReleaseFast src/experiments/stage7/stage7b_cli.zig -- search \
   > trials/stage7b-search.txt
 ~~~
 
@@ -391,9 +392,9 @@ Run on the Stage 7B branch:
 ~~~sh
 zig test src/root.zig
 
-zig run src/stage7a_cli.zig -- validate
-zig run src/stage7b_cli.zig -- validate
-zig run src/stage7b_cli.zig -- plan
+zig run src/experiments/stage7/stage7a_cli.zig -- validate
+zig run src/experiments/stage7/stage7b_cli.zig -- validate
+zig run src/experiments/stage7/stage7b_cli.zig -- plan
 ~~~
 
 Expected Stage 7B shape:
@@ -437,7 +438,7 @@ regimes.
 A negative result is also useful: if the named controls remain on every hard
 frontier or selected interior theta values collapse under extrapolation, then
 the four-dimensional Stage 7A parameterization is insufficient and should be
-extended before P2Panda transfer.
+extended before asynchronous transfer.
 
 
 ## Canonical Stage 7B search result
@@ -762,4 +763,4 @@ This reinforces the broader Starlings finding that policy and topology interact
 structurally rather than through one universal scalar optimum.
 
 Stage 7C should transfer the frozen validation-selected theta values unchanged
-into actual asynchronous P2Panda execution before any distributed fine-tuning.
+into deterministic asynchronous Zig execution before any transfer fine-tuning.

@@ -377,7 +377,7 @@ rejected.
 ~~~sh
 zig test src/root.zig
 
-zig run src/stage5b_cli.zig -- \
+zig run src/experiments/stage5/stage5b_cli.zig -- \
   trials/stage5a-full.tsv
 ~~~
 

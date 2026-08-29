@@ -1,6 +1,6 @@
 const std = @import("std");
 const provenance = @import("provenance.zig");
-const content_id = @import("content_id.zig");
+const content_id = @import("../core/content_id.zig");
 
 pub const StressResult = struct {
     append_records: usize,

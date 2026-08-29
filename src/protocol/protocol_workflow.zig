@@ -1,8 +1,8 @@
 const std = @import("std");
-const message = @import("message.zig");
-const operator = @import("operator.zig");
-const provenance = @import("provenance.zig");
-const runtime = @import("runtime.zig");
+const message = @import("../core/message.zig");
+const operator = @import("../core/operator.zig");
+const provenance = @import("../provenance/provenance.zig");
+const runtime = @import("../core/runtime.zig");
 
 pub const Workflow = enum {
     observe_claim,

@@ -2,7 +2,7 @@
 
 Experimental infrastructure for evidence-backed mathematical agent communication and collective coordination, implemented in Zig.
 
-## Current scope: Stage 0–5A
+## Current scope: Stage 0–7B; Stage 7C planned
 
 The foundation contains the machinery needed to run reproducible experiments and compare coordination strategies:
 
@@ -32,6 +32,30 @@ The foundation contains the machinery needed to run reproducible experiments and
 - orthogonal information-diffusion scaling sweeps over population, information volume, topology, redundancy, bandwidth, and local policy
 
 Stage 1 uses five workers and a verifier. The partitioned task assigns one independent fact to each worker, while the overlapping task gives each worker two facts so that every fact exists at two workers. This lets the harness distinguish raw communication efficiency from resilience under information loss.
+
+## Repository layout
+
+~~~text
+src/
+  root.zig                 test/import root
+  core/                    deterministic runtime and formal population substrate
+  protocol/                typed protocol, CFG, traces, and model-eval machinery
+  provenance/              content-addressed causal provenance
+  experiments/
+    stage3/                language/formal-protocol experiments
+    stage4/                operator-neutral population experiment
+    stage5/                scaling, prediction, and regime experiments
+    stage6/                perturbation and robustness-law experiments
+    stage7/                parameterized policy and search
+
+
+tools/                     external experiment runners
+grammars/                  constrained-generation grammars
+docs/                      stage reports and architecture decisions
+trials/                    local generated outputs only; ignored by Git
+~~~
+
+Generated trial outputs are intentionally kept out of version control; canonical hashes and scientific conclusions belong in the stage documentation.
 
 ## Validated architecture: content-addressed provenance
 
@@ -77,7 +101,7 @@ Start a llama.cpp server, then validate and run the paired experiment:
 python3 tools/stage3e1_llama_cpp.py --self-test
 python3 tools/stage3e1_llama_cpp.py --dry-run
 python3 tools/stage3e1_llama_cpp.py --seeds 100 --output trials/stage3e1.tsv
-zig run src/stage3e1_summary.zig -- trials/stage3e1.tsv
+zig run src/experiments/stage3/stage3e1_summary.zig -- trials/stage3e1.tsv
 ```
 
 See `docs/stage-3e1-llama-cpp.md` for the experimental controls and runbook.
@@ -99,7 +123,7 @@ python3 tools/stage3f0_llama_cpp.py \
   --sampling-seeds 4 \
   --output trials/stage3f0-gemma4-e2b-v2.tsv
 
-zig run src/stage3f0_summary.zig -- \
+zig run src/experiments/stage3/stage3f0_summary.zig -- \
   trials/stage3f0-gemma4-e2b-v2.tsv
 ```
 
@@ -126,7 +150,7 @@ python3 tools/stage3f1_llama_cpp.py \
   --worker-budget 16 \
   --output trials/stage3f1-gemma4-e2b-budget16.tsv
 
-zig run src/stage3f1_summary.zig -- \
+zig run src/experiments/stage3/stage3f1_summary.zig -- \
   trials/stage3f1-gemma4-e2b-budget16.tsv
 ~~~
 
@@ -146,7 +170,7 @@ P = (A, G, X, M, F, Pi, C, Phi, J)
 
 where populations, topology, local state, actions, transition semantics,
 policies, constraints, global observables, and costs are represented by the
-generic Zig substrate in src/formal_population.zig.
+generic Zig substrate in src/core/formal_population.zig.
 
 The core has no dependency on prompts, tokenizers, model providers, or
 completion APIs. Language models remain a supported downstream policy/operator
@@ -157,9 +181,9 @@ Validate the deterministic Stage 4 substrate:
 ~~~sh
 zig test src/root.zig
 
-zig run src/stage4_cli.zig -- validate
+zig run src/experiments/stage4/stage4_cli.zig -- validate
 
-zig run src/stage4_cli.zig -- simulate 0 8
+zig run src/experiments/stage4/stage4_cli.zig -- simulate 0 8
 ~~~
 
 See docs/stage-4-formal-population-substrate.md and
@@ -205,25 +229,25 @@ Validate and inspect the sweep plan:
 ~~~sh
 zig test src/root.zig
 
-zig run src/stage5a_cli.zig -- validate
+zig run src/experiments/stage5/stage5a_cli.zig -- validate
 
-zig run src/stage5a_cli.zig -- plan smoke
-zig run src/stage5a_cli.zig -- plan full
+zig run src/experiments/stage5/stage5a_cli.zig -- plan smoke
+zig run src/experiments/stage5/stage5a_cli.zig -- plan full
 ~~~
 
 Run a single configuration:
 
 ~~~sh
-zig run src/stage5a_cli.zig -- \
+zig run src/experiments/stage5/stage5a_cli.zig -- \
   run 100 ring 2 2 novel_first 0 4096 32
 ~~~
 
 Emit machine-readable TSV:
 
 ~~~sh
-zig run src/stage5a_cli.zig -- sweep smoke > trials/stage5a-smoke.tsv
+zig run src/experiments/stage5/stage5a_cli.zig -- sweep smoke > trials/stage5a-smoke.tsv
 
-zig run src/stage5a_cli.zig -- sweep full > trials/stage5a-full.tsv
+zig run src/experiments/stage5/stage5a_cli.zig -- sweep full > trials/stage5a-full.tsv
 ~~~
 
 The smoke plan contains 63 runs. The full plan contains 918 runs.
@@ -237,7 +261,7 @@ controls, metric definitions, sweep matrix, and Stage 5A progression gate.
 After producing the canonical full sweep, summarize it without fitting a model:
 
 ~~~sh
-zig run src/stage5a_summary.zig -- trials/stage5a-full.tsv
+zig run src/experiments/stage5/stage5a_summary.zig -- trials/stage5a-full.tsv
 ~~~
 
 The summary:
@@ -268,7 +292,7 @@ configurations that are deliberately hidden before fitting.
 Run against the frozen canonical dataset:
 
 ~~~sh
-zig run src/stage5b_cli.zig -- trials/stage5a-full.tsv
+zig run src/experiments/stage5/stage5b_cli.zig -- trials/stage5a-full.tsv
 ~~~
 
 The primary approach fits a separate compact law for each topology × policy
@@ -327,27 +351,27 @@ It asks two questions:
 Plan and validate:
 
 ~~~sh
-zig run src/stage5c_cli.zig -- plan full
-zig run src/stage5c_cli.zig -- validate
+zig run src/experiments/stage5/stage5c_cli.zig -- plan full
+zig run src/experiments/stage5/stage5c_cli.zig -- validate
 ~~~
 
 Generate the canonical Stage 5C datasets:
 
 ~~~sh
-zig run src/stage5c_cli.zig -- boundary full \
+zig run src/experiments/stage5/stage5c_cli.zig -- boundary full \
   > trials/stage5c-boundary.tsv
 
-zig run src/stage5c_cli.zig -- saturation full \
+zig run src/experiments/stage5/stage5c_cli.zig -- saturation full \
   > trials/stage5c-saturation.tsv
 ~~~
 
 Summarize them deterministically:
 
 ~~~sh
-zig run src/stage5c_cli.zig -- summarize-boundary \
+zig run src/experiments/stage5/stage5c_cli.zig -- summarize-boundary \
   trials/stage5c-boundary.tsv
 
-zig run src/stage5c_cli.zig -- summarize-saturation \
+zig run src/experiments/stage5/stage5c_cli.zig -- summarize-saturation \
   trials/stage5c-saturation.tsv
 ~~~
 
@@ -391,19 +415,19 @@ or message drop, eight severities, and three deterministic trials. A perturbed
 configuration may become explicitly unreachable even at B=F.
 
 ~~~sh
-zig run src/stage6_cli.zig -- validate
-zig run src/stage6_cli.zig -- plan full
+zig run src/experiments/stage6/stage6_cli.zig -- validate
+zig run src/experiments/stage6/stage6_cli.zig -- plan full
 
-zig run -O ReleaseFast src/stage6_cli.zig -- sparse full \
+zig run -O ReleaseFast src/experiments/stage6/stage6_cli.zig -- sparse full \
   > trials/stage6-sparse.tsv
 
-zig run -O ReleaseFast src/stage6_cli.zig -- coverage full \
+zig run -O ReleaseFast src/experiments/stage6/stage6_cli.zig -- coverage full \
   > trials/stage6-coverage.tsv
 
-zig run src/stage6_cli.zig -- summarize-sparse \
+zig run src/experiments/stage6/stage6_cli.zig -- summarize-sparse \
   trials/stage6-sparse.tsv
 
-zig run src/stage6_cli.zig -- summarize-coverage \
+zig run src/experiments/stage6/stage6_cli.zig -- summarize-coverage \
   trials/stage6-coverage.tsv
 ~~~
 
@@ -450,7 +474,7 @@ training box on two or more axes.
 Run:
 
 ~~~sh
-zig run -O ReleaseFast src/stage6_1_cli.zig -- \
+zig run -O ReleaseFast src/experiments/stage6/stage6_1_cli.zig -- \
   trials/stage6-coverage.tsv
 ~~~
 
@@ -538,13 +562,13 @@ Validate and inspect the bounded control surface:
 ~~~sh
 zig test src/root.zig
 
-zig run src/stage7a_cli.zig -- validate
-zig run src/stage7a_cli.zig -- plan
+zig run src/experiments/stage7/stage7a_cli.zig -- validate
+zig run src/experiments/stage7/stage7a_cli.zig -- plan
 
-zig run -O ReleaseFast src/stage7a_cli.zig -- probe smoke \
+zig run -O ReleaseFast src/experiments/stage7/stage7a_cli.zig -- probe smoke \
   > trials/stage7a-smoke.tsv
 
-zig run -O ReleaseFast src/stage7a_cli.zig -- probe full \
+zig run -O ReleaseFast src/experiments/stage7/stage7a_cli.zig -- probe full \
   > trials/stage7a-probe.tsv
 ~~~
 
@@ -625,10 +649,10 @@ Run:
 ~~~sh
 zig test src/root.zig
 
-zig run src/stage7b_cli.zig -- validate
-zig run src/stage7b_cli.zig -- plan
+zig run src/experiments/stage7/stage7b_cli.zig -- validate
+zig run src/experiments/stage7/stage7b_cli.zig -- plan
 
-zig run -O ReleaseFast src/stage7b_cli.zig -- search \
+zig run -O ReleaseFast src/experiments/stage7/stage7b_cli.zig -- search \
   > trials/stage7b-search.txt
 ~~~
 
@@ -637,9 +661,10 @@ stdout.
 
 Stage 7B intentionally searches clean coordination dynamics. Stage 6/6.1 fault
 results remain external structural evidence rather than optimizer feedback.
-Stage 7C is the planned real distributed transfer test using P2Panda, where
-partitions, reconnection, stale state, and asynchronous execution can test
-whether the simulator-selected theta transfers.
+Stage 7C is the planned deterministic asynchronous transfer test in Zig, where
+seeded latency, loss, duplication, reordering, partitions, reconnection, stale
+state, and independent local clocks can test whether the simulator-selected
+theta transfers.
 
 
 Stage 7B canonical result: deterministic search over 134 compact theta
@@ -652,3 +677,27 @@ compound multi-axis stress set. It substantially dominates the named controls
 on the sparse ring/grid holdouts, while complete connectivity is approximately
 a parity regime rather than a broad win. Stage 7B therefore supports a compact
 Pareto family rather than one universal optimal theta.
+
+
+## Stage 7C — Deterministic Asynchronous Transfer (planned)
+
+Stage 7B is the current completed research boundary. Stage 7C has not yet
+passed a validation gate.
+
+Stage 7C will keep the frozen Stage 7B policy family unchanged and replace
+synchronous rounds with a seeded Zig event runtime. The canonical experiment
+will model independent local clocks, latency and jitter, loss, duplication,
+reordering, partitions and reconnection, stale observations, and crash/restart.
+Every delivery schedule must be replayable from recorded configuration and
+seed.
+
+A real socket or replication substrate is not part of the Stage 7C gate. It
+can be evaluated later as a separable candidate only after the deterministic
+asynchronous semantics and transfer criteria are established.
+
+See `docs/stage-7c-deterministic-asynchronous-transfer.md` for current status,
+the validation gates, and the follow-on PR stack.
+
+## Generated experiment outputs
+
+The root `trials/` directory is an ignored local workspace for generated experiment TSV/text outputs. It is not source and is safe to clear between runs. Canonical scientific results, hashes, and conclusions belong in the corresponding stage documentation rather than as loose committed trial files.

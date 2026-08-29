@@ -1,6 +1,6 @@
 const std = @import("std");
-const model_eval = @import("protocol_model_eval.zig");
-const model_summary = @import("protocol_model_summary.zig");
+const model_eval = @import("../../protocol/protocol_model_eval.zig");
+const model_summary = @import("../../protocol/protocol_model_summary.zig");
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;

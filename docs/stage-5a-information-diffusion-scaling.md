@@ -287,20 +287,20 @@ zig test src/root.zig
 Validate the Stage 5A matrix:
 
 ~~~sh
-zig run src/stage5a_cli.zig -- validate
+zig run src/experiments/stage5/stage5a_cli.zig -- validate
 ~~~
 
 Inspect planned run counts without executing the sweep:
 
 ~~~sh
-zig run src/stage5a_cli.zig -- plan smoke
-zig run src/stage5a_cli.zig -- plan full
+zig run src/experiments/stage5/stage5a_cli.zig -- plan smoke
+zig run src/experiments/stage5/stage5a_cli.zig -- plan full
 ~~~
 
 Run one configuration:
 
 ~~~sh
-zig run src/stage5a_cli.zig -- \
+zig run src/experiments/stage5/stage5a_cli.zig -- \
   run 100 ring 2 2 novel_first 0 4096 32
 ~~~
 
@@ -320,13 +320,13 @@ fact_count
 Emit the smoke data:
 
 ~~~sh
-zig run src/stage5a_cli.zig -- sweep smoke > trials/stage5a-smoke.tsv
+zig run src/experiments/stage5/stage5a_cli.zig -- sweep smoke > trials/stage5a-smoke.tsv
 ~~~
 
 Emit the full data:
 
 ~~~sh
-zig run src/stage5a_cli.zig -- sweep full > trials/stage5a-full.tsv
+zig run src/experiments/stage5/stage5a_cli.zig -- sweep full > trials/stage5a-full.tsv
 ~~~
 
 The TSV contains a series column so population, information, and capacity
@@ -379,7 +379,7 @@ units, useful deliveries, duplicates, rejected actions, and violations.
 For a direct regression against the preliminary large-ring result, rerun:
 
 ~~~sh
-zig run src/stage5a_cli.zig -- \
+zig run src/experiments/stage5/stage5a_cli.zig -- \
   run 1000 ring 2 2 novel_first 0 4096 32
 ~~~
 
@@ -391,7 +391,7 @@ as the pre-hardening run while completing substantially faster.
 The canonical full sweep is summarized by a deterministic Zig parser:
 
 ~~~sh
-zig run src/stage5a_summary.zig -- trials/stage5a-full.tsv
+zig run src/experiments/stage5/stage5a_summary.zig -- trials/stage5a-full.tsv
 ~~~
 
 The canonical dataset checkpoint is:

@@ -373,7 +373,7 @@ Full sparse and coverage sweeps emit progress to stderr and accept an optional
 A fresh run:
 
 ~~~sh
-zig run -O ReleaseFast src/stage6_cli.zig -- sparse full 1 \
+zig run -O ReleaseFast src/experiments/stage6/stage6_cli.zig -- sparse full 1 \
   > trials/stage6-sparse.tsv
 ~~~
 
@@ -384,7 +384,7 @@ resume at K+1 using append mode:
 # Example: header + 136 completed rows means resume at case 137.
 wc -l trials/stage6-sparse.tsv
 
-zig run -O ReleaseFast src/stage6_cli.zig -- sparse full 137 \
+zig run -O ReleaseFast src/experiments/stage6/stage6_cli.zig -- sparse full 137 \
   >> trials/stage6-sparse.tsv
 ~~~
 

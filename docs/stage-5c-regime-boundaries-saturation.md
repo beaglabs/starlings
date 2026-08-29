@@ -249,7 +249,7 @@ Because this modifies a shared substrate constant, local validation should also
 confirm the existing Stage 5A smoke dataset remains byte-identical:
 
 ~~~sh
-zig run src/stage5a_cli.zig -- sweep smoke > /tmp/stage5a-smoke-stage5c.tsv
+zig run src/experiments/stage5/stage5a_cli.zig -- sweep smoke > /tmp/stage5a-smoke-stage5c.tsv
 
 cmp trials/stage5a-smoke.tsv /tmp/stage5a-smoke-stage5c.tsv \
   && echo "Stage 5A smoke remains identical"
@@ -260,19 +260,19 @@ cmp trials/stage5a-smoke.tsv /tmp/stage5a-smoke-stage5c.tsv \
 ~~~sh
 zig test src/root.zig
 
-zig run src/stage5c_cli.zig -- validate
-zig run src/stage5c_cli.zig -- plan full
+zig run src/experiments/stage5/stage5c_cli.zig -- validate
+zig run src/experiments/stage5/stage5c_cli.zig -- plan full
 
-zig run src/stage5c_cli.zig -- boundary full \
+zig run src/experiments/stage5/stage5c_cli.zig -- boundary full \
   > trials/stage5c-boundary.tsv
 
-zig run src/stage5c_cli.zig -- summarize-boundary \
+zig run src/experiments/stage5/stage5c_cli.zig -- summarize-boundary \
   trials/stage5c-boundary.tsv
 
-zig run src/stage5c_cli.zig -- saturation full \
+zig run src/experiments/stage5/stage5c_cli.zig -- saturation full \
   > trials/stage5c-saturation.tsv
 
-zig run src/stage5c_cli.zig -- summarize-saturation \
+zig run src/experiments/stage5/stage5c_cli.zig -- summarize-saturation \
   trials/stage5c-saturation.tsv
 ~~~
 

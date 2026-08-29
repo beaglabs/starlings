@@ -1,5 +1,5 @@
 const std = @import("std");
-const message = @import("message.zig");
+const message = @import("../core/message.zig");
 const protocol_cfg = @import("protocol_cfg.zig");
 const protocol_workflow = @import("protocol_workflow.zig");
 

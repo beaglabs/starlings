@@ -1,6 +1,6 @@
 const std = @import("std");
 const stage7a = @import("stage7a_policy.zig");
-const scaling = @import("stage5a_scaling.zig");
+const scaling = @import("../stage5/stage5a_scaling.zig");
 
 pub const latin_candidate_count: usize = 128;
 pub const fixed_candidate_count: usize = stage7a.probe_profiles.len;

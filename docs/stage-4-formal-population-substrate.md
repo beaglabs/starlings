@@ -37,7 +37,7 @@ derive and falsify mathematical predictions about them.
 
 ## Core API
 
-src/formal_population.zig defines:
+src/core/formal_population.zig defines:
 
 - OperatorId
 - Topology(max_operators)
@@ -94,7 +94,7 @@ The simulator itself does not know which implementation is behind the policy.
 
 ## Deterministic Stage 4 experiment
 
-src/stage4_population_experiment.zig ports the distributed overlapping-fact
+src/experiments/stage4/stage4_population_experiment.zig ports the distributed overlapping-fact
 shape into the generic substrate without an LLM.
 
 Five operators start on a ring with overlapping local facts. Each local policy
@@ -145,8 +145,8 @@ without baking one weighting into the core.
 Stage 4 adds a minimal executable boundary:
 
 ~~~sh
-zig run src/stage4_cli.zig -- validate
-zig run src/stage4_cli.zig -- simulate 0 8
+zig run src/experiments/stage4/stage4_cli.zig -- validate
+zig run src/experiments/stage4/stage4_cli.zig -- simulate 0 8
 ~~~
 
 validate runs all five rotated deterministic environments and exits nonzero if
@@ -165,9 +165,9 @@ Run:
 ~~~sh
 zig test src/root.zig
 
-zig run src/stage4_cli.zig -- validate
+zig run src/experiments/stage4/stage4_cli.zig -- validate
 
-zig run src/stage4_cli.zig -- simulate 0 8
+zig run src/experiments/stage4/stage4_cli.zig -- simulate 0 8
 ~~~
 
 Expected validation properties:

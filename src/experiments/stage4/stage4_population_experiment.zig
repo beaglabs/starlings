@@ -1,5 +1,5 @@
 const std = @import("std");
-const formal = @import("formal_population.zig");
+const formal = @import("../../core/formal_population.zig");
 
 pub const worker_count: usize = 5;
 pub const fact_count: usize = 5;
