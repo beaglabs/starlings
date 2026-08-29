@@ -93,7 +93,7 @@ src/
 
 grammars/                  constrained-generation grammars
 docs/                      stage reports and architecture decisions
-trials/                    local generated outputs only; ignored by Git
+trials/                    generated outputs; only trials/README.md is tracked
 ~~~
 
 Generated trial outputs are intentionally kept out of version control;
