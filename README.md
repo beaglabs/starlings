@@ -2,7 +2,7 @@
 
 Experimental infrastructure for evidence-backed mathematical agent communication and collective coordination, implemented in Zig.
 
-## Current scope: Stage 0–7B; Stage 7C planned
+## Current scope: Stage 0–7C
 
 The foundation contains the machinery needed to run reproducible experiments and compare coordination strategies:
 
@@ -46,7 +46,7 @@ src/
     stage4/                operator-neutral population experiment
     stage5/                scaling, prediction, and regime experiments
     stage6/                perturbation and robustness-law experiments
-    stage7/                parameterized policy and search
+    stage7/                parameterized policy, search, and asynchronous transfer
 
 
 tools/                     external experiment runners
