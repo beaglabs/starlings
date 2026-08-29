@@ -384,6 +384,56 @@ gap:               async cost relative to sync, per dimension
 
 Dataset: `trials/f2-gap.tsv`.
 
+#### F2.1 completion record — 2026-08-29
+
+F2.1 passed the canonical local verifier on macOS with Zig 0.16.0.
+
+~~~text
+canonical rows: 36
+dataset bytes: 5695
+SHA-256:
+34531d63dc8628a7592f01f4c06cc0be632e0c2428f43e933beeec0b1a5293cd
+
+byte_identical_replay: yes
+stage7c_parity_rows: 36/36
+budget_bound_rows: 0
+
+sync_successes: 36/36
+async_successes: 36/36
+async_censored: 0
+
+violations: 0
+stage7c_parity_failures: 0
+accounting_failures: 0
+communication_failures: 0
+invalid_censoring: 0
+~~~
+
+Per-profile aggregate deltas across six paired worlds:
+
+~~~text
+novel_first  communication=+819   duplicate=+779   policy=+267  tick-round=+120
+round_robin  communication=+1092  duplicate=+1040  policy=+315  tick-round=+149
+seeded       communication=+1374  duplicate=+1356  policy=+405  tick-round=+289
+theta37      communication=+478   duplicate=+427   policy=+192  tick-round=+103
+theta51      communication=+144   duplicate=+162   policy=+135  tick-round=+94
+theta93      communication=+691   duplicate=+644   policy=+380  tick-round=+205
+~~~
+
+Aggregate across all 36 paired worlds:
+
+~~~text
+communication_delta = +4598
+duplicate_delta     = +4408
+policy_call_delta   = +1694
+tick_round_delta    = +960
+~~~
+
+F2.1 therefore closes as a PASS. Asynchrony preserves convergence across the
+entire frozen N=8 box while adding measurable communication, duplication,
+policy-call, and completion-time cost. Detailed evidence is frozen in
+`docs/f2-1-asynchrony-gap.md`.
+
 ### F2.2 — asynchronous scaling
 
 ~~~text
