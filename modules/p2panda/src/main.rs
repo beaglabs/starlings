@@ -1579,5 +1579,132 @@ mod tests {
         }).await
     }
 
-}
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[ignore = "requires local mDNS/UDP; run explicitly before the Stage 7C suite"]
+    async fn multi_peer_history_live_fanout_preserves_author_order() -> Result<()> {
+        const HISTORY: u32 = 64;
+        const LIVE: u32 = 512;
+        const TOTAL: u32 = HISTORY + LIVE;
+        const RECEIVERS: u16 = 7;
 
+        async fn publish_one(
+            tx: &StreamPublisher<Envelope>,
+            rx: &mut StreamSubscription<Envelope>,
+            sequence: u32,
+        ) -> Result<()> {
+            let stop = AtomicBool::new(false);
+            let processing = bounded("fanout sender publication", OPERATION_TIMEOUT, async {
+                let processed = tx.publish(Envelope {
+                    run_nonce: 2,
+                    sender: 0,
+                    sequence,
+                    logical_round: sequence + 1,
+                    recipients: (1..=RECEIVERS).collect(),
+                    facts: vec![(sequence % 32) as u16],
+                }).await?.await?;
+                if !processed.is_completed() || processed.is_failed() {
+                    bail!("fanout sender processing failed at sequence {sequence}: {:?}",
+                        processed.failure_reason());
+                }
+                Ok(())
+            });
+            receive_while(processing, rx, &stop, |event| match event {
+                StreamEvent::ProcessingFailed { error, source, .. } =>
+                    bail!("fanout sender processing error: {source:?}: {error:?}"),
+                StreamEvent::ReplayFailed { error } => bail!("fanout sender replay: {error:?}"),
+                StreamEvent::DecodeFailed { error, .. } => bail!("fanout sender decode: {error:?}"),
+                StreamEvent::AckFailed { error, .. } => bail!("fanout sender ack: {error:?}"),
+                _ => Ok(()),
+            }).await?.context("fanout sender unexpectedly cancelled")
+        }
+
+        bounded("multi-peer history/live fanout", Duration::from_secs(60), async {
+            let topic = Topic::random();
+            let sender = transient_node_builder().spawn().await?;
+            let (tx, mut sender_rx) = sender.stream::<Envelope>(topic.clone()).await?;
+            for sequence in 0..HISTORY {
+                publish_one(&tx, &mut sender_rx, sequence).await?;
+            }
+            eprintln!("[fanout] sender history ready: {HISTORY} operations; starting {RECEIVERS} peers");
+
+            let mut receivers = JoinSet::new();
+            for receiver_index in 1..=RECEIVERS {
+                let receiver_topic = topic.clone();
+                receivers.spawn(async move {
+                    let receiver = transient_node_builder().spawn().await?;
+                    let (_receiver_tx, mut receiver_rx) =
+                        receiver.stream::<Envelope>(receiver_topic).await?;
+                    let mut seen = HashSet::new();
+                    let mut live_events = 0_u32;
+                    let mut sessions = 0_u32;
+                    while seen.len() < TOTAL as usize {
+                        let event = timeout(Duration::from_secs(20), receiver_rx.next()).await
+                            .with_context(|| format!(
+                                "peer {receiver_index} stalled: received={}/{} sessions={sessions} live_events={live_events}",
+                                seen.len(), TOTAL,
+                            ))?
+                            .context("fanout receiver stream closed")?;
+                        match event {
+                            StreamEvent::Processed { operation, source } => {
+                                let envelope = operation.message();
+                                if envelope.run_nonce != 2 || envelope.sender != 0
+                                    || envelope.sequence >= TOTAL {
+                                    bail!("peer {receiver_index}: unexpected fanout message");
+                                }
+                                if seen.contains(&envelope.sequence) {
+                                    continue;
+                                }
+                                if envelope.sequence != seen.len() as u32 {
+                                    bail!(
+                                        "peer {receiver_index}: author-order violation: expected={} received={} source={source:?}",
+                                        seen.len(), envelope.sequence,
+                                    );
+                                }
+                                if matches!(source, Source::SyncSession {
+                                    phase: p2panda::streams::SessionPhase::Live, ..
+                                }) {
+                                    live_events += 1;
+                                }
+                                seen.insert(envelope.sequence);
+                            }
+                            StreamEvent::SyncStarted { .. } => sessions += 1,
+                            StreamEvent::SyncEnded { error: Some(error), .. } =>
+                                bail!("peer {receiver_index}: sync failed: {error:?}"),
+                            StreamEvent::ProcessingFailed { error, source, .. } => bail!(
+                                "peer {receiver_index}: ingest failed after {}/{}: source={source:?} error={error:?}",
+                                seen.len(), TOTAL,
+                            ),
+                            StreamEvent::ReplayFailed { error } =>
+                                bail!("peer {receiver_index}: replay failed: {error:?}"),
+                            StreamEvent::DecodeFailed { error, .. } =>
+                                bail!("peer {receiver_index}: decode failed: {error:?}"),
+                            StreamEvent::AckFailed { error, .. } =>
+                                bail!("peer {receiver_index}: ack failed: {error:?}"),
+                            _ => {}
+                        }
+                    }
+                    if live_events == 0 {
+                        bail!("peer {receiver_index}: live handoff was not exercised");
+                    }
+                    eprintln!(
+                        "[fanout] peer={receiver_index} received={TOTAL}/{TOTAL} sessions={sessions} live_events={live_events}"
+                    );
+                    drop(receiver);
+                    Ok::<_, anyhow::Error>(())
+                });
+            }
+
+            sleep(Duration::from_millis(250)).await;
+            for sequence in HISTORY..TOTAL {
+                publish_one(&tx, &mut sender_rx, sequence).await?;
+                sleep(Duration::from_millis(20)).await;
+            }
+            while let Some(result) = receivers.join_next().await {
+                result.context("join fanout receiver")??;
+            }
+            drop(sender);
+            Ok(())
+        }).await
+    }
+
+}
