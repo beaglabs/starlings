@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -1246,6 +1246,7 @@ options:\n\
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicU16;
 
     #[test]
     fn ffi_layout_matches_zig_contract() {
