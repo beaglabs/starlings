@@ -208,3 +208,78 @@ Stage 7C establishes deterministic asynchronous policy transfer, not real
 network behavior. Multiple processes, hosts, WANs, RF/off-grid transports, and
 third-party replication systems remain separable candidate experiments. No
 later numbered stage is declared by this report.
+
+## F1a addendum — canonical contested fault matrix
+
+F1a extends the deterministic Stage 7C substrate into a frozen contested
+matrix without modifying the S0 historical substrate files. The authoritative
+measurement remains the deterministic Zig engine; F1a adds only explicit fault
+controls and a per-fact causal ledger in `starling-experiments`.
+
+Canonical matrix:
+
+~~~text
+profiles:    theta37 theta51 theta93 round_robin seeded novel_first
+topologies:  ring grid
+seeds:       0 1 2
+N=8 F=32 R=2 B=2 max_ticks=4096
+fault worlds: 12
+rows:        432
+~~~
+
+The 12 worlds are no-fault, 50/200-permille loss, 250-permille duplication,
+elevated latency/jitter, forced reordering, timed partition/reconnection,
+crash/restart with persistent knowledge, crash/restart with reset knowledge,
+stale policy-visible state, bounded queue capacity, and a combined contested
+world.
+
+Every collector-missing fact is assigned exactly one terminal cause:
+
+~~~text
+pending_at_censor
+crashed_before_merge
+delivery_faulted
+never_transmitted
+~~~
+
+Any missing fact outside those categories is `unattributed` and fails the
+gate. Envelope accounting and delivered-unit accounting remain mandatory.
+
+Execution evidence, reproduced on macOS with Zig 0.16.0:
+
+~~~text
+dataset: trials/f1a-fault-matrix.tsv
+rows: 432
+bytes: 68973
+SHA-256: c9d6b93937467ebf363ee14a02b2028ba0993d50a282770c547eaa3d35ed3ae5
+
+successes:                     397/432
+non-convergent worlds:          35/432
+byte-identical replay:          yes
+envelope_accounting_failures:   0
+missing_accounting_failures:    0
+unattributed_missing:           0
+protocol violations:            0
+~~~
+
+All 35 non-convergent worlds are therefore measured negative outcomes rather
+than silent loss. The matrix does not require universal convergence under every
+fault; it requires deterministic replay, complete accounting, and causal
+attribution for every terminal missing fact.
+
+Per-profile summary across 72 worlds each:
+
+~~~text
+profile       successes  terminal missing  communication units
+novel_first   66/72      22                181035
+round_robin   67/72      18                176508
+seeded        66/72      17                238524
+theta37       66/72      19                181687
+theta51       66/72      21                180593
+theta93       66/72      21                116470
+~~~
+
+Verdict: F1a passes. The deterministic substrate remains byte-stable and fully
+auditable under the canonical contested envelope. Non-convergence under some
+fault configurations is preserved as evidence, with no unattributed fact loss.
+
