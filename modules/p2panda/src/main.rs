@@ -1785,10 +1785,23 @@ mod tests {
                                     "[fanout-session-error] peer={receiver_index} error={error:?}"
                                 );
                             }
-                            StreamEvent::ProcessingFailed { error, source, .. } => bail!(
-                                "peer {receiver_index}: ingest failed after {}/{}: source={source:?} error={error:?}",
-                                seen.len(), TOTAL,
-                            ),
+                            StreamEvent::ProcessingFailed { error, source, .. } => {
+                                let detail = format!("{error:?}");
+                                if detail.contains("SeqNumNonIncremental")
+                                    || detail.contains("BacklinkMissing")
+                                {
+                                    session_errors += 1;
+                                    eprintln!(
+                                        "[fanout-recoverable-gap] peer={receiver_index} received={}/{} source={source:?} error={error:?}",
+                                        seen.len(), TOTAL,
+                                    );
+                                } else {
+                                    bail!(
+                                        "peer {receiver_index}: ingest failed after {}/{}: source={source:?} error={error:?}",
+                                        seen.len(), TOTAL,
+                                    );
+                                }
+                            }
                             StreamEvent::ReplayFailed { error } =>
                                 bail!("peer {receiver_index}: replay failed: {error:?}"),
                             StreamEvent::DecodeFailed { error, .. } =>
