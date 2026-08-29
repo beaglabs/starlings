@@ -93,9 +93,18 @@ src/
 
 grammars/                  constrained-generation grammars
 docs/                      stage reports and architecture decisions
+modules/                   optional candidate integrations; not core deps
 trials/                    local generated outputs only; ignored by Git
 ~~~
 
 Generated trial outputs are intentionally kept out of version control;
 canonical hashes and scientific conclusions belong in the stage
 documentation.
+
+
+## Optional modules
+
+Candidate transport/runtime integrations live under `modules/` and are kept
+outside the protocol-core dependency graph. The preserved P2Panda adapter lives
+under `modules/p2panda/` with its own Rust toolchain and a frozen Zig
+experiment snapshot.
