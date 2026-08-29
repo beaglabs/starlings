@@ -8,7 +8,7 @@ publish = false
 [dependencies]
 anyhow = "1"
 futures-util = "0.3"
-p2panda = { git = "https://github.com/beaglabs/p2panda", rev = "da04bc3c06cb5f830a9a74802b5c1b310313acbc", package = "p2panda" }
+p2panda = { git = "https://github.com/beaglabs/p2panda", rev = "d52c7d7289edcf73275bb6f91dbb3dd99c7a3fc7", package = "p2panda" }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 
