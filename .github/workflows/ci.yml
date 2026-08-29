@@ -16,5 +16,7 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
-      - name: Test
+      - name: Direct protocol-core test
         run: zig test src/root.zig
+      - name: Package-boundary test
+        run: zig build test
