@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
@@ -288,8 +288,11 @@ struct LocalState {
     cursor: u16,
     round: u32,
     sequence: u32,
+    next_envelope_sequence: Vec<u32>,
+    pending_envelopes: Vec<BTreeMap<u32, Envelope>>,
 }
 
+const MAX_PENDING_ENVELOPES_PER_SENDER: usize = 4096;
 const ERROR_SAMPLE_LIMIT: usize = 3;
 const ERROR_DETAIL_LIMIT: usize = 1200;
 const ERROR_KINDS: [&str; 5] = ["session", "processing", "replay", "decode", "ack"];
@@ -606,6 +609,8 @@ async fn run_node(
         cursor: 0,
         round: 0,
         sequence: 0,
+        next_envelope_sequence: vec![1; config.nodes as usize],
+        pending_envelopes: vec![BTreeMap::new(); config.nodes as usize],
     };
 
     let mut stats = NodeStats {
@@ -787,28 +792,7 @@ fn apply_event(
                 return Ok(());
             }
 
-            let key = (
-                envelope.run_nonce,
-                envelope.sender,
-                envelope.sequence,
-            );
-            if !seen.insert(key) {
-                stats.duplicate_envelopes += 1;
-                return Ok(());
-            }
-
-            if !envelope.recipients.contains(&node_index) {
-                return Ok(());
-            }
-
-            for fact in &envelope.facts {
-                if has_fact(&state.knowledge, *fact) {
-                    stats.duplicate_deliveries += 1;
-                } else {
-                    stats.useful_deliveries += 1;
-                    set_fact(&mut state.knowledge, *fact);
-                }
-            }
+            accept_envelope(envelope.clone(), node_index, config, state, stats, seen)?;
 
             if node_index == 0
                 && contains_all(&state.knowledge, config.facts)
@@ -853,6 +837,90 @@ fn apply_event(
 
         _ => {}
     }
+    Ok(())
+}
+
+fn apply_envelope(
+    envelope: &Envelope,
+    node_index: u16,
+    config: &Config,
+    state: &mut LocalState,
+    stats: &mut NodeStats,
+    seen: &mut HashSet<(u64, u16, u32)>,
+) -> Result<()> {
+    let key = (envelope.run_nonce, envelope.sender, envelope.sequence);
+    if !seen.insert(key) {
+        stats.duplicate_envelopes += 1;
+        return Ok(());
+    }
+    if !envelope.recipients.contains(&node_index) {
+        return Ok(());
+    }
+    for fact in &envelope.facts {
+        if has_fact(&state.knowledge, *fact) {
+            stats.duplicate_deliveries += 1;
+        } else {
+            stats.useful_deliveries += 1;
+            set_fact(&mut state.knowledge, *fact);
+        }
+    }
+    if node_index == 0 && contains_all(&state.knowledge, config.facts) {
+        stats.collector_complete = true;
+    }
+    Ok(())
+}
+
+fn accept_envelope(
+    envelope: Envelope,
+    node_index: u16,
+    config: &Config,
+    state: &mut LocalState,
+    stats: &mut NodeStats,
+    seen: &mut HashSet<(u64, u16, u32)>,
+) -> Result<()> {
+    let sender = envelope.sender as usize;
+    if sender >= state.next_envelope_sequence.len() || envelope.sequence == 0 {
+        bail!(
+            "node {node_index}: invalid envelope sender={} sequence={}",
+            envelope.sender,
+            envelope.sequence
+        );
+    }
+
+    let expected = state.next_envelope_sequence[sender];
+    if envelope.sequence < expected {
+        stats.duplicate_envelopes += 1;
+        return Ok(());
+    }
+    if envelope.sequence > expected {
+        let pending = &mut state.pending_envelopes[sender];
+        if pending.contains_key(&envelope.sequence) {
+            stats.duplicate_envelopes += 1;
+            return Ok(());
+        }
+        if pending.len() >= MAX_PENDING_ENVELOPES_PER_SENDER {
+            bail!(
+                "node {node_index}: envelope reorder buffer exhausted for sender {} while waiting for sequence {}",
+                envelope.sender,
+                expected
+            );
+        }
+        pending.insert(envelope.sequence, envelope);
+        return Ok(());
+    }
+
+    apply_envelope(&envelope, node_index, config, state, stats, seen)?;
+    state.next_envelope_sequence[sender] = expected.wrapping_add(1);
+
+    loop {
+        let expected = state.next_envelope_sequence[sender];
+        let Some(envelope) = state.pending_envelopes[sender].remove(&expected) else {
+            break;
+        };
+        apply_envelope(&envelope, node_index, config, state, stats, seen)?;
+        state.next_envelope_sequence[sender] = expected.wrapping_add(1);
+    }
+
     Ok(())
 }
 
@@ -1212,6 +1280,42 @@ mod tests {
         assert_eq!(recipients(Topology::Grid, 4, 9), vec![3, 5, 1, 7]);
     }
 
+    #[test]
+    fn application_reorders_envelopes_per_sender() -> Result<()> {
+        let config = Config::default();
+        let mut state = LocalState {
+            knowledge: vec![0],
+            sent: vec![0],
+            cursor: 0,
+            round: 0,
+            sequence: 0,
+            next_envelope_sequence: vec![1; config.nodes as usize],
+            pending_envelopes: vec![BTreeMap::new(); config.nodes as usize],
+        };
+        let mut stats = NodeStats::default();
+        let mut seen = HashSet::new();
+        let envelope = |sequence, fact| Envelope {
+            run_nonce: 7,
+            sender: 1,
+            sequence,
+            logical_round: sequence,
+            recipients: vec![0],
+            facts: vec![fact],
+        };
+
+        accept_envelope(envelope(2, 1), 0, &config, &mut state, &mut stats, &mut seen)?;
+        assert!(!has_fact(&state.knowledge, 1));
+        assert_eq!(state.pending_envelopes[1].len(), 1);
+
+        accept_envelope(envelope(1, 0), 0, &config, &mut state, &mut stats, &mut seen)?;
+        assert!(has_fact(&state.knowledge, 0));
+        assert!(has_fact(&state.knowledge, 1));
+        assert!(state.pending_envelopes[1].is_empty());
+        assert_eq!(state.next_envelope_sequence[1], 3);
+        assert_eq!(stats.useful_deliveries, 2);
+        Ok(())
+    }
+
     #[tokio::test]
     async fn publication_drains_backpressure_before_waiting_for_ack() {
         let (tx, rx) = tokio::sync::mpsc::channel(16);
@@ -1442,6 +1546,8 @@ mod tests {
         let config = Config::default();
         let mut state = LocalState {
             knowledge: vec![0], sent: vec![0], cursor: 0, round: 0, sequence: 0,
+            next_envelope_sequence: vec![1; config.nodes as usize],
+            pending_envelopes: vec![BTreeMap::new(); config.nodes as usize],
         };
         let mut stats = NodeStats::default();
         let mut seen = HashSet::new();
