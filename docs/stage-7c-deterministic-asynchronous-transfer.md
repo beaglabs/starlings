@@ -116,15 +116,19 @@ Generate it with:
 
 ~~~sh
 zig test src/root.zig
-zig run src/experiments/stage7/stage7c_cli.zig -- validate
-zig run -O ReleaseFast src/experiments/stage7/stage7c_cli.zig -- suite \
+zig run src/stage7c_run.zig -- validate
+zig run -O ReleaseFast src/stage7c_run.zig -- suite \
   > trials/stage7c-async.tsv
 ~~~
+
+`src/stage7c_run.zig` is a one-line entry point. Zig 0.16 refuses imports
+outside the root file's directory, so the CLI cannot be rooted directly in
+`src/experiments/stage7/`.
 
 A single world is:
 
 ~~~sh
-zig run -O ReleaseFast src/experiments/stage7/stage7c_cli.zig -- \
+zig run -O ReleaseFast src/stage7c_run.zig -- \
   run theta51 8 32 ring 2 2 0 0
 ~~~
 
@@ -145,6 +149,58 @@ The implementation gate requires:
 The scientific gate then requires freezing the generated dataset hash,
 summarizing convergence and cost transfer for the three selected profiles and
 novel-first, and recording whether Stage 7C validates the transfer hypothesis.
+
+## Canonical first suite result
+
+Generated with the authoritative Zig 0.16.0 toolchain
+(`zig run -O ReleaseFast src/stage7c_run.zig -- suite`). An independent
+ReleaseFast rerun reproduced the file byte-for-byte.
+
+~~~text
+dataset: trials/stage7c-async.tsv
+worlds: 24
+SHA-256: c89d1985af0479191126fca91265b1fe7f49e7b34db471e13c74e8bb28195a36
+~~~
+
+All 24 worlds converge with full accounting:
+
+~~~text
+success:                 24/24
+collector final facts:   32/32 in every world
+policy violations:       0
+dropped/partitioned/
+crashed/overflow:        0 (no-fault suite)
+accounting identities:   hold in every world
+~~~
+
+The envelope tail still in flight at convergence is explicitly right-censored
+as `pending`; nothing disappears from the ledger.
+
+Per-profile convergence and cost (six worlds each, ring + grid, seeds 0-2):
+
+~~~text
+profile      ticks range    comm units   attempts  delivered  pending
+theta37      17-38          3046         1736      1554       182
+theta51      17-41          2992         1717      1540       177
+theta93      34-77          3327         3496      3327       169
+novel_first  17-53          3463         1921      1755       166
+~~~
+
+Jitter-induced due-time inversions produce reordered deliveries in every
+world (558-1241 per profile across the six worlds) without affecting
+convergence: the merge is commutative and idempotent.
+
+The asynchronous ordering preserves the Stage 7B structure: theta37/theta51
+remain the fast low-cost branch, theta93 remains the slower lower-bandwidth
+branch, and both selected branches stay at or below novel-first on
+communication units while converging.
+
+Verdict: the first suite validates the transfer hypothesis for zero-fault
+asynchronous execution. The frozen family converges deterministically under
+independent local clocks and asynchronous delivery, with complete envelope
+accounting and byte-identical replay. Fault-world behavior is exercised by
+the unit tests but is not part of this frozen dataset; a canonical disruption
+matrix remains undeclared follow-on work.
 
 ## Boundary
 

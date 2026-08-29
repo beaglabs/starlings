@@ -468,8 +468,11 @@ The full search completed all training, validation, and hard-holdout phases with
 total policy violations: 0
 ~~~
 
-The canonical report file hash should be recorded separately after the local
-report is hashed.
+Canonical report file (`trials/stage7b-search.txt`, 84 lines):
+
+~~~text
+SHA-256: e3d27eec1f7bb78d5cabf869fc5172c3746a356f7f4cd9db4cc91f657e01ff2f
+~~~
 
 ### Training selection
 
