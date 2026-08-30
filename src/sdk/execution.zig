@@ -22,6 +22,9 @@ pub fn Runner(
     return struct {
         const Self = @This();
 
+        pub const max_event_records: usize = max_events;
+        pub const RunEventLog = EventLogType;
+
         pub const Observation = struct {
             runner: *const Self,
             operator_index: usize,
@@ -449,7 +452,7 @@ pub fn Runner(
             try self.events.validate();
         }
 
-        pub fn replayFrom(self: *Self, source: *const EventLogType) !void {
+        pub fn replayFrom(self: *Self, source: *const RunEventLog) !void {
             if (source == &self.events) return error.ReplaySourceAliasesTarget;
             try self.replayRecords(source.slice());
         }
