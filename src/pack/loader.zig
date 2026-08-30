@@ -1,12 +1,23 @@
 const std = @import("std");
-const yaml_lib = @import("yaml");
 const contract = @import("contract.zig");
 
-const Yaml = yaml_lib.Yaml;
-const Value = Yaml.Value;
-const Map = Yaml.Map;
-
 pub const max_pack_file_bytes: usize = 4 * 1024 * 1024;
+pub const max_yaml_lines: usize = 4096;
+
+const Line = struct {
+    indent: usize,
+    text: []const u8,
+    number: usize,
+};
+
+const ParsedLines = struct {
+    items: [max_yaml_lines]Line = undefined,
+    count: usize = 0,
+
+    fn slice(self: *const ParsedLines) []const Line {
+        return self.items[0..self.count];
+    }
+};
 
 pub fn loadAndCompile(
     io: std.Io,
@@ -14,6 +25,8 @@ pub fn loadAndCompile(
     arena: std.mem.Allocator,
     pack_dir: []const u8,
 ) !contract.CompiledPack {
+    _ = gpa;
+
     var dir = try std.Io.Dir.cwd().openDir(io, pack_dir, .{});
     defer dir.close(io);
 
@@ -23,7 +36,7 @@ pub fn loadAndCompile(
         arena,
         .limited(max_pack_file_bytes),
     );
-    const manifest = try parseManifest(gpa, arena, manifest_source);
+    const manifest = try parseManifest(arena, manifest_source);
 
     try validatePackRelativePath(manifest.state.variables);
     try validatePackRelativePath(manifest.state.invariants);
@@ -56,12 +69,12 @@ pub fn loadAndCompile(
             arena,
             .limited(max_pack_file_bytes),
         );
-        try validatePolicySource(gpa, policy_source);
+        try validatePolicySource(policy_source);
     }
 
-    const variables = try parseVariables(gpa, arena, variable_source);
-    const invariants = try parseInvariants(gpa, arena, invariant_source);
-    const operators = try parseOperators(gpa, arena, operator_source);
+    const variables = try parseVariables(arena, variable_source);
+    const invariants = try parseInvariants(arena, invariant_source);
+    const operators = try parseOperators(arena, operator_source);
 
     return contract.compile(.{
         .manifest = manifest,
@@ -72,195 +85,506 @@ pub fn loadAndCompile(
 }
 
 pub fn parseManifest(
-    gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
     source: []const u8,
 ) !contract.Manifest {
-    var yaml = Yaml{ .source = source };
-    defer yaml.deinit(gpa);
-    try yaml.load(gpa);
-    const root = try singleDocument(&yaml);
-    try validateManifestSchema(root);
-    return try yaml.parse(arena, contract.Manifest);
+    _ = arena;
+    const parsed = try tokenize(source);
+    const lines = parsed.slice();
+    if (lines.len == 0) return error.EmptyYamlDocument;
+
+    var api_version: ?[]const u8 = null;
+    var kind: ?[]const u8 = null;
+    var metadata_name: ?[]const u8 = null;
+    var metadata_version: ?[]const u8 = null;
+    var variables_path: ?[]const u8 = null;
+    var invariants_path: ?[]const u8 = null;
+    var operators_path: ?[]const u8 = null;
+    var policy_actions: ?[]const u8 = null;
+
+    var targets_buf: [contract.max_targets][]const u8 = undefined;
+    var target_count: usize = 0;
+
+    var section: enum { none, metadata, state, population, policy, targets } = .none;
+
+    for (lines) |line| {
+        if (line.indent == 0) {
+            section = .none;
+
+            if (try scalarField(line, "apiVersion")) |value| {
+                if (api_version != null) return error.DuplicateSchemaField;
+                api_version = value;
+                continue;
+            }
+            if (try scalarField(line, "kind")) |value| {
+                if (kind != null) return error.DuplicateSchemaField;
+                kind = value;
+                continue;
+            }
+            if (isHeader(line, "metadata")) {
+                section = .metadata;
+                continue;
+            }
+            if (isHeader(line, "state")) {
+                section = .state;
+                continue;
+            }
+            if (isHeader(line, "population")) {
+                section = .population;
+                continue;
+            }
+            if (isHeader(line, "policy")) {
+                section = .policy;
+                continue;
+            }
+            if (isHeader(line, "targets")) {
+                section = .targets;
+                continue;
+            }
+
+            if (isForbiddenWorkflowKey(line.text)) return error.WorkflowKeyForbidden;
+            return error.UnknownSchemaField;
+        }
+
+        switch (section) {
+            .metadata => {
+                try expectIndent(line, 2);
+                if (try scalarField(line, "name")) |value| {
+                    if (metadata_name != null) return error.DuplicateSchemaField;
+                    metadata_name = value;
+                } else if (try scalarField(line, "version")) |value| {
+                    if (metadata_version != null) return error.DuplicateSchemaField;
+                    metadata_version = value;
+                } else return error.UnknownSchemaField;
+            },
+            .state => {
+                try expectIndent(line, 2);
+                if (try scalarField(line, "variables")) |value| {
+                    if (variables_path != null) return error.DuplicateSchemaField;
+                    variables_path = value;
+                } else if (try scalarField(line, "invariants")) |value| {
+                    if (invariants_path != null) return error.DuplicateSchemaField;
+                    invariants_path = value;
+                } else return error.UnknownSchemaField;
+            },
+            .population => {
+                try expectIndent(line, 2);
+                if (try scalarField(line, "operators")) |value| {
+                    if (operators_path != null) return error.DuplicateSchemaField;
+                    operators_path = value;
+                } else return error.UnknownSchemaField;
+            },
+            .policy => {
+                try expectIndent(line, 2);
+                if (try scalarField(line, "actions")) |value| {
+                    if (policy_actions != null) return error.DuplicateSchemaField;
+                    policy_actions = value;
+                } else return error.UnknownSchemaField;
+            },
+            .targets => {
+                try expectIndent(line, 2);
+                if (target_count >= targets_buf.len) return error.PackCapacityExceeded;
+                targets_buf[target_count] = try listScalar(line);
+                target_count += 1;
+            },
+            .none => return error.InvalidYamlIndentation,
+        }
+    }
+
+    const targets = try arena.alloc([]const u8, target_count);
+    @memcpy(targets, targets_buf[0..target_count]);
+
+    return .{
+        .apiVersion = api_version orelse return error.MissingSchemaField,
+        .kind = kind orelse return error.MissingSchemaField,
+        .metadata = .{
+            .name = metadata_name orelse return error.MissingSchemaField,
+            .version = metadata_version orelse return error.MissingSchemaField,
+        },
+        .state = .{
+            .variables = variables_path orelse return error.MissingSchemaField,
+            .invariants = invariants_path orelse return error.MissingSchemaField,
+        },
+        .population = .{
+            .operators = operators_path orelse return error.MissingSchemaField,
+        },
+        .policy = if (policy_actions) |actions| .{ .actions = actions } else null,
+        .targets = targets,
+    };
 }
 
 pub fn parseVariables(
-    gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
     source: []const u8,
 ) !contract.VariableFile {
-    var yaml = Yaml{ .source = source };
-    defer yaml.deinit(gpa);
-    try yaml.load(gpa);
-    const root = try singleDocument(&yaml);
-    try validateVariableSchema(root);
-    return try yaml.parse(arena, contract.VariableFile);
+    const parsed = try tokenize(source);
+    const lines = parsed.slice();
+    if (lines.len == 0 or !isHeader(lines[0], "variables") or lines[0].indent != 0) {
+        return error.MissingSchemaField;
+    }
+
+    var buf: [contract.max_variables]contract.VariableDecl = undefined;
+    var count: usize = 0;
+    var current: ?contract.VariableDecl = null;
+
+    for (lines[1..]) |line| {
+        if (line.indent == 2 and startsListItem(line.text)) {
+            if (current) |decl| {
+                if (count >= buf.len) return error.PackCapacityExceeded;
+                buf[count] = decl;
+                count += 1;
+            }
+
+            const item = line.text[2..];
+            const name = (try scalarTextField(item, "name")) orelse return error.MissingSchemaField;
+            current = .{
+                .name = name,
+                .@"type" = undefined,
+            };
+            continue;
+        }
+
+        if (line.indent != 4 or current == null) return error.InvalidYamlIndentation;
+        var decl = current.?;
+
+        if (try scalarField(line, "type")) |value| {
+            decl.@"type" = std.meta.stringToEnum(contract.ValueType, value) orelse return error.InvalidEnum;
+        } else if (try scalarField(line, "unit")) |value| {
+            decl.unit = value;
+        } else if (try scalarField(line, "merge")) |value| {
+            decl.merge = std.meta.stringToEnum(contract.Merge, value) orelse return error.InvalidEnum;
+        } else if (try scalarField(line, "freshness_rounds")) |value| {
+            decl.freshness_rounds = std.fmt.parseInt(u32, value, 10) catch return error.InvalidInteger;
+        } else {
+            return error.UnknownSchemaField;
+        }
+
+        current = decl;
+    }
+
+    if (current) |decl| {
+        if (count >= buf.len) return error.PackCapacityExceeded;
+        buf[count] = decl;
+        count += 1;
+    }
+
+    const out = try arena.alloc(contract.VariableDecl, count);
+    @memcpy(out, buf[0..count]);
+
+    for (out) |decl| {
+        _ = @tagName(decl.@"type");
+    }
+
+    return .{ .variables = out };
 }
 
 pub fn parseInvariants(
-    gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
     source: []const u8,
 ) !contract.InvariantFile {
-    var yaml = Yaml{ .source = source };
-    defer yaml.deinit(gpa);
-    try yaml.load(gpa);
-    const root = try singleDocument(&yaml);
-    try validateInvariantSchema(root);
-    return try yaml.parse(arena, contract.InvariantFile);
+    const parsed = try tokenize(source);
+    const lines = parsed.slice();
+    if (lines.len == 0 or !isHeader(lines[0], "invariants") or lines[0].indent != 0) {
+        return error.MissingSchemaField;
+    }
+
+    var out_buf: [contract.max_invariants]contract.InvariantDecl = undefined;
+    var count: usize = 0;
+    var i: usize = 1;
+
+    while (i < lines.len) {
+        const line = lines[i];
+        if (line.indent != 2 or !startsListItem(line.text)) return error.InvalidYamlIndentation;
+
+        const name = (try scalarTextField(line.text[2..], "name")) orelse return error.MissingSchemaField;
+        var req_buf: [contract.max_dependencies][]const u8 = undefined;
+        var req_count: usize = 0;
+        i += 1;
+
+        while (i < lines.len and lines[i].indent > 2) {
+            const nested = lines[i];
+            if (nested.indent == 4 and isHeader(nested, "requires")) {
+                i += 1;
+                while (i < lines.len and lines[i].indent > 4) {
+                    try expectIndent(lines[i], 6);
+                    if (req_count >= req_buf.len) return error.PackCapacityExceeded;
+                    req_buf[req_count] = try listScalar(lines[i]);
+                    req_count += 1;
+                    i += 1;
+                }
+                continue;
+            }
+            return error.UnknownSchemaField;
+        }
+
+        if (count >= out_buf.len) return error.PackCapacityExceeded;
+        const requires = try arena.alloc([]const u8, req_count);
+        @memcpy(requires, req_buf[0..req_count]);
+        out_buf[count] = .{ .name = name, .requires = requires };
+        count += 1;
+    }
+
+    const out = try arena.alloc(contract.InvariantDecl, count);
+    @memcpy(out, out_buf[0..count]);
+    return .{ .invariants = out };
 }
 
 pub fn parseOperators(
-    gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
     source: []const u8,
 ) !contract.OperatorFile {
-    var yaml = Yaml{ .source = source };
-    defer yaml.deinit(gpa);
-    try yaml.load(gpa);
-    const root = try singleDocument(&yaml);
-    try validateOperatorSchema(root);
-    return try yaml.parse(arena, contract.OperatorFile);
-}
-
-pub fn validatePolicySource(gpa: std.mem.Allocator, source: []const u8) !void {
-    var yaml = Yaml{ .source = source };
-    defer yaml.deinit(gpa);
-    try yaml.load(gpa);
-    const root = try singleDocument(&yaml);
-    const map = try asMap(root);
-    try validateKeys(map, &.{"actions"}, &.{});
-    if (map.get("actions") == null) return error.MissingSchemaField;
-}
-
-fn singleDocument(yaml: *const Yaml) !Value {
-    if (yaml.docs.items.len != 1) return error.SingleYamlDocumentRequired;
-    return yaml.docs.items[0];
-}
-
-fn validateManifestSchema(root: Value) !void {
-    const map = try asMap(root);
-    try validateKeys(
-        map,
-        &.{ "apiVersion", "kind", "metadata", "state", "population", "policy", "targets" },
-        &.{ "workflow", "steps", "next", "after", "depends_on_operator" },
-    );
-
-    try requireFields(map, &.{ "apiVersion", "kind", "metadata", "state", "population", "targets" });
-
-    const metadata = try asMap(map.get("metadata").?);
-    try validateKeys(metadata, &.{ "name", "version" }, &.{});
-    try requireFields(metadata, &.{ "name", "version" });
-
-    const state = try asMap(map.get("state").?);
-    try validateKeys(state, &.{ "variables", "invariants" }, &.{});
-    try requireFields(state, &.{ "variables", "invariants" });
-
-    const population = try asMap(map.get("population").?);
-    try validateKeys(population, &.{"operators"}, &.{});
-    try requireFields(population, &.{"operators"});
-
-    if (map.get("policy")) |policy_value| {
-        const policy = try asMap(policy_value);
-        try validateKeys(policy, &.{"actions"}, &.{});
-        try requireFields(policy, &.{"actions"});
+    const parsed = try tokenize(source);
+    const lines = parsed.slice();
+    if (lines.len == 0 or !isHeader(lines[0], "operators") or lines[0].indent != 0) {
+        return error.MissingSchemaField;
     }
 
-    _ = try asList(map.get("targets").?);
-}
+    var out_buf: [contract.max_operators]contract.OperatorDecl = undefined;
+    var count: usize = 0;
+    var i: usize = 1;
 
-fn validateVariableSchema(root: Value) !void {
-    const map = try asMap(root);
-    try validateKeys(map, &.{"variables"}, &.{});
-    try requireFields(map, &.{"variables"});
+    while (i < lines.len) {
+        const line = lines[i];
+        if (line.indent != 2 or !startsListItem(line.text)) return error.InvalidYamlIndentation;
 
-    const values = try asList(map.get("variables").?);
-    for (values) |value| {
-        const variable = try asMap(value);
-        try validateKeys(
-            variable,
-            &.{ "name", "type", "unit", "merge", "freshness_rounds" },
-            &.{},
-        );
-        try requireFields(variable, &.{ "name", "type" });
+        const name = (try scalarTextField(line.text[2..], "name")) orelse return error.MissingSchemaField;
+        var runtime: ?contract.RuntimeDecl = null;
+        var requires: contract.RequirementSet = .{};
+        var provides: contract.RequirementSet = .{};
+
+        i += 1;
+        while (i < lines.len and lines[i].indent > 2) {
+            const nested = lines[i];
+            if (nested.indent != 4) return error.InvalidYamlIndentation;
+
+            if (isForbiddenWorkflowKey(nested.text)) return error.WorkflowKeyForbidden;
+
+            if (isHeader(nested, "runtime")) {
+                const result = try parseRuntime(lines, &i);
+                runtime = result;
+                continue;
+            }
+
+            if (isHeader(nested, "requires")) {
+                requires = try parseRequirementSet(arena, lines, &i);
+                continue;
+            }
+
+            if (isHeader(nested, "provides")) {
+                provides = try parseRequirementSet(arena, lines, &i);
+                continue;
+            }
+
+            return error.UnknownSchemaField;
+        }
+
+        if (count >= out_buf.len) return error.PackCapacityExceeded;
+        out_buf[count] = .{
+            .name = name,
+            .runtime = runtime orelse return error.MissingSchemaField,
+            .requires = requires,
+            .provides = provides,
+        };
+        count += 1;
     }
+
+    const out = try arena.alloc(contract.OperatorDecl, count);
+    @memcpy(out, out_buf[0..count]);
+    return .{ .operators = out };
 }
 
-fn validateInvariantSchema(root: Value) !void {
-    const map = try asMap(root);
-    try validateKeys(map, &.{"invariants"}, &.{});
-    try requireFields(map, &.{"invariants"});
+pub fn validatePolicySource(source: []const u8) !void {
+    const parsed = try tokenize(source);
+    const lines = parsed.slice();
+    if (lines.len == 0) return error.MissingSchemaField;
+    if (lines[0].indent != 0 or !isHeader(lines[0], "actions")) {
+        return error.MissingSchemaField;
+    }
 
-    const values = try asList(map.get("invariants").?);
-    for (values) |value| {
-        const invariant = try asMap(value);
-        try validateKeys(invariant, &.{ "name", "requires" }, &.{});
-        try requireFields(invariant, &.{"name"});
-        if (invariant.get("requires")) |requires| _ = try asList(requires);
+    for (lines[1..]) |line| {
+        if (line.indent == 0) return error.UnknownSchemaField;
+        if (line.indent < 2) return error.InvalidYamlIndentation;
     }
 }
 
-fn validateOperatorSchema(root: Value) !void {
-    const map = try asMap(root);
-    try validateKeys(map, &.{"operators"}, &.{});
-    try requireFields(map, &.{"operators"});
+fn parseRuntime(lines: []const Line, index: *usize) !contract.RuntimeDecl {
+    index.* += 1;
+    var kind: ?contract.RuntimeKind = null;
+    var target: ?[]const u8 = null;
 
-    const values = try asList(map.get("operators").?);
-    for (values) |value| {
-        const operator = try asMap(value);
-        try validateKeys(
-            operator,
-            &.{ "name", "runtime", "requires", "provides" },
-            &.{ "workflow", "steps", "next", "after", "depends_on_operator" },
-        );
-        try requireFields(operator, &.{ "name", "runtime" });
+    while (index.* < lines.len and lines[index.*].indent > 4) {
+        const line = lines[index.*];
+        try expectIndent(line, 6);
 
-        const runtime = try asMap(operator.get("runtime").?);
-        try validateKeys(runtime, &.{ "kind", "target" }, &.{});
-        try requireFields(runtime, &.{"kind"});
+        if (try scalarField(line, "kind")) |value| {
+            if (kind != null) return error.DuplicateSchemaField;
+            kind = std.meta.stringToEnum(contract.RuntimeKind, value) orelse return error.InvalidEnum;
+        } else if (try scalarField(line, "target")) |value| {
+            if (target != null) return error.DuplicateSchemaField;
+            target = value;
+        } else return error.UnknownSchemaField;
 
-        if (operator.get("requires")) |requirements| try validateRequirementSet(requirements);
-        if (operator.get("provides")) |requirements| try validateRequirementSet(requirements);
+        index.* += 1;
     }
+
+    return .{
+        .kind = kind orelse return error.MissingSchemaField,
+        .target = target,
+    };
 }
 
-fn validateRequirementSet(value: Value) !void {
-    const requirements = try asMap(value);
-    try validateKeys(requirements, &.{ "variables", "invariants" }, &.{});
-    if (requirements.get("variables")) |variables| _ = try asList(variables);
-    if (requirements.get("invariants")) |invariants| _ = try asList(invariants);
-}
+fn parseRequirementSet(
+    arena: std.mem.Allocator,
+    lines: []const Line,
+    index: *usize,
+) !contract.RequirementSet {
+    index.* += 1;
 
-fn validateKeys(
-    map: Map,
-    allowed: []const []const u8,
-    forbidden: []const []const u8,
-) !void {
-    for (map.keys()) |key| {
-        if (containsString(forbidden, key)) return error.WorkflowKeyForbidden;
-        if (!containsString(allowed, key)) return error.UnknownSchemaField;
+    var variable_buf: [contract.max_dependencies][]const u8 = undefined;
+    var variable_count: usize = 0;
+    var invariant_buf: [contract.max_dependencies][]const u8 = undefined;
+    var invariant_count: usize = 0;
+
+    while (index.* < lines.len and lines[index.*].indent > 4) {
+        const header = lines[index.*];
+        try expectIndent(header, 6);
+
+        var destination: enum { variables, invariants };
+        if (isHeader(header, "variables")) {
+            destination = .variables;
+        } else if (isHeader(header, "invariants")) {
+            destination = .invariants;
+        } else return error.UnknownSchemaField;
+
+        index.* += 1;
+        while (index.* < lines.len and lines[index.*].indent > 6) {
+            const item = lines[index.*];
+            try expectIndent(item, 8);
+            const value = try listScalar(item);
+
+            switch (destination) {
+                .variables => {
+                    if (variable_count >= variable_buf.len) return error.PackCapacityExceeded;
+                    variable_buf[variable_count] = value;
+                    variable_count += 1;
+                },
+                .invariants => {
+                    if (invariant_count >= invariant_buf.len) return error.PackCapacityExceeded;
+                    invariant_buf[invariant_count] = value;
+                    invariant_count += 1;
+                },
+            }
+            index.* += 1;
+        }
     }
+
+    const variables = try arena.alloc([]const u8, variable_count);
+    @memcpy(variables, variable_buf[0..variable_count]);
+    const invariants = try arena.alloc([]const u8, invariant_count);
+    @memcpy(invariants, invariant_buf[0..invariant_count]);
+
+    return .{
+        .variables = variables,
+        .invariants = invariants,
+    };
 }
 
-fn requireFields(map: Map, required: []const []const u8) !void {
-    for (required) |field| {
-        if (map.get(field) == null) return error.MissingSchemaField;
+fn tokenize(source: []const u8) !ParsedLines {
+    var result = ParsedLines{};
+    var it = std.mem.splitScalar(u8, source, '\n');
+    var number: usize = 0;
+
+    while (it.next()) |raw_line| {
+        number += 1;
+
+        if (std.mem.indexOfScalar(u8, raw_line, '\t') != null) return error.TabsNotAllowed;
+
+        const without_cr = std.mem.trimRight(u8, raw_line, "\r ");
+        const trimmed = std.mem.trim(u8, without_cr, " ");
+        if (trimmed.len == 0 or trimmed[0] == '#') continue;
+
+        var indent: usize = 0;
+        while (indent < without_cr.len and without_cr[indent] == ' ') : (indent += 1) {}
+        if ((indent % 2) != 0) return error.InvalidYamlIndentation;
+
+        if (result.count >= result.items.len) return error.PackCapacityExceeded;
+        result.items[result.count] = .{
+            .indent = indent,
+            .text = without_cr[indent..],
+            .number = number,
+        };
+        result.count += 1;
     }
+
+    return result;
 }
 
-fn containsString(values: []const []const u8, needle: []const u8) bool {
-    for (values) |value| {
-        if (std.mem.eql(u8, value, needle)) return true;
+fn scalarField(line: Line, key: []const u8) !?[]const u8 {
+    return scalarTextField(line.text, key);
+}
+
+fn scalarTextField(text: []const u8, key: []const u8) !?[]const u8 {
+    if (text.len <= key.len + 1) return null;
+    if (!std.mem.startsWith(u8, text, key)) return null;
+    if (text[key.len] != ':') return null;
+
+    const value = std.mem.trim(u8, text[key.len + 1 ..], " ");
+    if (value.len == 0) return error.MissingSchemaField;
+    return unquote(value);
+}
+
+fn isHeader(line: Line, key: []const u8) bool {
+    return line.text.len == key.len + 1 and
+        std.mem.startsWith(u8, line.text, key) and
+        line.text[key.len] == ':';
+}
+
+fn startsListItem(text: []const u8) bool {
+    return text.len >= 2 and text[0] == '-' and text[1] == ' ';
+}
+
+fn listScalar(line: Line) ![]const u8 {
+    if (!startsListItem(line.text)) return error.ExpectedYamlListItem;
+    const value = std.mem.trim(u8, line.text[2..], " ");
+    if (value.len == 0) return error.ExpectedYamlListItem;
+    return unquote(value);
+}
+
+fn unquote(value: []const u8) ![]const u8 {
+    if (value.len >= 2 and
+        ((value[0] == '"' and value[value.len - 1] == '"') or
+            (value[0] == '\'' and value[value.len - 1] == '\'')))
+    {
+        return value[1 .. value.len - 1];
+    }
+
+    if (value[0] == '"' or value[0] == '\'' or
+        value[value.len - 1] == '"' or value[value.len - 1] == '\'')
+    {
+        return error.InvalidQuotedScalar;
+    }
+
+    return value;
+}
+
+fn expectIndent(line: Line, expected: usize) !void {
+    if (line.indent != expected) return error.InvalidYamlIndentation;
+}
+
+fn isForbiddenWorkflowKey(text: []const u8) bool {
+    const keys = [_][]const u8{
+        "workflow",
+        "steps",
+        "next",
+        "after",
+        "depends_on_operator",
+    };
+    for (keys) |key| {
+        if (std.mem.startsWith(u8, text, key) and text.len > key.len and text[key.len] == ':') {
+            return true;
+        }
     }
     return false;
-}
-
-fn asMap(value: Value) !Map {
-    return value.asMap() orelse error.ExpectedYamlMapping;
-}
-
-fn asList(value: Value) !Yaml.List {
-    return value.asList() orelse error.ExpectedYamlList;
 }
 
 fn validatePackRelativePath(path: []const u8) !void {
@@ -335,10 +659,10 @@ test "YAML pack documents parse and compile into the SDK contract" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const manifest = try parseManifest(std.testing.allocator, arena, manifest_source);
-    const variables = try parseVariables(std.testing.allocator, arena, variable_source);
-    const invariants = try parseInvariants(std.testing.allocator, arena, invariant_source);
-    const operators = try parseOperators(std.testing.allocator, arena, operator_source);
+    const manifest = try parseManifest(arena, manifest_source);
+    const variables = try parseVariables(arena, variable_source);
+    const invariants = try parseInvariants(arena, invariant_source);
+    const operators = try parseOperators(arena, operator_source);
 
     const compiled = try contract.compile(.{
         .manifest = manifest,
@@ -374,7 +698,7 @@ test "pack schema forbids authored workflow edges" {
 
     try std.testing.expectError(
         error.WorkflowKeyForbidden,
-        parseManifest(std.testing.allocator, arena_state.allocator(), source),
+        parseManifest(arena_state.allocator(), source),
     );
 }
 
@@ -391,7 +715,7 @@ test "pack schema rejects unknown fields and escaping paths" {
 
     try std.testing.expectError(
         error.UnknownSchemaField,
-        parseVariables(std.testing.allocator, arena_state.allocator(), source),
+        parseVariables(arena_state.allocator(), source),
     );
     try std.testing.expectError(error.PackPathEscapesRoot, validatePackRelativePath("../secrets.yaml"));
     try std.testing.expectError(error.PackPathEscapesRoot, validatePackRelativePath("/tmp/variables.yaml"));
