@@ -180,7 +180,7 @@ pub fn artifactRef(media_type: []const u8, bytes: []const u8) core.ArtifactRef {
     return .{
         .id = artifactContentId(media_type, bytes),
         .media_type = media_type,
-        .size_bytes = bytes.len,
+        .size_bytes = @intCast(bytes.len),
     };
 }
 
@@ -232,7 +232,7 @@ fn hashValue(hasher: *std.crypto.hash.Blake3, value: core.Value) void {
 }
 
 fn hashSlice(hasher: *std.crypto.hash.Blake3, bytes: []const u8) void {
-    hashU64(hasher, bytes.len);
+    hashU64(hasher, @intCast(bytes.len));
     hasher.update(bytes);
 }
 
