@@ -570,11 +570,13 @@ pub fn Runner(
             self.run_started_logged = false;
             self.configuration_locked = false;
 
-            for (self.executors[0..self.executor_count]) |*executor| {
-                executor.has_activated = false;
-                executor.activation_epoch = 0;
-                executor.last_input_fingerprint = content_id.zero;
-                executor.last_settled_epoch = 0;
+            if (comptime max_operators != 0) {
+                for (self.executors[0..self.executor_count]) |*executor| {
+                    executor.has_activated = false;
+                    executor.activation_epoch = 0;
+                    executor.last_input_fingerprint = content_id.zero;
+                    executor.last_settled_epoch = 0;
+                }
             }
         }
 
@@ -649,6 +651,7 @@ pub fn Runner(
                 },
                 .claim_accepted => |payload| {
                     if (!self.run_started_logged) return error.MissingRunStarted;
+                    if (comptime max_operators == 0) return error.UnknownOperator;
                     try self.advanceReplayRound(payload.round, true);
                     const open_index = try self.openActivationIndex();
                     const operator_id = self.registry.operators[open_index].manifest.id;
@@ -679,6 +682,7 @@ pub fn Runner(
                 },
                 .invariant_changed => |payload| {
                     if (!self.run_started_logged) return error.MissingRunStarted;
+                    if (comptime max_operators == 0) return error.UnknownOperator;
                     try self.advanceReplayRound(payload.round, true);
                     const open_index = try self.openActivationIndex();
                     const operator_id = self.registry.operators[open_index].manifest.id;
@@ -703,6 +707,7 @@ pub fn Runner(
                 },
                 .operator_completed => |payload| {
                     if (!self.run_started_logged) return error.MissingRunStarted;
+                    if (comptime max_operators == 0) return error.UnknownOperator;
                     try self.advanceReplayRound(payload.round, true);
                     const index = try self.openActivationIndex();
                     const operator_id = self.registry.operators[index].manifest.id;
@@ -716,6 +721,7 @@ pub fn Runner(
                 },
                 .operator_failed => |payload| {
                     if (!self.run_started_logged) return error.MissingRunStarted;
+                    if (comptime max_operators == 0) return error.UnknownOperator;
                     try self.advanceReplayRound(payload.round, true);
                     const index = try self.openActivationIndex();
                     const operator_id = self.registry.operators[index].manifest.id;
@@ -740,6 +746,8 @@ pub fn Runner(
         }
 
         fn openActivationIndex(self: *const Self) !usize {
+            if (comptime max_operators == 0) return error.NoOpenActivation;
+
             var found: ?usize = null;
             for (self.executors[0..self.executor_count], 0..) |executor, i| {
                 if (executor.activation_epoch <= executor.last_settled_epoch) continue;
