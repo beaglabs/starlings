@@ -111,6 +111,8 @@ pub const RunWriter = struct {
     allocator: std.mem.Allocator,
     events_file: std.Io.File,
     run_id: core.ContentId,
+    seed: u64,
+    configuration_digest: core.ContentId,
     next_sequence: u64 = 0,
     next_offset: u64 = 0,
     head: core.ContentId = content_id.zero,
@@ -131,6 +133,23 @@ pub const RunWriter = struct {
         if (self.failed) return error.EventStoreFailed;
         if (record.sequence != self.next_sequence) return error.EventSequenceMismatch;
         if (!content_id.eql(record.previous, self.head)) return error.EventParentMismatch;
+
+        if (self.next_sequence == 0) {
+            switch (record.event) {
+                .run_started => |payload| {
+                    if (payload.seed != self.seed or
+                        !content_id.eql(payload.configuration_digest, self.configuration_digest))
+                    {
+                        self.failed = true;
+                        return error.RunConfigurationChangedAfterSnapshot;
+                    }
+                },
+                else => {
+                    self.failed = true;
+                    return error.MissingRunStarted;
+                },
+            }
+        }
 
         const expected_id = event_log.eventContentId(record.sequence, record.previous, record.event);
         if (!content_id.eql(expected_id, record.id)) return error.EventIdMismatch;
@@ -229,6 +248,8 @@ pub fn createRunWithId(
         .allocator = allocator,
         .events_file = events_file,
         .run_id = run_id,
+        .seed = runner.seed,
+        .configuration_digest = configuration_digest,
     };
 }
 
@@ -1194,6 +1215,38 @@ test "run ids round-trip as lowercase hex" {
     try std.testing.expectEqual(@as(usize, 64), text.len);
     try std.testing.expect(content_id.eql(id, try parseRunId(text)));
     try std.testing.expectError(error.InvalidRunId, parseRunId("short"));
+}
+
+test "durable writer rejects configuration drift after snapshot" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const R = execution.Runner(2, 0, 0, 8);
+    var runner = R.init(7, &.{1});
+    try runner.addVariable(.{ .variable = .{
+        .id = 1,
+        .name = "input",
+        .kind = .integer,
+        .merge_policy = .latest,
+    } });
+
+    var writer = try createRun(io, std.testing.allocator, tmp.dir, &runner);
+    defer writer.deinit();
+
+    try runner.addVariable(.{ .variable = .{
+        .id = 2,
+        .name = "late",
+        .kind = .integer,
+    } });
+    try runner.setEventSink(writer.eventSink());
+
+    try std.testing.expectError(
+        error.RunConfigurationChangedAfterSnapshot,
+        runner.seedVariable(1, .observed, .{ .integer = 9 }, 1000),
+    );
+    try std.testing.expectEqual(core.EpistemicStatus.unknown, runner.state.variables[0].status);
+    try std.testing.expectEqual(@as(u64, 0), writer.next_sequence);
 }
 
 test "durable event log survives close load and replay without operator execution" {
