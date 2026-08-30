@@ -20,3 +20,5 @@ jobs:
         run: zig test src/root.zig
       - name: Package-boundary test
         run: zig build test
+      - name: Python external-operator conformance
+        run: python3 -m unittest discover -s python -p 'test_*.py'
