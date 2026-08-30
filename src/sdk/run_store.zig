@@ -72,6 +72,7 @@ pub const SnapshotOperator = struct {
 };
 
 pub const ReplayConfiguration = struct {
+    run_id: core.ContentId,
     seed: u64,
     configuration_digest: core.ContentId,
     variables: [max_replay_variables]reg.VariableSchema = undefined,
@@ -160,20 +161,6 @@ pub fn LoadedEventLog(comptime capacity: usize) type {
     };
 }
 
-pub fn deriveRunId(seed: u64, configuration_digest: core.ContentId) core.ContentId {
-    var hasher = std.crypto.hash.Blake3.init(.{});
-    hasher.update("starlings-sdk-run-id-v1");
-
-    var seed_bytes: [8]u8 = undefined;
-    encodeU64(seed, &seed_bytes);
-    hasher.update(&seed_bytes);
-    hasher.update(&configuration_digest);
-
-    var digest: core.ContentId = undefined;
-    hasher.final(&digest);
-    return digest;
-}
-
 pub fn formatRunId(id: core.ContentId, out: *[64]u8) []const u8 {
     encodeHex(&id, out);
     return out;
@@ -192,10 +179,23 @@ pub fn createRun(
     root_dir: std.Io.Dir,
     runner: anytype,
 ) !RunWriter {
+    var run_id: core.ContentId = undefined;
+    io.random(&run_id);
+    if (content_id.isZero(run_id)) run_id[31] = 1;
+    return createRunWithId(io, allocator, root_dir, runner, run_id);
+}
+
+pub fn createRunWithId(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    root_dir: std.Io.Dir,
+    runner: anytype,
+    run_id: core.ContentId,
+) !RunWriter {
+    if (content_id.isZero(run_id)) return error.InvalidRunId;
     try validateSnapshotBounds(runner);
 
     const configuration_digest = runner.configurationDigest();
-    const run_id = deriveRunId(runner.seed, configuration_digest);
 
     var run_name_buffer: [64]u8 = undefined;
     const run_name = formatRunId(run_id, &run_name_buffer);
@@ -204,7 +204,7 @@ pub fn createRun(
     var run_dir = try root_dir.openDir(io, run_name, .{});
     defer run_dir.close(io);
 
-    const configuration = try encodeConfiguration(allocator, runner, configuration_digest);
+    const configuration = try encodeConfiguration(allocator, runner, run_id, configuration_digest);
     defer allocator.free(configuration);
 
     var configuration_file = try run_dir.createFile(io, configuration_file_name, .{
@@ -251,6 +251,7 @@ pub fn loadConfiguration(
     if (version != storage_version) return error.UnsupportedStorageVersion;
 
     var result = ReplayConfiguration{
+        .run_id = try decoder.readContentId(),
         .seed = try decoder.readU64(),
         .configuration_digest = try decoder.readContentId(),
     };
@@ -350,8 +351,7 @@ pub fn loadConfiguration(
 
     if (!decoder.done()) return error.InvalidRunConfiguration;
 
-    const expected_run_id = deriveRunId(result.seed, result.configuration_digest);
-    if (!content_id.eql(expected_run_id, run_id)) return error.RunIdMismatch;
+    if (!content_id.eql(result.run_id, run_id)) return error.RunIdMismatch;
     return result;
 }
 
@@ -377,7 +377,8 @@ pub fn loadEventLog(
     };
 
     var start: usize = 0;
-    while (std.mem.indexOfScalarPos(u8, source, start, '\n')) |newline| {
+    while (std.mem.indexOfScalar(u8, source[start..], '\n')) |relative_newline| {
+        const newline = start + relative_newline;
         const line = source[start..newline];
         if (line.len == 0) return error.InvalidEventRecordLine;
 
@@ -447,6 +448,7 @@ fn validateSnapshotBounds(runner: anytype) !void {
 fn encodeConfiguration(
     allocator: std.mem.Allocator,
     runner: anytype,
+    run_id: core.ContentId,
     configuration_digest: core.ContentId,
 ) ![]u8 {
     const size = try configurationEncodedSize(runner);
@@ -458,6 +460,7 @@ fn encodeConfiguration(
     var encoder = Encoder{ .bytes = bytes };
     try encoder.writeBytes(configuration_magic);
     try encoder.writeU8(storage_version);
+    try encoder.writeContentId(run_id);
     try encoder.writeU64(runner.seed);
     try encoder.writeContentId(configuration_digest);
     try encoder.writeCount(runner.registry.variable_count);
@@ -535,7 +538,7 @@ fn encodeConfiguration(
 }
 
 fn configurationEncodedSize(runner: anytype) !usize {
-    var size: usize = configuration_magic.len + 1 + 8 + 32 + 4 * 4;
+    var size: usize = configuration_magic.len + 1 + 32 + 8 + 32 + 4 * 4;
 
     for (runner.registry.variables[0..runner.registry.variable_count]) |schema| {
         try addSize(&size, 4 + 4 + schema.variable.name.len + 1 + 1 + 1 + 1);
@@ -621,7 +624,7 @@ fn decodeRecordLine(allocator: std.mem.Allocator, line: []const u8) !event_log.E
 
     try parser.expect(",\"payload\":\"");
     const payload_hex = try parser.takeUntil('"');
-    try parser.expect("\"}");
+    try parser.expect("}");
     if (!parser.done()) return error.InvalidEventRecordLine;
 
     if ((payload_hex.len & 1) != 0) return error.InvalidEventPayload;
@@ -810,7 +813,8 @@ fn decodeClaim(decoder: *Decoder) !core.Claim {
         .source_operator = try decoder.readU32(),
     };
 
-    const parent_count = try decoder.readU8();
+    const parent_count_raw = try decoder.readU8();
+    const parent_count: usize = @intCast(parent_count_raw);
     if (parent_count > core.max_claim_parents) return error.InvalidEventPayload;
     claim.parent_count = @intCast(parent_count);
 
@@ -862,7 +866,8 @@ fn decodeInvariantClaim(decoder: *Decoder) !core.InvariantClaim {
         .source_operator = try decoder.readU32(),
     };
 
-    const parent_count = try decoder.readU8();
+    const parent_count_raw = try decoder.readU8();
+    const parent_count: usize = @intCast(parent_count_raw);
     if (parent_count > core.max_claim_parents) return error.InvalidEventPayload;
     claim.parent_count = @intCast(parent_count);
 
@@ -969,7 +974,7 @@ const Decoder = struct {
     fn readContentId(self: *Decoder) !core.ContentId {
         const bytes = try self.take(32);
         var id: core.ContentId = undefined;
-        @memcpy(&id, bytes);
+        @memcpy(id[0..], bytes);
         return id;
     }
 
@@ -1011,7 +1016,8 @@ const LineParser = struct {
             value = value * 10 + digit;
         }
         if (self.pos == start) return error.InvalidEventRecordLine;
-        if (value > std.math.maxInt(T)) return error.InvalidEventRecordLine;
+        const max_value: u64 = @intCast(std.math.maxInt(T));
+        if (value > max_value) return error.InvalidEventRecordLine;
         return @intCast(value);
     }
 
@@ -1025,8 +1031,9 @@ const LineParser = struct {
     }
 
     fn takeUntil(self: *LineParser, delimiter: u8) ![]const u8 {
-        const end = std.mem.indexOfScalarPos(u8, self.bytes, self.pos, delimiter) orelse
+        const relative_end = std.mem.indexOfScalar(u8, self.bytes[self.pos..], delimiter) orelse
             return error.InvalidEventRecordLine;
+        const end = self.pos + relative_end;
         const result = self.bytes[self.pos..end];
         self.pos = end + 1;
         return result;
@@ -1149,12 +1156,11 @@ fn encodeU64(value: u64, out: *[8]u8) void {
     }
 }
 
-test "run ids are stable and round-trip as lowercase hex" {
-    var digest = content_id.zero;
-    digest[0] = 0xab;
-    digest[31] = 0x7f;
+test "run ids round-trip as lowercase hex" {
+    var id = content_id.zero;
+    id[0] = 0xab;
+    id[31] = 0x7f;
 
-    const id = deriveRunId(42, digest);
     var text_buffer: [64]u8 = undefined;
     const text = formatRunId(id, &text_buffer);
 
@@ -1250,7 +1256,7 @@ test "durable event log survives close load and replay without operator executio
     _ = try live.seedVariable(1, .observed, .{ .integer = 20 }, 1000);
     const live_result = try live.runUntilQuiescent(8);
     try std.testing.expectEqual(core.ResultOutcome.success, live_result.summary.outcome);
-    try std.testing.expectEqual(live.eventRecords().len, writer.next_sequence);
+    try std.testing.expectEqual(@as(u64, @intCast(live.eventRecords().len)), writer.next_sequence);
     writer.deinit();
 
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
