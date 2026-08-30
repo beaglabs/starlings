@@ -145,53 +145,6 @@ and identified by `BLAKE3(canonical_event_encoding)`.
 
 The current implementation enforces deduplication, parent closure, reconstructable ancestry, explicit fork/merge history, and exact replica divergence accounting.
 
-See:
-
-- [`docs/adr/0001-content-addressed-provenance.md`](docs/adr/0001-content-addressed-provenance.md)
-- [`docs/adr/0002-operator-neutral-coordination-core.md`](docs/adr/0002-operator-neutral-coordination-core.md)
-
-## Research status
-
-| Area | Status |
-| --- | --- |
-| Deterministic coordination runtime | Validated |
-| Typed protocol grammar | Validated |
-| Content-addressed provenance | Validated |
-| Formal population substrate | Validated |
-| Scaling and predictive coordination laws | Validated empirically |
-| Fault / perturbation behavior | Validated empirically |
-| Parameterized coordination policy | Validated |
-| Local inference control | Validated empirically |
-| Heterogeneous operator experiments | Validated empirically |
-| Application-level workflow emergence | Validated in `starling-experiments` |
-| Explicit formal model | **v0.1 defined** |
-| Byzantine / rogue-operator robustness | Planned |
-
-## Empirical evidence
-
-The historical Stage 0–7C evidence is documented under [`docs/`](docs/).
-
-The executable modern experiment suite is maintained separately in [`beaglabs/starling-experiments`](https://github.com/beaglabs/starling-experiments).
-
-That repository contains deterministic contested fault matrices, asynchronous scaling, local inference-control experiments, heterogeneous operator trials, emergent specialist workflow formation, and state-dependent GEOINT operator activation.
-
-This separation is deliberate:
-
-```text
-beaglabs/starlings
-  protocol
-  semantics
-  formal model
-  architectural decisions
-  canonical theory
-
-beaglabs/starling-experiments
-  stress tests
-  application witnesses
-  generated datasets
-  empirical falsification
-```
-
 ## Existing empirical laws
 
 The current evidence supports several compact relationships with explicitly limited claim scope.
