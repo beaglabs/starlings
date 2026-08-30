@@ -100,7 +100,7 @@ pub const Supervisor = struct {
         const deadline = Io.Clock.Timestamp.fromNow(
             self.io,
             timeout_duration,
-        ) catch return error.ExternalTimeoutUnavailable;
+        );
 
         while (true) {
             if (stdout_reader.buffered().len > self.max_stdout_bytes) {
