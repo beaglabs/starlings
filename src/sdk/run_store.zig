@@ -783,10 +783,10 @@ fn encodeClaim(encoder: *Encoder, claim: core.Claim) !void {
     try encoder.writeU8(@intFromEnum(claim.status));
     try encoder.writeU16(claim.confidence_permille);
     try encoder.writeU32(claim.source_operator);
-    try encoder.writeU8(claim.parent_count);
+    try encoder.writeU8(@intCast(claim.parent_count));
 
     var i: usize = 0;
-    while (i < claim.parent_count) : (i += 1) {
+    while (i < @as(usize, claim.parent_count)) : (i += 1) {
         try encoder.writeContentId(claim.parents[i]);
     }
 
@@ -851,10 +851,10 @@ fn encodeInvariantClaim(encoder: *Encoder, claim: core.InvariantClaim) !void {
     try encoder.writeU32(claim.invariant);
     try encoder.writeU8(@intFromEnum(claim.status));
     try encoder.writeU32(claim.source_operator);
-    try encoder.writeU8(claim.parent_count);
+    try encoder.writeU8(@intCast(claim.parent_count));
 
     var i: usize = 0;
-    while (i < claim.parent_count) : (i += 1) {
+    while (i < @as(usize, claim.parent_count)) : (i += 1) {
         try encoder.writeContentId(claim.parents[i]);
     }
 }
