@@ -1625,3 +1625,38 @@ test "replay rejects a different run seed before applying state" {
     try std.testing.expectError(error.ReplaySeedMismatch, replayed.replayFrom(&live.events));
     try std.testing.expectEqual(core.EpistemicStatus.unknown, replayed.state.variables[0].status);
 }
+
+
+test "event sink failure latches the runner closed" {
+    const R = Runner(1, 0, 0, 8);
+    var runner = R.init(9, &.{1});
+    try runner.addVariable(.{ .variable = .{
+        .id = 1,
+        .name = "input",
+        .kind = .integer,
+        .merge_policy = .latest,
+    } });
+
+    const Sink = struct {
+        fn append(_: ?*anyopaque, _: event_log.EventRecord) anyerror!void {
+            return error.SimulatedDurabilityFailure;
+        }
+    };
+
+    try runner.setEventSink(.{
+        .context = null,
+        .append_fn = Sink.append,
+    });
+
+    try std.testing.expectError(
+        error.SimulatedDurabilityFailure,
+        runner.seedVariable(1, .observed, .{ .integer = 7 }, 1000),
+    );
+    try std.testing.expectEqual(@as(usize, 1), runner.eventRecords().len);
+
+    try std.testing.expectError(
+        error.EventSinkFailed,
+        runner.seedVariable(1, .observed, .{ .integer = 8 }, 1000),
+    );
+    try std.testing.expectEqual(@as(usize, 1), runner.eventRecords().len);
+}
