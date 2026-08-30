@@ -473,41 +473,45 @@ pub fn Runner(
             }
 
             hashU64(&hasher, @intCast(self.registry.invariant_count));
-            i = 0;
-            while (i < self.registry.invariant_count) : (i += 1) {
-                const invariant = self.registry.invariants[i];
-                hashU32(&hasher, invariant.id);
-                hashSlice(&hasher, invariant.name);
-                hashU64(&hasher, @intCast(invariant.requires.len));
-                for (invariant.requires) |id| hashU32(&hasher, id);
+            if (comptime max_invariants > 0) {
+                i = 0;
+                while (i < self.registry.invariant_count) : (i += 1) {
+                    const invariant = self.registry.invariants[i];
+                    hashU32(&hasher, invariant.id);
+                    hashSlice(&hasher, invariant.name);
+                    hashU64(&hasher, @intCast(invariant.requires.len));
+                    for (invariant.requires) |id| hashU32(&hasher, id);
+                }
             }
 
             hashU64(&hasher, @intCast(self.registry.operator_count));
-            i = 0;
-            while (i < self.registry.operator_count) : (i += 1) {
-                const op = self.registry.operators[i];
-                hashU32(&hasher, op.manifest.id);
-                hashSlice(&hasher, op.manifest.name);
-                hashIdSlice(&hasher, op.manifest.requires_variables);
-                hashIdSlice(&hasher, op.manifest.requires_invariants);
-                hashIdSlice(&hasher, op.manifest.provides_variables);
-                hashIdSlice(&hasher, op.manifest.provides_invariants);
-                hasher.update(&.{@intFromEnum(op.eligibility.mode)});
-                hashU64(&hasher, @intCast(op.eligibility.terms.len));
-                for (op.eligibility.terms) |term| {
-                    switch (term) {
-                        .variable_known => |id| {
-                            hasher.update(&.{1});
-                            hashU32(&hasher, id);
-                        },
-                        .variable_resolved => |id| {
-                            hasher.update(&.{2});
-                            hashU32(&hasher, id);
-                        },
-                        .invariant_satisfied => |id| {
-                            hasher.update(&.{3});
-                            hashU32(&hasher, id);
-                        },
+            if (comptime max_operators > 0) {
+                i = 0;
+                while (i < self.registry.operator_count) : (i += 1) {
+                    const op = self.registry.operators[i];
+                    hashU32(&hasher, op.manifest.id);
+                    hashSlice(&hasher, op.manifest.name);
+                    hashIdSlice(&hasher, op.manifest.requires_variables);
+                    hashIdSlice(&hasher, op.manifest.requires_invariants);
+                    hashIdSlice(&hasher, op.manifest.provides_variables);
+                    hashIdSlice(&hasher, op.manifest.provides_invariants);
+                    hasher.update(&.{@intFromEnum(op.eligibility.mode)});
+                    hashU64(&hasher, @intCast(op.eligibility.terms.len));
+                    for (op.eligibility.terms) |term| {
+                        switch (term) {
+                            .variable_known => |id| {
+                                hasher.update(&.{1});
+                                hashU32(&hasher, id);
+                            },
+                            .variable_resolved => |id| {
+                                hasher.update(&.{2});
+                                hashU32(&hasher, id);
+                            },
+                            .invariant_satisfied => |id| {
+                                hasher.update(&.{3});
+                                hashU32(&hasher, id);
+                            },
+                        }
                     }
                 }
             }
@@ -574,12 +578,14 @@ pub fn Runner(
             self.run_started_logged = false;
             self.configuration_locked = false;
 
-            var i: usize = 0;
-            while (i < self.executor_count) : (i += 1) {
-                self.executors[i].has_activated = false;
-                self.executors[i].activation_epoch = 0;
-                self.executors[i].last_input_fingerprint = content_id.zero;
-                self.executors[i].last_settled_epoch = 0;
+            if (comptime max_operators > 0) {
+                var i: usize = 0;
+                while (i < self.executor_count) : (i += 1) {
+                    self.executors[i].has_activated = false;
+                    self.executors[i].activation_epoch = 0;
+                    self.executors[i].last_input_fingerprint = content_id.zero;
+                    self.executors[i].last_settled_epoch = 0;
+                }
             }
         }
 
@@ -744,6 +750,8 @@ pub fn Runner(
         }
 
         fn openActivationIndex(self: *const Self) !usize {
+            if (comptime max_operators == 0) return error.NoOpenActivation;
+
             var found: ?usize = null;
             var i: usize = 0;
             while (i < self.executor_count) : (i += 1) {
