@@ -20,6 +20,11 @@ pub const max_replay_operators: usize = 128;
 pub const max_replay_dependencies: usize = 64;
 pub const max_replay_targets: usize = 64;
 pub const max_replay_claims: usize = 512;
+pub const max_replay_event_records: usize =
+    64 +
+    max_replay_claims * 8 +
+    max_replay_operators * 16 +
+    max_replay_invariants * 8;
 
 const configuration_magic = "STCFG001";
 
@@ -227,6 +232,8 @@ pub fn createRunWithId(
     };
 }
 
+/// The allocator must outlive the returned configuration because decoded names
+/// and units are slices into the loaded snapshot buffer.
 pub fn loadConfiguration(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -355,6 +362,8 @@ pub fn loadConfiguration(
     return result;
 }
 
+/// The allocator must outlive the returned log because decoded text claim
+/// values may reference payload buffers allocated while reading the event file.
 pub fn loadEventLog(
     comptime capacity: usize,
     io: std.Io,
@@ -419,7 +428,9 @@ fn openRunDir(io: std.Io, root_dir: std.Io.Dir, run_id: core.ContentId) !std.Io.
 }
 
 fn validateSnapshotBounds(runner: anytype) !void {
-    if (runner.registry.variable_count > max_replay_variables or
+    if (runner.claims.records.len > max_replay_claims or
+        runner.events.records.len > max_replay_event_records or
+        runner.registry.variable_count > max_replay_variables or
         runner.registry.invariant_count > max_replay_invariants or
         runner.registry.operator_count > max_replay_operators or
         runner.targets.len > max_replay_targets)
@@ -1154,6 +1165,22 @@ fn encodeU64(value: u64, out: *[8]u8) void {
         const shift: u6 = @intCast(i * 8);
         out[i] = @truncate(value >> shift);
     }
+}
+
+test "durable store rejects runners outside replay capacity" {
+    const TooManyClaims = execution.Runner(1, 0, 0, max_replay_claims + 1);
+    var claims_runner = TooManyClaims.init(0, &.{});
+    try std.testing.expectError(
+        error.ReplayConfigurationCapacityExceeded,
+        validateSnapshotBounds(&claims_runner),
+    );
+
+    const TooManyEventSlots = execution.Runner(1, 0, max_replay_operators + 1, 1);
+    var event_runner = TooManyEventSlots.init(0, &.{});
+    try std.testing.expectError(
+        error.ReplayConfigurationCapacityExceeded,
+        validateSnapshotBounds(&event_runner),
+    );
 }
 
 test "run ids round-trip as lowercase hex" {
