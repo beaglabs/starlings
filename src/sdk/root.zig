@@ -7,6 +7,7 @@ pub const event_log = @import("event_log.zig");
 pub const run_store = @import("run_store.zig");
 pub const execution = @import("execution.zig");
 pub const external = @import("external.zig");
+pub const process_supervisor = @import("process_supervisor.zig");
 pub const conformance = @import("conformance.zig");
 
 test {
@@ -19,5 +20,6 @@ test {
     _ = run_store;
     _ = execution;
     _ = external;
+    _ = process_supervisor;
     _ = conformance;
 }

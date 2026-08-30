@@ -5,6 +5,7 @@ const eligibility = @import("eligibility.zig");
 const output_state = @import("output_state.zig");
 const execution = @import("execution.zig");
 const external = @import("external.zig");
+const process_supervisor = @import("process_supervisor.zig");
 const content_id = @import("../core/content_id.zig");
 
 test "generated acyclic dependency graphs reach closure independent of registration order" {
@@ -439,4 +440,81 @@ test "native and external adapters produce identical canonical claim identities"
         output_state.claimContentId(native),
         output_state.claimContentId(external_claim),
     ));
+}
+
+
+test "runner executes a real supervised subprocess operator" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+
+    const R = execution.Runner(2, 0, 1, 16);
+    const Buffered = external.BufferedExternalOperator(1024, 1024);
+
+    var supervisor = process_supervisor.Supervisor{
+        .io = std.testing.io,
+        .allocator = std.testing.allocator,
+    };
+    defer supervisor.deinit();
+
+    const Context = struct {
+        buffered: Buffered,
+
+        fn execute(
+            raw_context: ?*const anyopaque,
+            obs: R.Observation,
+        ) !core.OperatorOutput {
+            const opaque_context = raw_context orelse return error.MissingExternalOperatorContext;
+            const self: *@This() = @constCast(@ptrCast(@alignCast(opaque_context)));
+            const observations = [_]external.WireObservation{
+                .{
+                    .variable = 1,
+                    .status = obs.status(1).?,
+                    .value = obs.value(1),
+                },
+            };
+            return self.buffered.invoke(obs.round(), &observations);
+        }
+    };
+
+    var context = Context{
+        .buffered = .{
+            .operator_id = 20,
+            .external = .{
+                .invocation = .{ .subprocess = .{
+                    .argv = &.{
+                        "/bin/sh",
+                        "-c",
+                        "cat >/dev/null; printf '%s\\n' 'STARLINGS/1 RESPONSE' 'operator=20' 'claim=2,3,1000,20,i:42' 'action=publish-result,1,case-7' 'END'",
+                    },
+                    .timeout_ms = 1000,
+                } },
+                .transport = supervisor.transport(),
+            },
+        },
+    };
+
+    var runner = R.init(91, &.{2});
+    try runner.addVariable(.{ .variable = .{
+        .id = 1,
+        .name = "input",
+        .kind = .integer,
+    } });
+    try runner.addVariable(.{ .variable = .{
+        .id = 2,
+        .name = "external-result",
+        .kind = .integer,
+    } });
+    try runner.addOperator(.{ .manifest = .{
+        .id = 20,
+        .name = "supervised-subprocess",
+        .requires_variables = &.{1},
+        .provides_variables = &.{2},
+    } }, &context, Context.execute);
+
+    _ = try runner.seedVariable(1, .observed, .{ .integer = 7 }, 1000);
+    const result = try runner.runUntilQuiescent(4);
+
+    try std.testing.expectEqual(core.ResultOutcome.success, result.summary.outcome);
+    try std.testing.expect(core.Value.eql(result.value(2).?, .{ .integer = 42 }));
+    try std.testing.expectEqual(@as(usize, 1), runner.actionProposalCount());
+    try std.testing.expectEqual(@as(usize, 1), runner.pendingApprovalCount());
 }

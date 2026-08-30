@@ -88,6 +88,34 @@ pub const ExternalOperator = struct {
     }
 };
 
+pub fn BufferedExternalOperator(
+    comptime request_capacity: usize,
+    comptime response_capacity: usize,
+) type {
+    return struct {
+        const Self = @This();
+
+        operator_id: core.OperatorId,
+        external: ExternalOperator,
+        request_storage: [request_capacity]u8 = undefined,
+        response_storage: [response_capacity]u8 = undefined,
+
+        pub fn invoke(
+            self: *Self,
+            round: u32,
+            observations: []const WireObservation,
+        ) !core.OperatorOutput {
+            const request = try buildRequest(
+                self.operator_id,
+                round,
+                observations,
+                &self.request_storage,
+            );
+            return self.external.invoke(request, &self.response_storage);
+        }
+    };
+}
+
 const Buffer = struct {
     bytes: []u8,
     len: usize = 0,
@@ -402,4 +430,40 @@ test "external operator boundary is transport injectable" {
     var response_buffer: [256]u8 = undefined;
     const output = try adapter.invoke(request, &response_buffer);
     try std.testing.expectEqual(@as(usize, 1), output.variable_claim_count);
+}
+
+
+test "buffered external operator owns wire string lifetime across return" {
+    const Fixture = struct {
+        fn invoke(
+            _: ?*anyopaque,
+            _: Invocation,
+            _: []const u8,
+            response_buffer: []u8,
+        ) ![]const u8 {
+            const response =
+                "STARLINGS/1 RESPONSE\n" ++
+                "operator=7\n" ++
+                "claim=2,3,1000,7,t:owned-text\n" ++
+                "action=request_review,1,case-7\n" ++
+                "END\n";
+            if (response.len > response_buffer.len) return error.WireBufferTooSmall;
+            @memcpy(response_buffer[0..response.len], response);
+            return response_buffer[0..response.len];
+        }
+    };
+
+    const Buffered = BufferedExternalOperator(256, 512);
+    var operator = Buffered{
+        .operator_id = 7,
+        .external = .{
+            .invocation = .{ .subprocess = .{ .argv = &.{"fixture"} } },
+            .transport = .{ .invoke_fn = Fixture.invoke },
+        },
+    };
+
+    const output = try operator.invoke(1, &.{});
+    try std.testing.expectEqualStrings("owned-text", output.variable_claims[0].value.?.text);
+    try std.testing.expectEqualStrings("request_review", output.actions[0].name);
+    try std.testing.expectEqualStrings("case-7", output.actions[0].payload);
 }
