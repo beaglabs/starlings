@@ -613,6 +613,7 @@ pub fn Runner(
                 },
                 .operator_started => |payload| {
                     if (!self.run_started_logged) return error.MissingRunStarted;
+                    if (comptime max_operators == 0) return error.UnknownOperator;
                     try self.requireNoOpenActivation();
 
                     const index = self.registry.operatorIndex(payload.operator) orelse
@@ -758,12 +759,14 @@ pub fn Runner(
         }
 
         pub fn operatorActivationEpoch(self: *const Self, id: core.OperatorId) ?u64 {
+            if (comptime max_operators == 0) return null;
             const index = self.registry.operatorIndex(id) orelse return null;
             if (index >= self.executor_count) return null;
             return self.executors[index].activation_epoch;
         }
 
         fn activationNeeded(self: *const Self, operator_index: usize) bool {
+            if (comptime max_operators == 0) return false;
             if (!self.executors[operator_index].has_activated) return true;
             const current = self.activationFingerprint(operator_index);
             return !std.mem.eql(
@@ -774,6 +777,8 @@ pub fn Runner(
         }
 
         fn activationFingerprint(self: *const Self, operator_index: usize) core.ContentId {
+            if (comptime max_operators == 0) return content_id.zero;
+
             var hasher = std.crypto.hash.Blake3.init(.{});
             hasher.update("starlings-sdk-activation-input-v1");
 
@@ -841,6 +846,8 @@ pub fn Runner(
         }
 
         fn nextPendingOperatorId(self: *const Self) ?core.OperatorId {
+            if (comptime max_operators == 0) return null;
+
             var eligible_ids: [max_operators]core.OperatorId = undefined;
             var candidate_count: usize = 0;
 
