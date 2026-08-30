@@ -274,3 +274,29 @@ test "artifact verifier rejects a mismatched reference" {
         store.verifier().verify(artifact),
     );
 }
+
+
+test "artifact store rejects corrupted persisted bytes" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var store = try Store.create(io, std.testing.allocator, tmp.dir);
+    defer store.deinit();
+
+    const artifact = try store.put("text/plain", "hello");
+
+    var name_buffer: [64 + artifact_file_suffix.len]u8 = undefined;
+    const name = formatArtifactName(artifact.id, &name_buffer);
+    var file = try store.dir.openFile(io, name, .{ .mode = .read_write });
+    defer file.close(io);
+
+    const payload_offset: u64 = 21 + "text/plain".len;
+    try file.writePositionalAll(io, "H", payload_offset);
+    try file.sync(io);
+
+    try std.testing.expectError(
+        error.ArtifactIdMismatch,
+        store.load(artifact.id),
+    );
+}
