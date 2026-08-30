@@ -1344,6 +1344,10 @@ test "durable event log survives close load and replay without operator executio
 
     const R = execution.Runner(3, 1, 2, 32);
 
+    const ArtifactContext = struct {
+        writer: ?*RunWriter = null,
+    };
+
     const Ops = struct {
         fn normalize(_: ?*const anyopaque, obs: R.Observation) !core.OperatorOutput {
             var out = core.OperatorOutput{};
@@ -1361,7 +1365,11 @@ test "durable event log survives close load and replay without operator executio
             return out;
         }
 
-        fn solve(_: ?*const anyopaque, obs: R.Observation) !core.OperatorOutput {
+        fn solve(raw_context: ?*const anyopaque, obs: R.Observation) !core.OperatorOutput {
+            const opaque_context = raw_context orelse return error.MissingArtifactContext;
+            const context: *ArtifactContext = @constCast(@ptrCast(@alignCast(opaque_context)));
+            const writer = context.writer orelse return error.MissingArtifactWriter;
+
             var out = core.OperatorOutput{};
             try out.addClaim(.{
                 .variable = 3,
@@ -1369,7 +1377,7 @@ test "durable event log survives close load and replay without operator executio
                 .value = .{ .integer = obs.value(2).?.integer * 2 },
                 .source_operator = 11,
             });
-            try out.addArtifact(output_state.artifactRef(
+            try out.addArtifact(try writer.putArtifact(
                 "application/json",
                 "{\"answer\":42}",
             ));
@@ -1381,7 +1389,7 @@ test "durable event log survives close load and replay without operator executio
             return out;
         }
 
-        fn setup(runner: *R) !void {
+        fn setup(runner: *R, artifact_context: *ArtifactContext) !void {
             try runner.addVariable(.{ .variable = .{
                 .id = 1,
                 .name = "input",
@@ -1418,15 +1426,18 @@ test "durable event log survives close load and replay without operator executio
                 .requires_variables = &.{2},
                 .requires_invariants = &.{4},
                 .provides_variables = &.{3},
-            } }, null, solve);
+            } }, artifact_context, solve);
         }
     };
 
+    var artifact_context = ArtifactContext{};
     var live = R.init(73, &.{3});
-    try Ops.setup(&live);
+    try Ops.setup(&live, &artifact_context);
 
     var writer = try createRun(io, std.testing.allocator, tmp.dir, &live);
     const run_id = writer.run_id;
+    artifact_context.writer = &writer;
+    try live.setArtifactVerifier(writer.artifactVerifier());
     try live.setEventSink(writer.eventSink());
 
     _ = try live.seedVariable(1, .observed, .{ .integer = 20 }, 1000);
@@ -1436,12 +1447,15 @@ test "durable event log survives close load and replay without operator executio
     try std.testing.expectEqual(@as(usize, 1), live.pendingApprovalCount());
 
     var action_id: ?core.ContentId = null;
+    var artifact_id: ?core.ContentId = null;
     for (live.eventRecords()) |record| {
         switch (record.event) {
+            .artifact_emitted => |payload| artifact_id = payload.artifact_id,
             .action_proposed => |payload| action_id = payload.action_id,
             else => {},
         }
     }
+    const durable_artifact_id = artifact_id orelse return error.TestExpectedArtifactEmission;
     const approval_id = action_id orelse return error.TestExpectedActionProposal;
     try live.approveAction(approval_id);
     try std.testing.expect(live.actionStatus(approval_id).? == .approved);
@@ -1460,6 +1474,13 @@ test "durable event log survives close load and replay without operator executio
     const loaded = try loadEventLog(R.max_event_records, io, arena, tmp.dir, run_id);
     try std.testing.expectEqual(@as(usize, 0), loaded.ignored_trailing_bytes);
     try std.testing.expectEqual(live.eventRecords().len, loaded.log.slice().len);
+
+    var artifact_reader = try openArtifactStore(io, arena, tmp.dir, run_id);
+    defer artifact_reader.deinit();
+    var durable_artifact = try artifact_reader.load(durable_artifact_id);
+    defer durable_artifact.deinit();
+    try std.testing.expectEqualStrings("application/json", durable_artifact.ref.media_type);
+    try std.testing.expectEqualStrings("{\"answer\":42}", durable_artifact.bytes);
 
     var replayed = R.init(configuration.seed, configuration.targetSlice());
     try configuration.configure(&replayed);
