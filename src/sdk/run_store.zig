@@ -725,6 +725,25 @@ fn encodeEventPayload(allocator: std.mem.Allocator, event: event_log.RunEvent) !
             try encoder.writeU8(@intFromEnum(payload.kind));
             try encoder.writeU16(payload.rejected_claims);
         },
+        .artifact_emitted => |payload| {
+            try encoder.writeU32(payload.round);
+            try encoder.writeU32(payload.operator);
+            try encoder.writeU64(payload.activation_epoch);
+            try encoder.writeContentId(payload.artifact_id);
+            try encoder.writeU64(payload.size_bytes);
+        },
+        .action_proposed => |payload| {
+            try encoder.writeU32(payload.round);
+            try encoder.writeU32(payload.operator);
+            try encoder.writeU64(payload.activation_epoch);
+            try encoder.writeContentId(payload.action_id);
+            try encoder.writeU8(if (payload.requires_approval) 1 else 0);
+        },
+        .action_decided => |payload| {
+            try encoder.writeU32(payload.round);
+            try encoder.writeContentId(payload.action_id);
+            try encoder.writeU8(@intFromEnum(payload.decision));
+        },
     }
 
     if (encoder.pos != bytes.len) return error.EventPayloadEncodingMismatch;
@@ -773,6 +792,33 @@ fn decodeEventPayload(kind: event_log.EventKind, bytes: []const u8) !event_log.R
             .kind = try decodeFailureKind(try decoder.readU8()),
             .rejected_claims = try decoder.readU16(),
         } },
+        .artifact_emitted => .{ .artifact_emitted = .{
+            .round = try decoder.readU32(),
+            .operator = try decoder.readU32(),
+            .activation_epoch = try decoder.readU64(),
+            .artifact_id = try decoder.readContentId(),
+            .size_bytes = try decoder.readU64(),
+        } },
+        .action_proposed => .{ .action_proposed = .{
+            .round = try decoder.readU32(),
+            .operator = try decoder.readU32(),
+            .activation_epoch = try decoder.readU64(),
+            .action_id = try decoder.readContentId(),
+            .requires_approval = switch (try decoder.readU8()) {
+                0 => false,
+                1 => true,
+                else => return error.InvalidEventPayload,
+            },
+        } },
+        .action_decided => .{ .action_decided = .{
+            .round = try decoder.readU32(),
+            .action_id = try decoder.readContentId(),
+            .decision = switch (try decoder.readU8()) {
+                0 => .approved,
+                1 => .rejected,
+                else => return error.InvalidEventPayload,
+            },
+        } },
     };
 
     if (!decoder.done()) return error.InvalidEventPayload;
@@ -788,6 +834,9 @@ fn eventPayloadSize(event: event_log.RunEvent) !usize {
         .invariant_changed => |payload| 4 + invariantClaimEncodedSize(payload.claim),
         .operator_completed => 4 + 4 + 8 + 2 + 2 + 2,
         .operator_failed => 4 + 4 + 8 + 1 + 2,
+        .artifact_emitted => 4 + 4 + 8 + 32 + 8,
+        .action_proposed => 4 + 4 + 8 + 32 + 1,
+        .action_decided => 4 + 32 + 1,
     };
 }
 
@@ -1083,6 +1132,9 @@ fn decodeEventKind(value: u8) !event_log.EventKind {
         5 => .invariant_changed,
         6 => .operator_completed,
         7 => .operator_failed,
+        8 => .artifact_emitted,
+        9 => .action_proposed,
+        10 => .action_decided,
         else => error.InvalidEventKind,
     };
 }
@@ -1091,6 +1143,8 @@ fn decodeFailureKind(value: u8) !event_log.FailureKind {
     return switch (value) {
         0 => .execution,
         1 => .validation,
+        2 => .timeout,
+        3 => .crash,
         else => error.InvalidEventPayload,
     };
 }
