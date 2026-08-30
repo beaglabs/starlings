@@ -82,7 +82,7 @@ pub const Bindings = struct {
 
 pub const Observation = struct {
     name: []const u8,
-    status: core.EpistemicStatus,
+    status: core.EpistemicStatus = .observed,
     value: ?core.Value = null,
     confidence_permille: u16 = 1000,
 };
@@ -532,7 +532,8 @@ fn joinPackPath(
     const separator_needed = pack_dir.len != 0 and
         pack_dir[pack_dir.len - 1] != '/' and
         pack_dir[pack_dir.len - 1] != '\\';
-    const prefix_len = pack_dir.len + @as(usize, if (separator_needed) 1 else 0);
+    const extra: usize = if (separator_needed) 1 else 0;
+    const prefix_len = pack_dir.len + extra;
     const out = try arena.alloc(u8, prefix_len + relative.len);
 
     if (pack_dir.len != 0) @memcpy(out[0..pack_dir.len], pack_dir);
@@ -619,6 +620,17 @@ test "one model provider backs multiple logical model operators" {
             const opaque = raw orelse return error.MissingModelState;
             const self: *@This() = @ptrCast(@alignCast(opaque));
             self.calls += 1;
+
+            if (request.observations.len != 1) return error.UnboundedModelObservation;
+            if (request.invariants.len != 0) return error.UnboundedModelInvariant;
+            if (request.provides_variables.len != 1) return error.InvalidModelProvides;
+
+            const observed = request.observations[0];
+            if (observed.status != .observed) return error.InvalidModelObservation;
+            const observed_value = observed.value orelse return error.InvalidModelObservation;
+            if (!std.mem.eql(u8, observed_value.text, "paper")) {
+                return error.InvalidModelObservation;
+            }
 
             const output_id = request.provides_variables[0];
             const text = if (std.mem.eql(u8, request.profile orelse "", "skeptic"))
