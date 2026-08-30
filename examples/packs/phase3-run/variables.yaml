@@ -1,0 +1,12 @@
+variables:
+  - name: input.value
+    type: integer
+    merge: latest
+
+  - name: python.value
+    type: integer
+    merge: latest
+
+  - name: final.ok
+    type: boolean
+    merge: latest
