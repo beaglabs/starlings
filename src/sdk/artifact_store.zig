@@ -30,8 +30,6 @@ pub const LoadedArtifact = struct {
 
     pub fn deinit(self: *LoadedArtifact) void {
         self.allocator.free(self.storage);
-        self.storage = &.{};
-        self.bytes = &.{};
     }
 };
 
@@ -150,7 +148,7 @@ pub const Store = struct {
         if (media_type_len == 0 or media_type_len > max_media_type_bytes) {
             return error.InvalidArtifactMediaType;
         }
-        if (size_bytes_u64 > max_artifact_bytes) return error.ArtifactTooLarge;
+        if (size_bytes_u64 > @as(u64, max_artifact_bytes)) return error.ArtifactTooLarge;
         const size_bytes: usize = @intCast(size_bytes_u64);
 
         const payload_start = 21 + media_type_len;
