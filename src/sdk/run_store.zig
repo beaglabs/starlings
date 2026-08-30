@@ -172,8 +172,8 @@ pub const RunWriter = struct {
     }
 
     fn appendFromSink(context: ?*anyopaque, record: event_log.EventRecord) anyerror!void {
-        const opaque = context orelse return error.MissingEventStoreContext;
-        const self: *RunWriter = @ptrCast(@alignCast(opaque));
+        const raw_context = context orelse return error.MissingEventStoreContext;
+        const self: *RunWriter = @ptrCast(@alignCast(raw_context));
         try self.appendRecord(record);
     }
 };
