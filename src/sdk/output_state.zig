@@ -101,12 +101,12 @@ pub fn MaterializedState(comptime max_variables: usize) type {
                 },
             }
 
-            const cell = self.cells[index];
+            const resolved_cell = self.cells[index];
             try context_state.setVariable(
                 registry,
                 claim.variable,
-                cell.status,
-                cell.value,
+                resolved_cell.status,
+                resolved_cell.value,
                 round,
             );
         }
