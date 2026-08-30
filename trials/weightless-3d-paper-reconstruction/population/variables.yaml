@@ -1,0 +1,52 @@
+variables:
+  - name: image.diameter
+    type: float
+    merge: latest
+
+  - name: image.depth_hint
+    type: float
+    merge: latest
+
+  - name: image.symmetry
+    type: boolean
+    merge: latest
+
+  - name: shape.extrusion
+    type: artifact_ref
+    merge: latest
+
+  - name: shape.revolution
+    type: artifact_ref
+    merge: latest
+
+  - name: shape.extrusion.score
+    type: float
+    merge: latest
+
+  - name: shape.revolution.score
+    type: float
+    merge: latest
+
+  - name: shape.selected
+    type: artifact_ref
+    merge: highest_confidence
+
+  - name: skeleton.tree
+    type: text
+    merge: latest
+
+  - name: skeleton.valid
+    type: boolean
+    merge: latest
+
+  - name: skin.normalization_error
+    type: float
+    merge: latest
+
+  - name: skin.valid
+    type: boolean
+    merge: latest
+
+  - name: asset.valid
+    type: boolean
+    merge: latest
