@@ -73,7 +73,7 @@ def decode_request(text: str) -> Dict[str, Any]:
     if not lines or lines[0] != "STARLINGS/1 REQUEST":
         raise ValueError("invalid Starlings wire header")
 
-    ctx: Dict[str, Any] = {"variables": {}}
+    ctx: Dict[str, Any] = {"variables": {}, "invariants": {}}
     for line in lines[1:]:
         if line == "END":
             break
@@ -87,6 +87,9 @@ def decode_request(text: str) -> Dict[str, Any]:
                 "status": int(status),
                 "value": _decode_value(value),
             }
+        elif line.startswith("inv="):
+            invariant, status = line[4:].split(",", 1)
+            ctx["invariants"][int(invariant)] = int(status)
         else:
             raise ValueError(f"unknown Starlings wire record: {line}")
     return ctx
