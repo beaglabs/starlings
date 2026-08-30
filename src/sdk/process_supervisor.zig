@@ -93,9 +93,14 @@ pub const Supervisor = struct {
         const stdout_reader = multi_reader.reader(0);
         const stderr_reader = multi_reader.reader(1);
 
-        var timer = std.time.Timer.start() catch return error.ExternalTimeoutUnavailable;
-        const timeout_ns: u64 =
-            @as(u64, invocation.timeoutMs()) * std.time.ns_per_ms;
+        const timeout_duration: Io.Clock.Duration = .{
+            .clock = .awake,
+            .raw = .fromMilliseconds(@intCast(invocation.timeoutMs())),
+        };
+        const deadline = Io.Clock.Timestamp.fromNow(
+            self.io,
+            timeout_duration,
+        ) catch return error.ExternalTimeoutUnavailable;
 
         while (true) {
             if (stdout_reader.buffered().len > self.max_stdout_bytes) {
@@ -109,19 +114,7 @@ pub const Supervisor = struct {
                 return error.OperatorStderrTooLarge;
             }
 
-            const elapsed = timer.read();
-            if (elapsed >= timeout_ns) {
-                child.kill(self.io);
-                child_active = false;
-                return error.OperatorTimeout;
-            }
-
-            const timeout: Io.Timeout = .{ .duration = .{
-                .clock = .awake,
-                .raw = .fromNanoseconds(timeout_ns - elapsed),
-            } };
-
-            multi_reader.fill(4096, timeout) catch |err| switch (err) {
+            multi_reader.fill(4096, .{ .deadline = deadline }) catch |err| switch (err) {
                 error.Timeout => {
                     child.kill(self.io);
                     child_active = false;
