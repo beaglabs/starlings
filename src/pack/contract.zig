@@ -10,6 +10,7 @@ pub const max_invariants: usize = 128;
 pub const max_operators: usize = 128;
 pub const max_targets: usize = 64;
 pub const max_dependencies: usize = 64;
+pub const max_runtime_args: usize = 16;
 
 pub const RuntimeKind = enum {
     native,
@@ -88,6 +89,8 @@ pub const RequirementSet = struct {
 pub const RuntimeDecl = struct {
     kind: RuntimeKind,
     target: ?[]const u8 = null,
+    args: []const []const u8 = &.{},
+    timeout_ms: u32 = 30_000,
 };
 
 pub const OperatorDecl = struct {
@@ -351,9 +354,19 @@ fn validateManifest(manifest: Manifest) !void {
 }
 
 fn validateRuntime(runtime: RuntimeDecl) !void {
+    if (runtime.timeout_ms == 0) return error.InvalidRuntimeTimeout;
+    if (runtime.args.len > max_runtime_args) return error.PackCapacityExceeded;
+
     switch (runtime.kind) {
-        .native => {},
-        .python, .subprocess => {
+        .native => {
+            if (runtime.args.len != 0) return error.NativeRuntimeArgumentsForbidden;
+        },
+        .python => {
+            const target = runtime.target orelse return error.MissingRuntimeTarget;
+            if (target.len == 0) return error.MissingRuntimeTarget;
+            if (runtime.args.len != 0) return error.PythonRuntimeArgumentsUnsupported;
+        },
+        .subprocess => {
             const target = runtime.target orelse return error.MissingRuntimeTarget;
             if (target.len == 0) return error.MissingRuntimeTarget;
         },
@@ -456,6 +469,41 @@ test "pack contract compiles into SDK registry without workflow edges" {
     try std.testing.expectEqual(compiled.variable_count, registry.variable_count);
     try std.testing.expectEqual(compiled.invariant_count, registry.invariant_count);
     try std.testing.expectEqual(compiled.operator_count, registry.operator_count);
+}
+
+test "runtime declarations accept bounded subprocess argv" {
+    const variables = [_]VariableDecl{
+        .{ .name = "done", .@"type" = .boolean },
+    };
+    const operators = [_]OperatorDecl{
+        .{
+            .name = "shell-check",
+            .runtime = .{
+                .kind = .subprocess,
+                .target = "/bin/sh",
+                .args = &.{ "operators/check.sh" },
+                .timeout_ms = 1500,
+            },
+            .provides = .{ .variables = &.{"done"} },
+        },
+    };
+
+    const compiled = try compile(.{
+        .manifest = .{
+            .apiVersion = api_version,
+            .kind = kind_name,
+            .metadata = .{ .name = "runtime-args", .version = "0.1.0" },
+            .state = .{ .variables = "variables.yaml", .invariants = "invariants.yaml" },
+            .population = .{ .operators = "operators.yaml" },
+            .targets = &.{"done"},
+        },
+        .variable_file = .{ .variables = &variables },
+        .invariant_file = .{ .invariants = &.{} },
+        .operator_file = .{ .operators = &operators },
+    });
+
+    try std.testing.expectEqual(@as(usize, 1), compiled.operators[0].runtime.args.len);
+    try std.testing.expectEqual(@as(u32, 1500), compiled.operators[0].runtime.timeout_ms);
 }
 
 test "stable pack identifiers do not depend on declaration order" {
