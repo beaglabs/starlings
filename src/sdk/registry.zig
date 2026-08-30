@@ -122,11 +122,13 @@ pub const VariableCell = struct {
     status: core.EpistemicStatus = .unknown,
     value: ?core.Value = null,
     updated_round: u32 = 0,
+    revision: u64 = 0,
 };
 
 pub const InvariantCell = struct {
     status: core.InvariantStatus = .unknown,
     updated_round: u32 = 0,
+    revision: u64 = 0,
 };
 
 pub fn ContextState(comptime max_variables: usize, comptime max_invariants: usize) type {
@@ -150,10 +152,12 @@ pub fn ContextState(comptime max_variables: usize, comptime max_invariants: usiz
             if (value) |v| {
                 if (v.kind() != registry.variables[index].variable.kind) return error.VariableTypeMismatch;
             }
+            const next_revision = self.variables[index].revision +% 1;
             self.variables[index] = .{
                 .status = status,
                 .value = value,
                 .updated_round = round,
+                .revision = next_revision,
             };
         }
 
@@ -168,7 +172,12 @@ pub fn ContextState(comptime max_variables: usize, comptime max_invariants: usiz
 
             const index = registry.invariantIndex(id) orelse return error.UnknownInvariant;
             if (index >= max_invariants) return error.RegistryCapacityExceeded;
-            self.invariants[index] = .{ .status = status, .updated_round = round };
+            const next_revision = self.invariants[index].revision +% 1;
+            self.invariants[index] = .{
+                .status = status,
+                .updated_round = round,
+                .revision = next_revision,
+            };
         }
 
         pub fn variableCell(self: *const Self, registry: anytype, id: core.VariableId) ?VariableCell {
@@ -223,4 +232,24 @@ test "context state enforces declared variable types" {
         error.VariableTypeMismatch,
         state.setVariable(&registry, 7, .observed, .{ .integer = 21 }, 2),
     );
+}
+
+
+test "context state revisions advance on accepted writes" {
+    const R = Registry(1, 1, 1);
+    const S = ContextState(1, 1);
+    var registry = R{};
+    var state = S{};
+
+    try registry.addVariable(.{ .variable = .{ .id = 1, .name = "input", .kind = .integer } });
+    try registry.addInvariant(.{ .id = 2, .name = "known", .requires = &.{1} });
+
+    try std.testing.expectEqual(@as(u64, 0), state.variables[0].revision);
+    try state.setVariable(&registry, 1, .observed, .{ .integer = 1 }, 0);
+    try std.testing.expectEqual(@as(u64, 1), state.variables[0].revision);
+    try state.setVariable(&registry, 1, .observed, .{ .integer = 2 }, 1);
+    try std.testing.expectEqual(@as(u64, 2), state.variables[0].revision);
+
+    try state.setInvariant(&registry, 2, .satisfied, 1);
+    try std.testing.expectEqual(@as(u64, 1), state.invariants[0].revision);
 }
