@@ -5,7 +5,7 @@ import tempfile
 import textwrap
 import unittest
 
-HERE = os.path.dirname(__file__)
+HERE = os.path.abspath(os.path.dirname(__file__))
 sys.path.insert(0, HERE)
 
 import starlings_operator as wire
@@ -52,7 +52,7 @@ class WireTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tmp:
-            script = os.path.join(tmp, "operator.py")
+            script = os.path.join(tmp, "starlings_fixture.py")
             with open(script, "w", encoding="utf-8") as f:
                 f.write(source)
 
@@ -71,9 +71,16 @@ class WireTests(unittest.TestCase):
                 text=True,
                 capture_output=True,
                 env=env,
-                check=True,
+                check=False,
                 timeout=5,
             )
+            if proc.returncode != 0:
+                self.fail(
+                    "Python operator subprocess failed "
+                    f"(exit={proc.returncode})\n"
+                    f"stdout:\n{proc.stdout}\n"
+                    f"stderr:\n{proc.stderr}"
+                )
 
         self.assertEqual(
             proc.stdout,
