@@ -65,13 +65,13 @@ The local runner is resumable. Operators activate when their declared requiremen
 
 `runUntilQuiescent(budget)` advances the population until one of these conditions occurs:
 
-- all target variables carry values → `success`;
+- no activation is pending and all target variables carry values → `success`;
 - no activation is pending and a target is explicitly `conflicting` → `conflicting`;
 - no activation is pending and a target is `not_visible`, `unavailable`, or `blocked` → `blocked`;
 - no activation is pending while targets remain unknown → `quiescent`;
 - the activation budget is consumed while work remains → `exhausted`.
 
-Quiescence is deliberately distinct from failure. A quiescent population can become `running` again when an external observation advances a relevant state revision.
+Terminal classification is deliberately made only after pending activations drain, so one early target claim cannot hide a later conflicting contribution. Quiescence is distinct from failure: a quiescent population can become `running` again when an external observation advances a relevant state revision.
 
 `schedulerSnapshot()` exposes the current outcome, logical round, number of state-eligible operators, and number of pending reactive activations.
 
