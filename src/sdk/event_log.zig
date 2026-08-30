@@ -6,12 +6,18 @@ const output_state = @import("output_state.zig");
 pub const canonical_event_version: u8 = 1;
 
 pub const EventKind = enum(u8) {
-    observation_added = 1,
-    operator_started = 2,
-    claim_accepted = 3,
-    invariant_changed = 4,
-    operator_completed = 5,
-    operator_failed = 6,
+    run_started = 1,
+    observation_added = 2,
+    operator_started = 3,
+    claim_accepted = 4,
+    invariant_changed = 5,
+    operator_completed = 6,
+    operator_failed = 7,
+};
+
+pub const RunStarted = struct {
+    seed: u64,
+    configuration_digest: core.ContentId,
 };
 
 pub const ObservationAdded = struct {
@@ -61,6 +67,7 @@ pub const OperatorFailed = struct {
 };
 
 pub const RunEvent = union(EventKind) {
+    run_started: RunStarted,
     observation_added: ObservationAdded,
     operator_started: OperatorStarted,
     claim_accepted: ClaimAccepted,
@@ -126,6 +133,10 @@ pub fn EventLog(comptime capacity: usize) type {
 pub fn validateRecords(records: []const EventRecord) !void {
     var previous = content_id.zero;
 
+    if (records.len > 0 and std.meta.activeTag(records[0].event) != .run_started) {
+        return error.MissingRunStarted;
+    }
+
     for (records, 0..) |record, i| {
         if (record.sequence != @as(u64, @intCast(i))) return error.EventSequenceMismatch;
         if (!content_id.eql(record.previous, previous)) return error.EventParentMismatch;
@@ -153,6 +164,10 @@ pub fn eventContentId(
     hasher.update(&.{@intFromEnum(kind)});
 
     switch (event) {
+        .run_started => |payload| {
+            hashU64(&hasher, payload.seed);
+            hasher.update(&payload.configuration_digest);
+        },
         .observation_added => |payload| {
             hashU32(&hasher, payload.round);
             hashClaimPayload(&hasher, payload.claim, payload.claim_id);
@@ -195,6 +210,7 @@ pub fn eventContentId(
 
 fn validateEvent(event: RunEvent) !void {
     switch (event) {
+        .run_started => {},
         .observation_added => |payload| {
             try validateClaimIdentity(payload.claim, payload.claim_id);
             if (payload.claim.source_operator != 0) return error.InvalidObservationSource;
@@ -285,6 +301,11 @@ test "event log forms a canonical append-only hash chain" {
     const L = EventLog(8);
     var log = L{};
 
+    _ = try log.append(.{ .run_started = .{
+        .seed = 7,
+        .configuration_digest = content_id.zero,
+    } });
+
     const observation: core.Claim = .{
         .variable = 1,
         .status = .observed,
@@ -306,15 +327,20 @@ test "event log forms a canonical append-only hash chain" {
     } });
 
     try log.validate();
-    try std.testing.expectEqual(@as(usize, 2), log.len);
+    try std.testing.expectEqual(@as(usize, 3), log.len);
     try std.testing.expect(!content_id.isZero(log.headId()));
     try std.testing.expect(content_id.eql(log.records[1].previous, log.records[0].id));
+    try std.testing.expect(content_id.eql(log.records[2].previous, log.records[1].id));
 }
 
 test "event log validation detects tampering" {
     const L = EventLog(4);
     var log = L{};
 
+    _ = try log.append(.{ .run_started = .{
+        .seed = 1,
+        .configuration_digest = content_id.zero,
+    } });
     _ = try log.append(.{ .operator_started = .{
         .round = 1,
         .operator = 10,
