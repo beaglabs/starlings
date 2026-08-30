@@ -4,6 +4,7 @@ const reg = @import("registry.zig");
 const eligibility = @import("eligibility.zig");
 const output_state = @import("output_state.zig");
 const event_log = @import("event_log.zig");
+const data_plane = @import("data_plane.zig");
 const content_id = @import("../core/content_id.zig");
 
 pub fn Runner(
@@ -108,6 +109,7 @@ pub fn Runner(
             round: u32,
             eligible_operators: usize,
             pending_activations: usize,
+            pending_approvals: usize,
         };
 
         pub const ExecutionResult = struct {
@@ -269,7 +271,7 @@ pub fn Runner(
                     .round = self.round,
                     .operator = chosen_id,
                     .activation_epoch = activation_epoch,
-                    .kind = .execution,
+                    .kind = classifyExecutionFailure(err),
                 } });
                 return err;
             };
@@ -292,7 +294,11 @@ pub fn Runner(
             };
 
             try self.events.ensureCapacity(
-                output.variable_claim_count + output.invariant_claim_count + 1,
+                output.variable_claim_count +
+                    output.invariant_claim_count +
+                    output.artifact_count +
+                    output.action_count +
+                    1,
             );
 
             for (output.claims()) |claim| {
@@ -322,6 +328,32 @@ pub fn Runner(
                 _ = try self.appendRuntimeEvent(.{ .invariant_changed = .{
                     .round = self.round,
                     .claim = claim,
+                } });
+            }
+
+            for (output.artifacts[0..output.artifact_count]) |artifact| {
+                _ = try self.appendRuntimeEvent(.{ .artifact_emitted = .{
+                    .round = self.round,
+                    .operator = chosen_id,
+                    .activation_epoch = activation_epoch,
+                    .artifact_id = artifact.id,
+                    .size_bytes = artifact.size_bytes,
+                } });
+            }
+
+            for (output.actions[0..output.action_count], 0..) |action, ordinal| {
+                const action_id = data_plane.actionContentId(
+                    action,
+                    chosen_id,
+                    activation_epoch,
+                    @intCast(ordinal),
+                );
+                _ = try self.appendRuntimeEvent(.{ .action_proposed = .{
+                    .round = self.round,
+                    .operator = chosen_id,
+                    .activation_epoch = activation_epoch,
+                    .action_id = action_id,
+                    .requires_approval = action.requires_approval,
                 } });
             }
 
@@ -369,6 +401,7 @@ pub fn Runner(
                 .round = self.round,
                 .eligible_operators = self.eligibleOperatorCount(),
                 .pending_activations = self.pendingActivationCount(),
+                .pending_approvals = self.pendingApprovalCount(),
             };
         }
 
@@ -392,6 +425,92 @@ pub fn Runner(
                 }
             }
             return count;
+        }
+
+        pub fn artifactEmissionCount(self: *const Self) usize {
+            var count: usize = 0;
+            for (self.events.slice()) |record| {
+                if (std.meta.activeTag(record.event) == .artifact_emitted) count += 1;
+            }
+            return count;
+        }
+
+        pub fn actionProposalCount(self: *const Self) usize {
+            var count: usize = 0;
+            for (self.events.slice()) |record| {
+                if (std.meta.activeTag(record.event) == .action_proposed) count += 1;
+            }
+            return count;
+        }
+
+        pub fn actionStatus(
+            self: *const Self,
+            action_id: core.ContentId,
+        ) ?data_plane.ActionStatus {
+            var status: ?data_plane.ActionStatus = null;
+            for (self.events.slice()) |record| {
+                switch (record.event) {
+                    .action_proposed => |payload| {
+                        if (!content_id.eql(payload.action_id, action_id)) continue;
+                        status = if (payload.requires_approval)
+                            .pending_approval
+                        else
+                            .ready;
+                    },
+                    .action_decided => |payload| {
+                        if (!content_id.eql(payload.action_id, action_id)) continue;
+                        status = switch (payload.decision) {
+                            .approved => .approved,
+                            .rejected => .rejected,
+                        };
+                    },
+                    else => {},
+                }
+            }
+            return status;
+        }
+
+        pub fn pendingApprovalCount(self: *const Self) usize {
+            var count: usize = 0;
+            for (self.events.slice()) |record| {
+                switch (record.event) {
+                    .action_proposed => |payload| {
+                        if (!payload.requires_approval) continue;
+                        if (self.actionStatus(payload.action_id) == .pending_approval) {
+                            count += 1;
+                        }
+                    },
+                    else => {},
+                }
+            }
+            return count;
+        }
+
+        pub fn approveAction(self: *Self, action_id: core.ContentId) !void {
+            try self.decideAction(action_id, .approved);
+        }
+
+        pub fn rejectAction(self: *Self, action_id: core.ContentId) !void {
+            try self.decideAction(action_id, .rejected);
+        }
+
+        fn decideAction(
+            self: *Self,
+            action_id: core.ContentId,
+            decision: data_plane.ActionDecision,
+        ) !void {
+            try self.ensureRunStarted();
+            try self.requireNoOpenActivation();
+
+            const status = self.actionStatus(action_id) orelse return error.UnknownAction;
+            if (status != .pending_approval) return error.ActionNotPendingApproval;
+
+            try self.events.ensureCapacity(1);
+            _ = try self.appendRuntimeEvent(.{ .action_decided = .{
+                .round = self.round,
+                .action_id = action_id,
+                .decision = decision,
+            } });
         }
 
         fn makeResult(self: *const Self, outcome: core.ResultOutcome) ExecutionResult {
@@ -763,6 +882,41 @@ pub fn Runner(
                     self.rejected_claims += @as(usize, payload.rejected_claims);
                     self.executors[index].last_settled_epoch = payload.activation_epoch;
                 },
+                .artifact_emitted => |payload| {
+                    if (!self.run_started_logged) return error.MissingRunStarted;
+                    if (comptime max_operators == 0) return error.UnknownOperator;
+                    try self.advanceReplayRound(payload.round, true);
+                    const index = try self.openActivationIndex();
+                    const operator_id = self.registry.operators[index].manifest.id;
+                    if (operator_id != payload.operator) return error.ReplayOperatorMismatch;
+                    if (self.executors[index].activation_epoch != payload.activation_epoch) {
+                        return error.ActivationEpochMismatch;
+                    }
+                },
+                .action_proposed => |payload| {
+                    if (!self.run_started_logged) return error.MissingRunStarted;
+                    if (comptime max_operators == 0) return error.UnknownOperator;
+                    try self.advanceReplayRound(payload.round, true);
+                    const index = try self.openActivationIndex();
+                    const operator_id = self.registry.operators[index].manifest.id;
+                    if (operator_id != payload.operator) return error.ReplayOperatorMismatch;
+                    if (self.executors[index].activation_epoch != payload.activation_epoch) {
+                        return error.ActivationEpochMismatch;
+                    }
+                    if (self.actionStatus(payload.action_id) != null) {
+                        return error.DuplicateActionProposal;
+                    }
+                },
+                .action_decided => |payload| {
+                    if (!self.run_started_logged) return error.MissingRunStarted;
+                    try self.requireNoOpenActivation();
+                    try self.advanceReplayRound(payload.round, true);
+                    const status = self.actionStatus(payload.action_id) orelse
+                        return error.UnknownAction;
+                    if (status != .pending_approval) {
+                        return error.ActionNotPendingApproval;
+                    }
+                },
             }
         }
 
@@ -928,6 +1082,12 @@ pub fn Runner(
             return chosen;
         }
     };
+}
+
+fn classifyExecutionFailure(err: anyerror) event_log.FailureKind {
+    if (err == error.OperatorTimeout) return .timeout;
+    if (err == error.OperatorCrashed) return .crash;
+    return .execution;
 }
 
 fn hashSlice(hasher: *std.crypto.hash.Blake3, bytes: []const u8) void {
