@@ -401,6 +401,7 @@ pub fn loadEventLog(
         allocator,
         .limited(max_event_file_bytes),
     );
+    defer allocator.free(source);
 
     var result = LoadedEventLog(capacity){
         .log = .{},
@@ -664,6 +665,7 @@ fn decodeRecordLine(allocator: std.mem.Allocator, line: []const u8) !event_log.E
     if (payload_len > max_event_payload_bytes) return error.EventPayloadTooLarge;
 
     const payload = try allocator.alloc(u8, payload_len);
+    errdefer allocator.free(payload);
     try decodeHex(payload_hex, payload);
 
     const event = try decodeEventPayload(kind, payload);
@@ -1489,6 +1491,84 @@ test "loader ignores only an unterminated crash tail" {
     );
     try std.testing.expectEqual(complete_event_count, loaded.log.slice().len);
     try std.testing.expectEqual(crash_tail.len, loaded.ignored_trailing_bytes);
+}
+
+test "loader rejects a tampered complete event record" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const R = execution.Runner(1, 0, 0, 8);
+    var live = R.init(7, &.{1});
+    try live.addVariable(.{ .variable = .{
+        .id = 1,
+        .name = "input",
+        .kind = .integer,
+        .merge_policy = .latest,
+    } });
+
+    var writer = try createRun(io, std.testing.allocator, tmp.dir, &live);
+    const run_id = writer.run_id;
+    try live.setEventSink(writer.eventSink());
+    _ = try live.seedVariable(1, .observed, .{ .integer = 9 }, 1000);
+    writer.deinit();
+
+    var run_dir = try openRunDir(io, tmp.dir, run_id);
+    defer run_dir.close(io);
+
+    const original = try run_dir.readFileAlloc(
+        io,
+        events_file_name,
+        std.testing.allocator,
+        .limited(max_event_file_bytes),
+    );
+    defer std.testing.allocator.free(original);
+
+    const first_newline = std.mem.indexOfScalar(u8, original, '\n') orelse
+        return error.TestExpectedEventLine;
+    const second_newline_relative = std.mem.indexOfScalar(
+        u8,
+        original[first_newline + 1 ..],
+        '\n',
+    ) orelse return error.TestExpectedEventLine;
+    const second_newline = first_newline + 1 + second_newline_relative;
+
+    const tampered = try std.testing.allocator.dupe(u8, original);
+    defer std.testing.allocator.free(tampered);
+
+    const payload_marker = "\"payload\":\"";
+    const payload_relative = std.mem.indexOf(
+        u8,
+        tampered[first_newline + 1 .. second_newline],
+        payload_marker,
+    ) orelse return error.TestExpectedPayload;
+    const payload_start = first_newline + 1 + payload_relative + payload_marker.len;
+    if (payload_start >= second_newline or tampered[payload_start] == '"') {
+        return error.TestExpectedPayload;
+    }
+    tampered[payload_start] = if (tampered[payload_start] == '0') '1' else '0';
+
+    var events_file = try run_dir.createFile(io, events_file_name, .{
+        .read = true,
+        .truncate = true,
+    });
+    defer events_file.close(io);
+    try events_file.writeStreamingAll(io, tampered);
+    try events_file.sync(io);
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    try std.testing.expectError(
+        error.ClaimIdentityMismatch,
+        loadEventLog(
+            R.max_event_records,
+            io,
+            arena_state.allocator(),
+            tmp.dir,
+            run_id,
+        ),
+    );
 }
 
 test "loader rejects a malformed complete event record" {
