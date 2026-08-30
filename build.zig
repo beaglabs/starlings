@@ -10,11 +10,50 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const yaml = b.dependency("yaml", .{
+        .target = target,
+        .optimize = optimize,
+    }).module("yaml");
+
     const mod_tests = b.addTest(.{
         .root_module = mod,
     });
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
-    const test_step = b.step("test", "Run protocol-core tests");
+    const pack_test_module = b.createModule(.{
+        .root_source_file = b.path("src/pack/test_root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    pack_test_module.addImport("yaml", yaml);
+    const pack_tests = b.addTest(.{
+        .root_module = pack_test_module,
+    });
+    const run_pack_tests = b.addRunArtifact(pack_tests);
+
+    const test_step = b.step("test", "Run protocol-core and Emergence Pack tests");
     test_step.dependOn(&run_mod_tests.step);
+    test_step.dependOn(&run_pack_tests.step);
+
+    const cli_module = b.createModule(.{
+        .root_source_file = b.path("src/cli.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    cli_module.addImport("yaml", yaml);
+
+    const cli = b.addExecutable(.{
+        .name = "starlings",
+        .root_module = cli_module,
+    });
+    b.installArtifact(cli);
+
+    const run_cli = b.addRunArtifact(cli);
+    run_cli.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_cli.addArgs(args);
+    }
+
+    const run_step = b.step("run", "Run the Starlings CLI");
+    run_step.dependOn(&run_cli.step);
 }
