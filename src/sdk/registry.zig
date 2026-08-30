@@ -109,6 +109,8 @@ pub fn Registry(
         }
 
         pub fn operatorIndex(self: *const Self, id: core.OperatorId) ?usize {
+            if (comptime max_operators == 0) return null;
+
             var i: usize = 0;
             while (i < self.operator_count) : (i += 1) {
                 if (self.operators[i].manifest.id == id) return i;
