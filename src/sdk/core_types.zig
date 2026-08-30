@@ -228,6 +228,7 @@ pub const ResultOutcome = enum(u8) {
     conflicting,
     exhausted,
     failed,
+    quiescent,
 };
 
 pub const Result = struct {
