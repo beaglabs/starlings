@@ -40,7 +40,7 @@ pub const Runtime = struct {
     pack_dir: []const u8,
     compiled: *const contract.CompiledPack,
     runner: RuntimeRunner,
-    supervisor: process_supervisor.Supervisor,
+    supervisor: *process_supervisor.Supervisor,
 
     pub fn init(
         io: std.Io,
@@ -51,6 +51,12 @@ pub const Runtime = struct {
         seed: u64,
         native_bindings: []const NativeBinding,
     ) !Runtime {
+        const supervisor = try arena.create(process_supervisor.Supervisor);
+        supervisor.* = .{
+            .io = io,
+            .allocator = allocator,
+        };
+
         var self = Runtime{
             .io = io,
             .allocator = allocator,
@@ -61,12 +67,9 @@ pub const Runtime = struct {
                 seed,
                 compiled.targets[0..compiled.target_count],
             ),
-            .supervisor = .{
-                .io = io,
-                .allocator = allocator,
-            },
+            .supervisor = supervisor,
         };
-        errdefer self.supervisor.deinit();
+        errdefer supervisor.deinit();
 
         try self.bind(native_bindings);
         return self;
