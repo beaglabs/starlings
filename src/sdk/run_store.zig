@@ -1045,7 +1045,7 @@ const LineParser = struct {
         const start = self.pos;
         var value: u64 = 0;
         while (self.pos < self.bytes.len and std.ascii.isDigit(self.bytes[self.pos])) : (self.pos += 1) {
-            const digit = self.bytes[self.pos] - '0';
+            const digit: u64 = @intCast(self.bytes[self.pos] - '0');
             if (value > (std.math.maxInt(u64) - digit) / 10) return error.InvalidEventRecordLine;
             value = value * 10 + digit;
         }
