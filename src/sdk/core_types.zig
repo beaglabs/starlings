@@ -99,7 +99,7 @@ pub const Claim = struct {
 
     pub fn validateShape(self: Claim) !void {
         if (self.confidence_permille > 1000) return error.InvalidConfidence;
-        if (self.parent_count > max_claim_parents) return error.TooManyParents;
+        if (@as(usize, self.parent_count) > max_claim_parents) return error.TooManyParents;
         if (self.status.carriesValue() != (self.value != null)) return error.InvalidEpistemicValue;
     }
 };
