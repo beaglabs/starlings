@@ -44,10 +44,18 @@ pub fn build(b: *std.Build) void {
         "examples/packs/coding-local",
     });
 
+    const validate_phase3_example = b.addRunArtifact(cli);
+    validate_phase3_example.addArgs(&.{
+        "pack",
+        "validate",
+        "examples/packs/phase3-run",
+    });
+
     const test_step = b.step("test", "Run protocol-core and Emergence Pack tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_pack_tests.step);
     test_step.dependOn(&validate_example.step);
+    test_step.dependOn(&validate_phase3_example.step);
 
     const run_cli = b.addRunArtifact(cli);
     run_cli.step.dependOn(b.getInstallStep());
