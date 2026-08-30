@@ -741,6 +741,11 @@ test "operators with no dependencies activate only once" {
     try std.testing.expect(try runner.step());
     try std.testing.expect(!(try runner.step()));
     try std.testing.expectEqual(@as(u64, 1), runner.operatorActivationEpoch(20).?);
+
+    const snapshot = runner.schedulerSnapshot();
+    try std.testing.expectEqual(core.ResultOutcome.quiescent, snapshot.outcome);
+    try std.testing.expectEqual(@as(usize, 1), snapshot.eligible_operators);
+    try std.testing.expectEqual(@as(usize, 0), snapshot.pending_activations);
 }
 
 
