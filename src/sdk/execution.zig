@@ -1237,3 +1237,140 @@ test "target success is decided only after pending activations drain" {
     try std.testing.expectEqual(core.EpistemicStatus.conflicting, result.status(1).?);
     try std.testing.expectEqual(@as(usize, 0), runner.pendingActivationCount());
 }
+
+
+test "append-only events replay to identical materialized and scheduler state" {
+    const R = Runner(3, 1, 2, 32);
+
+    const Ops = struct {
+        fn normalize(_: ?*const anyopaque, obs: R.Observation) !core.OperatorOutput {
+            var out = core.OperatorOutput{};
+            try out.addClaim(.{
+                .variable = 2,
+                .status = .derived,
+                .value = .{ .integer = obs.value(1).?.integer + 1 },
+                .source_operator = 10,
+            });
+            try out.addInvariant(.{
+                .invariant = 4,
+                .status = .satisfied,
+                .source_operator = 10,
+            });
+            return out;
+        }
+
+        fn solve(_: ?*const anyopaque, obs: R.Observation) !core.OperatorOutput {
+            var out = core.OperatorOutput{};
+            try out.addClaim(.{
+                .variable = 3,
+                .status = .derived,
+                .value = .{ .integer = obs.value(2).?.integer * 2 },
+                .source_operator = 11,
+            });
+            try out.addAction(.{ .name = "publish-result" });
+            return out;
+        }
+
+        fn setup(runner: *R) !void {
+            try runner.addVariable(.{ .variable = .{
+                .id = 1,
+                .name = "input",
+                .kind = .integer,
+                .merge_policy = .latest,
+            } });
+            try runner.addVariable(.{ .variable = .{
+                .id = 2,
+                .name = "middle",
+                .kind = .integer,
+                .merge_policy = .latest,
+            } });
+            try runner.addVariable(.{ .variable = .{
+                .id = 3,
+                .name = "target",
+                .kind = .integer,
+                .merge_policy = .latest,
+            } });
+            try runner.addInvariant(.{
+                .id = 4,
+                .name = "middle.valid",
+                .requires = &.{2},
+            });
+
+            try runner.addOperator(.{ .manifest = .{
+                .id = 10,
+                .name = "normalize",
+                .requires_variables = &.{1},
+                .provides_variables = &.{2},
+                .provides_invariants = &.{4},
+            } }, null, normalize);
+            try runner.addOperator(.{ .manifest = .{
+                .id = 11,
+                .name = "solve",
+                .requires_variables = &.{2},
+                .requires_invariants = &.{4},
+                .provides_variables = &.{3},
+            } }, null, solve);
+        }
+    };
+
+    var live = R.init(73, &.{3});
+    try Ops.setup(&live);
+    _ = try live.seedVariable(1, .observed, .{ .integer = 20 }, 1000);
+    const live_result = try live.runUntilQuiescent(8);
+
+    try std.testing.expectEqual(core.ResultOutcome.success, live_result.summary.outcome);
+    try std.testing.expect(core.Value.eql(live_result.value(3).?, .{ .integer = 42 }));
+    try live.validateEventLog();
+    try std.testing.expectEqual(@as(usize, 8), live.eventRecords().len);
+
+    var replayed = R.init(73, &.{3});
+    try Ops.setup(&replayed);
+    try replayed.replayFrom(&live.events);
+
+    const replay_result = replayed.result();
+    try std.testing.expectEqual(live_result.summary.outcome, replay_result.summary.outcome);
+    try std.testing.expectEqual(live_result.summary.rounds, replay_result.summary.rounds);
+    try std.testing.expectEqual(live_result.summary.accepted_claims, replay_result.summary.accepted_claims);
+    try std.testing.expectEqual(live_result.summary.proposed_actions, replay_result.summary.proposed_actions);
+    try std.testing.expect(core.Value.eql(replay_result.value(3).?, .{ .integer = 42 }));
+    try std.testing.expectEqual(live.state.variables[0].revision, replayed.state.variables[0].revision);
+    try std.testing.expectEqual(live.state.variables[1].revision, replayed.state.variables[1].revision);
+    try std.testing.expectEqual(live.state.variables[2].revision, replayed.state.variables[2].revision);
+    try std.testing.expectEqual(live.state.invariants[0].revision, replayed.state.invariants[0].revision);
+    try std.testing.expectEqual(live.operatorActivationEpoch(10).?, replayed.operatorActivationEpoch(10).?);
+    try std.testing.expectEqual(live.operatorActivationEpoch(11).?, replayed.operatorActivationEpoch(11).?);
+    try std.testing.expect(content_id.eql(live.eventHeadId(), replayed.eventHeadId()));
+    try std.testing.expectEqual(live.eventRecords().len, replayed.eventRecords().len);
+
+    const live_snapshot = live.schedulerSnapshot();
+    const replay_snapshot = replayed.schedulerSnapshot();
+    try std.testing.expectEqual(live_snapshot.outcome, replay_snapshot.outcome);
+    try std.testing.expectEqual(live_snapshot.pending_activations, replay_snapshot.pending_activations);
+    try std.testing.expectEqual(live_snapshot.eligible_operators, replay_snapshot.eligible_operators);
+}
+
+test "replay rejects a tampered event chain" {
+    const R = Runner(1, 0, 0, 8);
+
+    var live = R.init(1, &.{1});
+    try live.addVariable(.{ .variable = .{
+        .id = 1,
+        .name = "input",
+        .kind = .integer,
+        .merge_policy = .latest,
+    } });
+    _ = try live.seedVariable(1, .observed, .{ .integer = 7 }, 1000);
+
+    var tampered = live.events;
+    tampered.records[0].id[0] ^= 0xff;
+
+    var replayed = R.init(1, &.{1});
+    try replayed.addVariable(.{ .variable = .{
+        .id = 1,
+        .name = "input",
+        .kind = .integer,
+        .merge_policy = .latest,
+    } });
+
+    try std.testing.expectError(error.EventIdMismatch, replayed.replayFrom(&tampered));
+}
