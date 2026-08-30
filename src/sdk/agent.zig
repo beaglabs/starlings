@@ -160,11 +160,11 @@ pub const Agent = struct {
             return error.UnknownInputVariable;
         const schema = self.runner.registry.variableSchema(variable_id) orelse
             return error.UnknownInputVariable;
-        const value = try parseValue(self.arena, schema.variable.kind, text);
+        const parsed_value = try parseValue(self.arena, schema.variable.kind, text);
         return self.runner.seedVariable(
             variable_id,
             .observed,
-            value,
+            parsed_value,
             confidence_permille,
         );
     }
