@@ -210,18 +210,7 @@ pub fn Runner(
         }
 
         pub fn step(self: *Self) !bool {
-            var eligible_ids: [max_operators]core.OperatorId = undefined;
-            var candidate_count: usize = 0;
-            var i: usize = 0;
-            while (i < self.registry.operator_count) : (i += 1) {
-                if (!eligibility.operatorEligible(&self.registry, &self.state, i, self.round)) continue;
-                if (!self.activationNeeded(i)) continue;
-                eligible_ids[candidate_count] = self.registry.operators[i].manifest.id;
-                candidate_count += 1;
-            }
-            if (candidate_count == 0) return false;
-
-            const chosen_id = self.chooseOperator(eligible_ids[0..candidate_count]);
+            const chosen_id = self.nextPendingOperatorId() orelse return false;
             const chosen_index = self.registry.operatorIndex(chosen_id).?;
             const input_fingerprint = self.activationFingerprint(chosen_index);
 
@@ -526,6 +515,12 @@ pub fn Runner(
                     )) return error.ReplayOperatorNotEligible;
                     if (!self.activationNeeded(index)) return error.ReplayActivationNotNeeded;
 
+                    const expected_operator = self.nextPendingOperatorId() orelse
+                        return error.ReplayActivationNotNeeded;
+                    if (expected_operator != payload.operator) {
+                        return error.ReplayArbitrationMismatch;
+                    }
+
                     const expected = self.activationFingerprint(index);
                     if (!content_id.eql(expected, payload.input_fingerprint)) {
                         return error.ReplayActivationFingerprintMismatch;
@@ -727,6 +722,22 @@ pub fn Runner(
             const cell = self.state.invariants[index];
             hashU64(hasher, cell.revision);
             hasher.update(&.{@intFromEnum(cell.status)});
+        }
+
+        fn nextPendingOperatorId(self: *const Self) ?core.OperatorId {
+            var eligible_ids: [max_operators]core.OperatorId = undefined;
+            var candidate_count: usize = 0;
+
+            var i: usize = 0;
+            while (i < self.registry.operator_count) : (i += 1) {
+                if (!eligibility.operatorEligible(&self.registry, &self.state, i, self.round)) continue;
+                if (!self.activationNeeded(i)) continue;
+                eligible_ids[candidate_count] = self.registry.operators[i].manifest.id;
+                candidate_count += 1;
+            }
+
+            if (candidate_count == 0) return null;
+            return self.chooseOperator(eligible_ids[0..candidate_count]);
         }
 
         fn chooseOperator(self: *const Self, ids: []const core.OperatorId) core.OperatorId {
