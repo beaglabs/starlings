@@ -2,6 +2,7 @@ const std = @import("std");
 const content_id = @import("../core/content_id.zig");
 const core = @import("core_types.zig");
 const reg = @import("registry.zig");
+const output_state = @import("output_state.zig");
 const event_log = @import("event_log.zig");
 const execution = @import("execution.zig");
 
@@ -1337,7 +1338,15 @@ test "durable event log survives close load and replay without operator executio
                 .value = .{ .integer = obs.value(2).?.integer * 2 },
                 .source_operator = 11,
             });
-            try out.addAction(.{ .name = "publish-result" });
+            try out.addArtifact(output_state.artifactRef(
+                "application/json",
+                "{\"answer\":42}",
+            ));
+            try out.addAction(.{
+                .name = "publish-result",
+                .payload = "artifact:answer",
+                .requires_approval = true,
+            });
             return out;
         }
 
@@ -1392,6 +1401,21 @@ test "durable event log survives close load and replay without operator executio
     _ = try live.seedVariable(1, .observed, .{ .integer = 20 }, 1000);
     const live_result = try live.runUntilQuiescent(8);
     try std.testing.expectEqual(core.ResultOutcome.success, live_result.summary.outcome);
+    try std.testing.expectEqual(@as(usize, 1), live.artifactEmissionCount());
+    try std.testing.expectEqual(@as(usize, 1), live.pendingApprovalCount());
+
+    var action_id: ?core.ContentId = null;
+    for (live.eventRecords()) |record| {
+        switch (record.event) {
+            .action_proposed => |payload| action_id = payload.action_id,
+            else => {},
+        }
+    }
+    const approval_id = action_id orelse return error.TestExpectedActionProposal;
+    try live.approveAction(approval_id);
+    try std.testing.expect(live.actionStatus(approval_id).? == .approved);
+    try std.testing.expectEqual(@as(usize, 0), live.pendingApprovalCount());
+
     try std.testing.expectEqual(@as(u64, @intCast(live.eventRecords().len)), writer.next_sequence);
     writer.deinit();
 
@@ -1418,6 +1442,9 @@ test "durable event log survives close load and replay without operator executio
     try std.testing.expectEqual(live_result.summary.proposed_actions, replay_result.summary.proposed_actions);
     try std.testing.expect(core.Value.eql(replay_result.value(3).?, .{ .integer = 42 }));
     try std.testing.expect(content_id.eql(live.eventHeadId(), replayed.eventHeadId()));
+    try std.testing.expectEqual(@as(usize, 1), replayed.artifactEmissionCount());
+    try std.testing.expectEqual(@as(usize, 0), replayed.pendingApprovalCount());
+    try std.testing.expect(replayed.actionStatus(approval_id).? == .approved);
 
     const live_snapshot = live.schedulerSnapshot();
     const replay_snapshot = replayed.schedulerSnapshot();
