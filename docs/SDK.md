@@ -75,6 +75,55 @@ Terminal classification is deliberately made only after pending activations drai
 
 `schedulerSnapshot()` exposes the current outcome, logical round, number of state-eligible operators, and number of pending reactive activations.
 
+## Append-only runtime events and replay
+
+The reactive runner records accepted runtime transitions in a canonical append-only event chain.
+
+Each `EventRecord` contains:
+
+```text
+sequence
+previous_event_id
+event_id
+event_payload
+```
+
+The event ID is domain-separated BLAKE3 over the canonical event version, sequence number, previous event ID, event kind, and payload identity. The previous event ID makes the log a hash chain: deletion, reordering, or mutation without recomputing the chain is detected by `validateEventLog()`.
+
+Phase 2C records these event kinds:
+
+```text
+observation_added
+operator_started
+claim_accepted
+invariant_changed
+operator_completed
+operator_failed
+```
+
+Variable claims reuse the canonical claim identity from `output_state.claimContentId`. Operator-start events preserve the activation epoch and dependency fingerprint so replay can reconstruct the reactive scheduler state without re-executing an operator.
+
+A fresh runner with the same registry, operator declarations, seed, and targets can call:
+
+```zig
+try replayed.replayFrom(&live.events);
+```
+
+Replay validates the event chain, operator authorization, activation ordering, dependency fingerprints, and event rounds while reconstructing:
+
+- materialized variable state;
+- invariant state;
+- state revisions;
+- claim-store identities;
+- activation epochs and settled activations;
+- accepted/rejected claim counters;
+- proposed-action counts;
+- scheduler outcome and pending activation state.
+
+Replay does **not** call operator implementations. It is a state reconstruction path, not a second execution.
+
+The event log is currently an in-memory bounded SDK primitive. Durable NDJSON/file persistence and CLI replay surfaces are intentionally deferred to the next product slice rather than coupling Phase 2C to storage or command-line policy.
+
 ## External operators
 
 Wire protocol v1 is transport-neutral:
