@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
     const pack_test_module = b.createModule(.{
-        .root_source_file = b.path("src/pack/test_root.zig"),
+        .root_source_file = b.path("src/pack_test_root.zig"),
         .target = target,
         .optimize = optimize,
     });
