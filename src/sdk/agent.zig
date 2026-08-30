@@ -92,8 +92,8 @@ pub const Step = enum {
     idle,
 };
 
-/// SDK-first single-node agent runtime. The embedded Runner remains the
-/// deterministic reference semantics; applications own lifecycle and decide
+/// SDK-first single-node agent runtime. A stable arena-backed Runner remains
+/// the deterministic reference semantics; applications own lifecycle and decide
 /// when to call step(), inject observations, attach persistence, or later
 /// exchange claims with peers.
 pub const Agent = struct {
@@ -101,7 +101,7 @@ pub const Agent = struct {
     allocator: std.mem.Allocator,
     arena: std.mem.Allocator,
     population: *const Population,
-    runner: AgentRunner,
+    runner: *AgentRunner,
     supervisor: *process_supervisor.Supervisor,
 
     pub fn init(
@@ -112,6 +112,12 @@ pub const Agent = struct {
         seed: u64,
         bindings: Bindings,
     ) !Agent {
+        const runner = try arena.create(AgentRunner);
+        runner.* = .{
+            .seed = seed,
+            .targets = population.compiled.targets[0..population.compiled.target_count],
+        };
+
         const supervisor = try arena.create(process_supervisor.Supervisor);
         supervisor.* = .{
             .io = io,
@@ -123,10 +129,7 @@ pub const Agent = struct {
             .allocator = allocator,
             .arena = arena,
             .population = population,
-            .runner = AgentRunner.init(
-                seed,
-                population.compiled.targets[0..population.compiled.target_count],
-            ),
+            .runner = runner,
             .supervisor = supervisor,
         };
         errdefer supervisor.deinit();
