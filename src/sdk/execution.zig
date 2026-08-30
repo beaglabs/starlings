@@ -803,6 +803,20 @@ pub fn Runner(
             return self.executors[index].activation_epoch;
         }
 
+        pub fn openActivationOperatorId(
+            self: *const Self,
+        ) error{MultipleOpenActivations}!?core.OperatorId {
+            if (comptime max_operators == 0) return null;
+
+            var found: ?core.OperatorId = null;
+            for (self.executors[0..self.executor_count], 0..) |executor, i| {
+                if (executor.activation_epoch <= executor.last_settled_epoch) continue;
+                if (found != null) return error.MultipleOpenActivations;
+                found = self.registry.operators[i].manifest.id;
+            }
+            return found;
+        }
+
         fn activationNeeded(self: *const Self, operator_index: usize) bool {
             if (comptime max_operators == 0) return false;
             if (!self.executors[operator_index].has_activated) return true;
