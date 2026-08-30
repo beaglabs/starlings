@@ -5,6 +5,7 @@ const eligibility = @import("eligibility.zig");
 const output_state = @import("output_state.zig");
 const event_log = @import("event_log.zig");
 const data_plane = @import("data_plane.zig");
+const artifact_store = @import("artifact_store.zig");
 const content_id = @import("../core/content_id.zig");
 
 pub fn Runner(
@@ -155,6 +156,7 @@ pub fn Runner(
         configuration_locked: bool = false,
         event_sink: ?event_log.EventSink = null,
         event_sink_failed: bool = false,
+        artifact_verifier: ?artifact_store.Verifier = null,
 
         pub fn init(seed: u64, targets: []const core.VariableId) Self {
             return .{ .seed = seed, .targets = targets };
@@ -194,6 +196,12 @@ pub fn Runner(
             if (self.run_started_logged or self.events.len != 0) return error.RunAlreadyStarted;
             if (self.event_sink != null) return error.EventSinkAlreadyConfigured;
             self.event_sink = sink;
+        }
+
+        pub fn setArtifactVerifier(self: *Self, verifier: artifact_store.Verifier) !void {
+            if (self.run_started_logged or self.events.len != 0) return error.RunAlreadyStarted;
+            if (self.artifact_verifier != null) return error.ArtifactVerifierAlreadyConfigured;
+            self.artifact_verifier = verifier;
         }
 
         fn replayOnlyExecute(_: ?*const anyopaque, _: Observation) anyerror!core.OperatorOutput {
@@ -277,11 +285,7 @@ pub fn Runner(
                 return err;
             };
 
-            output_state.validateOutput(
-                &self.registry,
-                self.registry.operators[chosen_index].manifest,
-                &output,
-            ) catch |err| {
+            self.validateOperatorOutput(chosen_index, &output) catch |err| {
                 self.rejected_claims += output.variable_claim_count;
                 self.executors[chosen_index].last_settled_epoch = activation_epoch;
                 _ = try self.appendRuntimeEvent(.{ .operator_failed = .{
@@ -369,6 +373,24 @@ pub fn Runner(
                 .actions = @intCast(output.action_count),
             } });
             return true;
+        }
+
+        fn validateOperatorOutput(
+            self: *Self,
+            operator_index: usize,
+            output: *const core.OperatorOutput,
+        ) !void {
+            try output_state.validateOutput(
+                &self.registry,
+                self.registry.operators[operator_index].manifest,
+                output,
+            );
+
+            if (self.artifact_verifier) |verifier| {
+                for (output.artifacts[0..output.artifact_count]) |artifact| {
+                    try verifier.verify(artifact);
+                }
+            }
         }
 
         pub fn run(self: *Self, max_rounds: u32) !ExecutionResult {
@@ -1845,6 +1867,49 @@ test "event sink failure latches the runner closed" {
         runner.seedVariable(1, .observed, .{ .integer = 8 }, 1000),
     );
     try std.testing.expectEqual(@as(usize, 1), runner.eventRecords().len);
+}
+
+
+test "artifact verifier failure becomes canonical validation failure" {
+    const R = Runner(0, 0, 1, 8);
+
+    const Ops = struct {
+        fn emit(_: ?*const anyopaque, _: R.Observation) !core.OperatorOutput {
+            var out = core.OperatorOutput{};
+            try out.addArtifact(output_state.artifactRef("text/plain", "missing"));
+            return out;
+        }
+    };
+
+    const Verify = struct {
+        fn reject(_: ?*anyopaque, _: core.ArtifactRef) anyerror!void {
+            return error.ArtifactNotPersisted;
+        }
+    };
+
+    var runner = R.init(44, &.{});
+    try runner.addOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "emit-unpersisted-artifact",
+    } }, null, Ops.emit);
+    try runner.setArtifactVerifier(.{
+        .verify_fn = Verify.reject,
+    });
+
+    try std.testing.expectError(
+        error.ArtifactNotPersisted,
+        runner.runUntilQuiescent(2),
+    );
+
+    const records = runner.eventRecords();
+    try std.testing.expect(records.len >= 3);
+    switch (records[records.len - 1].event) {
+        .operator_failed => |failure| {
+            try std.testing.expectEqual(event_log.FailureKind.validation, failure.kind);
+        },
+        else => return error.TestExpectedOperatorFailure,
+    }
+    try std.testing.expectEqual(@as(usize, 0), runner.artifactEmissionCount());
 }
 
 
