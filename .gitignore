@@ -3,5 +3,11 @@ zig-out/
 *.o
 /trials/*
 !/trials/README.md
+!/trials/3d-emergent-asset/
+!/trials/3d-emergent-asset/README.md
+!/trials/3d-emergent-asset/trial.zig
+!/trials/3d-emergent-asset/population/
+!/trials/3d-emergent-asset/population/*.yaml
+/trials/3d-emergent-asset/out/
 models/
 .DS_Store
