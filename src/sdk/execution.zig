@@ -3,6 +3,7 @@ const core = @import("core_types.zig");
 const reg = @import("registry.zig");
 const eligibility = @import("eligibility.zig");
 const output_state = @import("output_state.zig");
+const event_log = @import("event_log.zig");
 const content_id = @import("../core/content_id.zig");
 
 pub fn Runner(
@@ -15,6 +16,8 @@ pub fn Runner(
     const StateType = reg.ContextState(max_variables, max_invariants);
     const MaterializedType = output_state.MaterializedState(max_variables);
     const ClaimStoreType = output_state.ClaimStore(max_claims);
+    const max_events = 64 + max_claims * 8 + max_operators * 16 + max_invariants * 8;
+    const EventLogType = event_log.EventLog(max_events);
 
     return struct {
         const Self = @This();
@@ -86,6 +89,7 @@ pub fn Runner(
             has_activated: bool = false,
             activation_epoch: u64 = 0,
             last_input_fingerprint: core.ContentId = content_id.zero,
+            last_settled_epoch: u64 = 0,
         };
 
         pub const Explanation = struct {
@@ -133,6 +137,7 @@ pub fn Runner(
         state: StateType = .{},
         materialized: MaterializedType = .{},
         claims: ClaimStoreType = .{},
+        events: EventLogType = .{},
         executors: [max_operators]Executor = undefined,
         executor_count: usize = 0,
         targets: []const core.VariableId = &.{},
@@ -183,6 +188,7 @@ pub fn Runner(
                 .confidence_permille = confidence_permille,
                 .source_operator = 0,
             };
+            try self.events.ensureCapacity(1);
             const claim_id = try self.claims.append(claim);
             try self.materialized.applyClaim(
                 &self.registry,
@@ -192,6 +198,11 @@ pub fn Runner(
                 self.round,
             );
             self.accepted_claims += 1;
+            _ = try self.events.append(.{ .observation_added = .{
+                .round = self.round,
+                .claim = claim,
+                .claim_id = claim_id,
+            } });
             return claim_id;
         }
 
@@ -211,15 +222,31 @@ pub fn Runner(
             const chosen_index = self.registry.operatorIndex(chosen_id).?;
             const input_fingerprint = self.activationFingerprint(chosen_index);
 
+            try self.events.ensureCapacity(2);
             self.round +%= 1;
             self.executors[chosen_index].has_activated = true;
             self.executors[chosen_index].activation_epoch +%= 1;
             self.executors[chosen_index].last_input_fingerprint = input_fingerprint;
+            const activation_epoch = self.executors[chosen_index].activation_epoch;
+
+            _ = try self.events.append(.{ .operator_started = .{
+                .round = self.round,
+                .operator = chosen_id,
+                .activation_epoch = activation_epoch,
+                .input_fingerprint = input_fingerprint,
+            } });
 
             const output = self.executors[chosen_index].execute_fn(
                 self.executors[chosen_index].context,
                 .{ .runner = self, .operator_index = chosen_index },
             ) catch |err| {
+                self.executors[chosen_index].last_settled_epoch = activation_epoch;
+                _ = try self.events.append(.{ .operator_failed = .{
+                    .round = self.round,
+                    .operator = chosen_id,
+                    .activation_epoch = activation_epoch,
+                    .kind = .execution,
+                } });
                 return err;
             };
 
@@ -229,8 +256,20 @@ pub fn Runner(
                 &output,
             ) catch |err| {
                 self.rejected_claims += output.variable_claim_count;
+                self.executors[chosen_index].last_settled_epoch = activation_epoch;
+                _ = try self.events.append(.{ .operator_failed = .{
+                    .round = self.round,
+                    .operator = chosen_id,
+                    .activation_epoch = activation_epoch,
+                    .kind = .validation,
+                    .rejected_claims = @intCast(output.variable_claim_count),
+                } });
                 return err;
             };
+
+            try self.events.ensureCapacity(
+                output.variable_claim_count + output.invariant_claim_count + 1,
+            );
 
             for (output.claims()) |claim| {
                 const claim_id = try self.claims.append(claim);
@@ -242,6 +281,11 @@ pub fn Runner(
                     self.round,
                 );
                 self.accepted_claims += 1;
+                _ = try self.events.append(.{ .claim_accepted = .{
+                    .round = self.round,
+                    .claim = claim,
+                    .claim_id = claim_id,
+                } });
             }
 
             for (output.invariants()) |claim| {
@@ -251,9 +295,22 @@ pub fn Runner(
                     claim.status,
                     self.round,
                 );
+                _ = try self.events.append(.{ .invariant_changed = .{
+                    .round = self.round,
+                    .claim = claim,
+                } });
             }
 
             self.proposed_actions += output.action_count;
+            self.executors[chosen_index].last_settled_epoch = activation_epoch;
+            _ = try self.events.append(.{ .operator_completed = .{
+                .round = self.round,
+                .operator = chosen_id,
+                .activation_epoch = activation_epoch,
+                .variable_claims = @intCast(output.variable_claim_count),
+                .invariant_claims = @intCast(output.invariant_claim_count),
+                .actions = @intCast(output.action_count),
+            } });
             return true;
         }
 
@@ -378,6 +435,195 @@ pub fn Runner(
         fn outcomeAtBudgetBoundary(self: *const Self) core.ResultOutcome {
             if (self.pendingActivationCount() != 0) return .exhausted;
             return self.outcomeAtRest();
+        }
+
+        pub fn eventRecords(self: *const Self) []const event_log.EventRecord {
+            return self.events.slice();
+        }
+
+        pub fn eventHeadId(self: *const Self) core.ContentId {
+            return self.events.headId();
+        }
+
+        pub fn validateEventLog(self: *const Self) !void {
+            try self.events.validate();
+        }
+
+        pub fn replayFrom(self: *Self, source: *const EventLogType) !void {
+            if (source == &self.events) return error.ReplaySourceAliasesTarget;
+            try self.replayRecords(source.slice());
+        }
+
+        pub fn replayRecords(self: *Self, records: []const event_log.EventRecord) !void {
+            try event_log.validateRecords(records);
+            self.resetRuntimeState();
+
+            for (records) |record| {
+                try self.applyReplayEvent(record.event);
+                const replayed_id = try self.events.append(record.event);
+                if (!content_id.eql(replayed_id, record.id)) {
+                    return error.EventReplayIdentityMismatch;
+                }
+            }
+        }
+
+        fn resetRuntimeState(self: *Self) void {
+            self.state = .{};
+            self.materialized = .{};
+            self.claims = .{};
+            self.events = .{};
+            self.round = 0;
+            self.accepted_claims = 0;
+            self.rejected_claims = 0;
+            self.proposed_actions = 0;
+
+            var i: usize = 0;
+            while (i < self.executor_count) : (i += 1) {
+                self.executors[i].has_activated = false;
+                self.executors[i].activation_epoch = 0;
+                self.executors[i].last_input_fingerprint = content_id.zero;
+                self.executors[i].last_settled_epoch = 0;
+            }
+        }
+
+        fn applyReplayEvent(self: *Self, event: event_log.RunEvent) !void {
+            switch (event) {
+                .observation_added => |payload| {
+                    try self.requireNoOpenActivation();
+                    try self.advanceReplayRound(payload.round, false);
+
+                    const claim_id = try self.claims.append(payload.claim);
+                    if (!content_id.eql(claim_id, payload.claim_id)) {
+                        return error.ClaimIdentityMismatch;
+                    }
+                    try self.materialized.applyClaim(
+                        &self.registry,
+                        &self.state,
+                        payload.claim,
+                        claim_id,
+                        payload.round,
+                    );
+                    self.accepted_claims += 1;
+                },
+                .operator_started => |payload| {
+                    try self.requireNoOpenActivation();
+
+                    const index = self.registry.operatorIndex(payload.operator) orelse
+                        return error.UnknownOperator;
+                    if (index >= self.executor_count) return error.UnknownOperator;
+                    if (payload.round != self.round +% 1) return error.EventRoundMismatch;
+                    if (payload.activation_epoch != self.executors[index].activation_epoch +% 1) {
+                        return error.ActivationEpochMismatch;
+                    }
+                    if (!eligibility.operatorEligible(
+                        &self.registry,
+                        &self.state,
+                        index,
+                        self.round,
+                    )) return error.ReplayOperatorNotEligible;
+                    if (!self.activationNeeded(index)) return error.ReplayActivationNotNeeded;
+
+                    const expected = self.activationFingerprint(index);
+                    if (!content_id.eql(expected, payload.input_fingerprint)) {
+                        return error.ReplayActivationFingerprintMismatch;
+                    }
+
+                    self.round = payload.round;
+                    self.executors[index].has_activated = true;
+                    self.executors[index].activation_epoch = payload.activation_epoch;
+                    self.executors[index].last_input_fingerprint = payload.input_fingerprint;
+                },
+                .claim_accepted => |payload| {
+                    try self.advanceReplayRound(payload.round, true);
+                    const open_index = try self.openActivationIndex();
+                    const operator_id = self.registry.operators[open_index].manifest.id;
+                    if (payload.claim.source_operator != operator_id) {
+                        return error.ReplayOperatorMismatch;
+                    }
+
+                    const claim_id = try self.claims.append(payload.claim);
+                    if (!content_id.eql(claim_id, payload.claim_id)) {
+                        return error.ClaimIdentityMismatch;
+                    }
+                    try self.materialized.applyClaim(
+                        &self.registry,
+                        &self.state,
+                        payload.claim,
+                        claim_id,
+                        payload.round,
+                    );
+                    self.accepted_claims += 1;
+                },
+                .invariant_changed => |payload| {
+                    try self.advanceReplayRound(payload.round, true);
+                    const open_index = try self.openActivationIndex();
+                    const operator_id = self.registry.operators[open_index].manifest.id;
+                    if (payload.claim.source_operator != operator_id) {
+                        return error.ReplayOperatorMismatch;
+                    }
+                    try self.state.setInvariant(
+                        &self.registry,
+                        payload.claim.invariant,
+                        payload.claim.status,
+                        payload.round,
+                    );
+                },
+                .operator_completed => |payload| {
+                    try self.advanceReplayRound(payload.round, true);
+                    const index = try self.openActivationIndex();
+                    const operator_id = self.registry.operators[index].manifest.id;
+                    if (operator_id != payload.operator) return error.ReplayOperatorMismatch;
+                    if (self.executors[index].activation_epoch != payload.activation_epoch) {
+                        return error.ActivationEpochMismatch;
+                    }
+
+                    self.proposed_actions += payload.actions;
+                    self.executors[index].last_settled_epoch = payload.activation_epoch;
+                },
+                .operator_failed => |payload| {
+                    try self.advanceReplayRound(payload.round, true);
+                    const index = try self.openActivationIndex();
+                    const operator_id = self.registry.operators[index].manifest.id;
+                    if (operator_id != payload.operator) return error.ReplayOperatorMismatch;
+                    if (self.executors[index].activation_epoch != payload.activation_epoch) {
+                        return error.ActivationEpochMismatch;
+                    }
+
+                    self.rejected_claims += payload.rejected_claims;
+                    self.executors[index].last_settled_epoch = payload.activation_epoch;
+                },
+            }
+        }
+
+        fn advanceReplayRound(self: *Self, round: u32, exact: bool) !void {
+            if (exact) {
+                if (round != self.round) return error.EventRoundMismatch;
+                return;
+            }
+            if (round < self.round) return error.EventRoundRegression;
+            self.round = round;
+        }
+
+        fn openActivationIndex(self: *const Self) !usize {
+            var found: ?usize = null;
+            var i: usize = 0;
+            while (i < self.executor_count) : (i += 1) {
+                if (self.executors[i].activation_epoch <= self.executors[i].last_settled_epoch) {
+                    continue;
+                }
+                if (found != null) return error.MultipleOpenActivations;
+                found = i;
+            }
+            return found orelse error.NoOpenActivation;
+        }
+
+        fn requireNoOpenActivation(self: *const Self) !void {
+            if (self.openActivationIndex()) |_| {
+                return error.OpenActivationExists;
+            } else |err| switch (err) {
+                error.NoOpenActivation => return,
+                else => return err,
+            }
         }
 
         pub fn operatorActivationEpoch(self: *const Self, id: core.OperatorId) ?u64 {
