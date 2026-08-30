@@ -36,15 +36,15 @@ with:
 
 | Symbol | Meaning | Executable boundary |
 | --- | --- | --- |
-| $A$ | finite population of operators | `Population`, `OperatorId` |
-| $G$ | communication / neighborhood graph | `Topology` |
-| $X$ | local operator state space | domain `State` |
-| $M$ | typed coordination actions / messages | `Action`, core message kinds |
-| $F$ | deterministic state-transition semantics | domain `Spec.apply`, runtime transitions |
-| $\Pi$ | family of local coordination policies | `Policy` |
-| $C$ | admissibility / control constraints | validation in `Spec.apply` and runtime gates |
-| $\Phi$ | global observable / terminal evaluation | `Spec.evaluate` |
-| $J$ | cost / measurement vector | `Cost`, experiment accounting |
+| `A` | finite population of operators | `Population`, `OperatorId` |
+| `G` | communication / neighborhood graph | `Topology` |
+| `X` | local operator state space | domain `State` |
+| `M` | typed coordination actions / messages | `Action`, core message kinds |
+| `F` | deterministic state-transition semantics | domain `Spec.apply`, runtime transitions |
+| `Π` | family of local coordination policies | `Policy` |
+| `C` | admissibility / control constraints | validation in `Spec.apply` and runtime gates |
+| `Φ` | global observable / terminal evaluation | `Spec.evaluate` |
+| `J` | cost / measurement vector | `Cost`, experiment accounting |
 
 This tuple remains the canonical population abstraction.
 
@@ -1452,19 +1452,19 @@ added as an unstructured new fault matrix.
 
 | Formal object | Current implementation |
 | --- | --- |
-| $A$ | `src/core/formal_population.zig::Population` |
-| $G$ | `Topology` and experiment transport/topology substrates |
-| $X$ | domain `State`, operator state, evidence/artifact state |
-| $M$ | `src/core/message.zig::Kind` + domain action enums |
-| $\Omega$ | domain `observe`; D3/GEOINT role-local projections live in `beaglabs/starling-experiments` |
-| $\Pi$ | `Policy`, Stage-7 parameterized policy; D3/GEOINT specialist policies live in `beaglabs/starling-experiments` |
-| $\alpha$ | synchronous batch and queue order in core; D3/GEOINT BLAKE3 arbitration in `beaglabs/starling-experiments` |
-| $C$ | `Spec.apply` validation in core; D0/D3/GEOINT runtime gates in `beaglabs/starling-experiments` |
-| $F$ | `Spec.apply` and operator transitions in core; tool-backed state transitions in `beaglabs/starling-experiments` |
-| $H$ | BLAKE3 content identity + Merkle-DAG provenance |
-| $\Phi$ | `Spec.evaluate` in core; critic/evaluator and epistemic-closure witnesses in `beaglabs/starling-experiments` |
-| $J$ | communication/computation/violations + experiment-specific accounting |
-| $T$ | canonical runtime traces, semantic trace digests |
+| `A` | `src/core/formal_population.zig::Population` |
+| `G` | `Topology` and experiment transport/topology substrates |
+| `X` | domain `State`, operator state, evidence/artifact state |
+| `M` | `src/core/message.zig::Kind` + domain action enums |
+| `Ω` | domain `observe`; D3/GEOINT role-local projections live in `beaglabs/starling-experiments` |
+| `Π` | `Policy`, Stage-7 parameterized policy; D3/GEOINT specialist policies live in `beaglabs/starling-experiments` |
+| `α` | synchronous batch and queue order in core; D3/GEOINT BLAKE3 arbitration in `beaglabs/starling-experiments` |
+| `C` | `Spec.apply` validation in core; D0/D3/GEOINT runtime gates in `beaglabs/starling-experiments` |
+| `F` | `Spec.apply` and operator transitions in core; tool-backed state transitions in `beaglabs/starling-experiments` |
+| `H` | BLAKE3 content identity + Merkle-DAG provenance |
+| `Φ` | `Spec.evaluate` in core; critic/evaluator and epistemic-closure witnesses in `beaglabs/starling-experiments` |
+| `J` | communication/computation/violations + experiment-specific accounting |
+| `T` | canonical runtime traces, semantic trace digests |
 
 ---
 

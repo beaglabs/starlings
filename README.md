@@ -4,7 +4,7 @@
 
 # Starlings
 
-**Operator-neutral coordination for controlled emergence.**
+**Decentralized intelligence through controlled emergence.**
 
 [![Zig](https://img.shields.io/badge/Zig-0.16.0-F7A41D?logo=zig&logoColor=white)](https://ziglang.org/)
 [![Core](https://img.shields.io/badge/core-operator--neutral-655eb6)](#architecture)
@@ -15,30 +15,43 @@
 
 ---
 
-Starlings is a protocol and formal coordination substrate for studying **decentralized collective behavior across heterogeneous operators**.
+Starlings is a coordination substrate for **decentralized artificial intelligence through controlled emergence**.
 
-The core is intentionally agnostic to operator implementation. A participant may be a deterministic algorithm, learned policy, language model, sensor, solver, robot, physics tool, human, or any other system that can consume a local observation and emit a typed coordination action.
+Instead of treating intelligence as one central model, planner, or orchestrator, Starlings treats a system as a population of local operators. Each operator sees only the context available to it, contributes what it can establish, and coordinates through a small typed protocol.
 
-The central research question is:
+An operator does **not** have to be an LLM. It can be anything capable of supplying useful state to the collective:
 
-> Can useful global behavior emerge from local state, typed proposals, causal evidence, and runtime-enforced constraints without encoding the final workflow in a central controller?
+- a small local language or vision model;
+- a deterministic algorithm or state machine;
+- a sensor or sensor-fusion process;
+- a physics, geometry, optimization, or planning solver;
+- a database query, retrieval system, or external tool;
+- a robot, service, human reviewer, or other bounded decision process.
 
-The protocol core lives here. The application and stress experiments that validate it live in [`beaglabs/starling-experiments`](https://github.com/beaglabs/starling-experiments).
+What matters is not the implementation behind an operator. What matters is the contextual information it can contribute: **variables, invariants, observations, estimates, constraints, hypotheses, evidence, or admissible actions**.
+
+Starlings coordinates those contributions without requiring a central component to encode the complete workflow. Local operators expose partial knowledge; causal evidence changes what becomes possible next; runtime constraints bound what is allowed; and the resulting global trajectory emerges from those interactions.
+
+> **The goal is controlled emergence:** global behavior that is not centrally scripted, but is still constrained, attributable, reproducible where required, and measurable under faults and limited resources.
+
+This makes the research problem broader than multi-agent LLM orchestration. The same coordination machinery can connect small local models with non-ML operators and physical or computational systems, allowing the collective to reason over context that no single operator possesses.
+
+The protocol and formal substrate live here. Executable stress tests, application witnesses, and falsification experiments live in [`beaglabs/starling-experiments`](https://github.com/beaglabs/starling-experiments).
 
 ## Core capabilities
 
-- **Operator-neutral population model** — no dependency on prompts, tokenizers, model providers, or chat APIs.
+- **Heterogeneous local operators** — coordinate LLMs, deterministic code, sensors, solvers, tools, humans, and other bounded processes through the same protocol boundary.
+- **Contextual variable and invariant exchange** — operators can contribute observations, estimates, constraints, invariants, hypotheses, evidence, and actions without sharing a common internal implementation.
+- **Controlled emergence** — the runtime constrains admissibility and provenance while leaving the global workflow to arise from local state and local eligibility.
+- **No central semantic schedule** — the coordination substrate does not require a single planner to encode the complete action sequence.
 - **Typed coordination grammar** — `OBSERVE`, `QUERY`, `CLAIM`, `EVIDENCE`, `PROPOSE`, `ACCEPT`, `REJECT`, `CHALLENGE`, `RETRACT`, and `DELEGATE`.
-- **Deterministic runtime** — seeded entropy, logical clocks, bounded queues, explicit routing failures, and replay-friendly traces.
-- **Content-addressed provenance** — BLAKE3 identities, canonical encodings, causal parent closure, and Merkle-DAG replay.
-- **Formal population substrate** — explicit population, topology, state, policy, transition, constraint, outcome, and cost abstractions.
-- **Pluggable local policies** — deterministic rules, parameterized policies, learned models, solvers, or external adapters.
-- **Protocol-constrained generation** — CFG machinery and provider-agnostic evaluation records for model-backed experiments.
-- **Research-grade claim discipline** — formal theorems, validated invariants, empirical laws, conjectures, and demonstrations are kept distinct.
+- **Deterministic execution where required** — seeded entropy, logical clocks, bounded queues, explicit routing failures, and replay-friendly traces.
+- **Content-addressed causal provenance** — BLAKE3 identities, canonical encodings, parent closure, and Merkle-DAG ancestry make contributions attributable and replayable.
+- **Pluggable local policies** — deterministic rules, parameterized policies, learned models, solvers, or external adapters can participate without changing the protocol core.
 
 ## Architecture
 
-Starlings separates **operator behavior** from **coordination semantics**.
+Starlings separates **what an operator knows or can do** from **how the collective coordinates it**.
 
 ```mermaid
 flowchart TD
@@ -63,9 +76,11 @@ flowchart TD
     R --> S
 ```
 
-The runtime owns admissibility, accounting, provenance, and replay. Operators own local decisions.
+Operators own local observations and local decisions. The coordination substrate owns admissibility, causal provenance, accounting, and replay.
 
-A global workflow may emerge from these local interactions, but it is not part of the core runtime API.
+A sensor can publish a measurement, a solver can establish an invariant, a local model can propose a hypothesis, and a deterministic tool can derive a new variable. None of them needs the full global plan. Their contributions change the state visible to other operators, which changes what becomes locally eligible next.
+
+The workflow is therefore an **outcome of coordinated local state transitions**, not a centrally authored pipeline.
 
 ## Formal model
 
@@ -264,41 +279,3 @@ assets/                      project visual assets / logo placeholder
 - [`docs/stage-5b-predictive-coordination-laws.md`](docs/stage-5b-predictive-coordination-laws.md) — predictive coordination laws
 - [`docs/stage-6-1-robustness-law-validation.md`](docs/stage-6-1-robustness-law-validation.md) — robustness coordinate
 - [`docs/stage-7a-parameterized-coordination-policy.md`](docs/stage-7a-parameterized-coordination-policy.md) — parameterized local policy
-
-## Claim discipline
-
-Starlings distinguishes five levels of result:
-
-1. **Proven** — follows from explicit semantics under declared assumptions.
-2. **Validated invariant** — checked across a frozen canonical experiment surface.
-3. **Empirical law** — compact predictive relationship supported on declared holdouts.
-4. **Conjecture** — mathematically stated but not yet proved or fully validated.
-5. **Demonstration** — application-level witness of a formal phenomenon.
-
-## Next research step
-
-The immediate mathematical work is to replace the current abstract fairness assumption in finite-workflow progress with the actual arbitration semantics used by the emergence trials.
-
-```text
-dependency obligations
-        ↓
-local enablement
-        ↓
-semantic-blind arbitration
-        ↓
-finite progress theorem
-        ↓
-formal prediction
-        ↓
-Byzantine falsification trial
-```
-
-The objective is no longer to accumulate demos. It is to derive statements that the existing experiments can falsify.
-
----
-
-<div align="center">
-
-**Starlings** · local rules, causal evidence, global coordination
-
-</div>
