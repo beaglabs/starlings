@@ -83,6 +83,15 @@ pub const EventRecord = struct {
     event: RunEvent,
 };
 
+pub const EventSink = struct {
+    context: ?*anyopaque,
+    append_fn: *const fn (?*anyopaque, EventRecord) anyerror!void,
+
+    pub fn append(self: EventSink, record: EventRecord) !void {
+        try self.append_fn(self.context, record);
+    }
+};
+
 pub fn EventLog(comptime capacity: usize) type {
     return struct {
         const Self = @This();
