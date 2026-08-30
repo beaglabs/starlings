@@ -456,12 +456,13 @@ fn parseRequirementSet(
         const header = lines[index.*];
         try expectIndent(header, 6);
 
-        var destination: enum { variables, invariants };
-        if (isHeader(header, "variables")) {
-            destination = .variables;
-        } else if (isHeader(header, "invariants")) {
-            destination = .invariants;
-        } else return error.UnknownSchemaField;
+        const Destination = enum { variables, invariants };
+        const destination: Destination = if (isHeader(header, "variables"))
+            .variables
+        else if (isHeader(header, "invariants"))
+            .invariants
+        else
+            return error.UnknownSchemaField;
 
         index.* += 1;
         while (index.* < lines.len and lines[index.*].indent > 6) {
