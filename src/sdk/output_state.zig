@@ -2,6 +2,7 @@ const std = @import("std");
 const content_id = @import("../core/content_id.zig");
 const core = @import("core_types.zig");
 const reg = @import("registry.zig");
+const data_plane = @import("data_plane.zig");
 
 pub const canonical_claim_version: u8 = 1;
 pub const canonical_artifact_version: u8 = 1;
@@ -164,6 +165,13 @@ pub fn validateOutput(registry: anytype, manifest: core.OperatorManifest, output
         if (claim.source_operator != manifest.id) return error.SourceOperatorMismatch;
         if (registry.invariantIndex(claim.invariant) == null) return error.UnknownInvariant;
         if (!containsInvariant(manifest.provides_invariants, claim.invariant)) return error.UnauthorizedInvariantWrite;
+    }
+
+    for (output.artifacts[0..output.artifact_count]) |artifact| {
+        try data_plane.validateArtifact(artifact);
+    }
+    for (output.actions[0..output.action_count]) |action| {
+        try data_plane.validateAction(action);
     }
 }
 
