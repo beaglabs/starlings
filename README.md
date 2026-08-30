@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/starlings-logo-placeholder.svg" alt="Starlings logo placeholder" width="520">
+<img src="assets/starlings-logo.png" alt="Starlings logo placeholder" width="520">
 
 # Starlings
 
