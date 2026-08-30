@@ -160,6 +160,7 @@ pub fn validateOutput(registry: anytype, manifest: core.OperatorManifest, output
     }
 
     for (output.invariants()) |claim| {
+        if (@as(usize, claim.parent_count) > core.max_claim_parents) return error.TooManyParents;
         if (claim.source_operator != manifest.id) return error.SourceOperatorMismatch;
         if (registry.invariantIndex(claim.invariant) == null) return error.UnknownInvariant;
         if (!containsInvariant(manifest.provides_invariants, claim.invariant)) return error.UnauthorizedInvariantWrite;
