@@ -67,7 +67,10 @@ pub const ModelRequest = struct {
     operator_name: []const u8,
     role: contract.OperatorRole,
     profile: ?[]const u8,
-    observation: AgentRunner.Observation,
+    timeout_ms: u32,
+    round: u32,
+    observations: []const external.WireObservation,
+    invariants: []const external.WireInvariant,
     provides_variables: []const core.VariableId,
     provides_invariants: []const core.InvariantId,
 };
@@ -242,11 +245,7 @@ pub const Agent = struct {
                         return error.MissingRuntimeTarget;
                     const provider = findModelProvider(bindings.models, provider_name) orelse
                         return error.UnboundModelProvider;
-                    const context = try self.arena.create(ModelContext);
-                    context.* = .{
-                        .provider = provider,
-                        .operator = operator,
-                    };
+                    const context = try self.makeModelContext(operator, provider);
                     try self.runner.addOperator(
                         operator.asRegistered(),
                         context,
@@ -302,6 +301,43 @@ pub const Agent = struct {
         return context;
     }
 
+    fn makeModelContext(
+        self: *Agent,
+        operator: *const contract.CompiledOperator,
+        provider: ModelProvider,
+    ) !*ModelContext {
+        const context = try self.arena.create(ModelContext);
+        context.* = .{
+            .provider = provider,
+            .operator_id = operator.id,
+            .operator_name = operator.name,
+            .role = operator.role,
+            .profile = operator.runtime.profile,
+            .timeout_ms = operator.runtime.timeout_ms,
+            .required_variable_count = operator.requires_variable_count,
+            .required_invariant_count = operator.requires_invariant_count,
+            .provided_variable_count = operator.provides_variable_count,
+            .provided_invariant_count = operator.provides_invariant_count,
+        };
+        @memcpy(
+            context.required_variables[0..operator.requires_variable_count],
+            operator.requires_variables[0..operator.requires_variable_count],
+        );
+        @memcpy(
+            context.required_invariants[0..operator.requires_invariant_count],
+            operator.requires_invariants[0..operator.requires_invariant_count],
+        );
+        @memcpy(
+            context.provided_variables[0..operator.provides_variable_count],
+            operator.provides_variables[0..operator.provides_variable_count],
+        );
+        @memcpy(
+            context.provided_invariants[0..operator.provides_invariant_count],
+            operator.provides_invariants[0..operator.provides_invariant_count],
+        );
+        return context;
+    }
+
     fn makeInvocation(
         self: *Agent,
         decl: contract.RuntimeDecl,
@@ -330,22 +366,62 @@ pub const Agent = struct {
 
 const ModelContext = struct {
     provider: ModelProvider,
-    operator: *const contract.CompiledOperator,
+    operator_id: core.OperatorId,
+    operator_name: []const u8,
+    role: contract.OperatorRole,
+    profile: ?[]const u8,
+    timeout_ms: u32,
+    required_variables: [contract.max_dependencies]core.VariableId = undefined,
+    required_variable_count: usize = 0,
+    required_invariants: [contract.max_dependencies]core.InvariantId = undefined,
+    required_invariant_count: usize = 0,
+    provided_variables: [contract.max_dependencies]core.VariableId = undefined,
+    provided_variable_count: usize = 0,
+    provided_invariants: [contract.max_dependencies]core.InvariantId = undefined,
+    provided_invariant_count: usize = 0,
 
     fn execute(
         raw_context: ?*const anyopaque,
-        observation: AgentRunner.Observation,
+        obs: AgentRunner.Observation,
     ) !core.OperatorOutput {
         const opaque = raw_context orelse return error.MissingModelContext;
         const self: *const ModelContext = @ptrCast(@alignCast(opaque));
+
+        var observations: [contract.max_dependencies]external.WireObservation = undefined;
+        var observation_count: usize = 0;
+        for (self.required_variables[0..self.required_variable_count]) |variable_id| {
+            const status = obs.status(variable_id) orelse return error.ModelVariableNotReadable;
+            observations[observation_count] = .{
+                .variable = variable_id,
+                .status = status,
+                .value = obs.value(variable_id),
+            };
+            observation_count += 1;
+        }
+
+        var invariants: [contract.max_dependencies]external.WireInvariant = undefined;
+        var invariant_count: usize = 0;
+        for (self.required_invariants[0..self.required_invariant_count]) |invariant_id| {
+            const status = obs.invariantStatus(invariant_id) orelse
+                return error.ModelInvariantNotReadable;
+            invariants[invariant_count] = .{
+                .invariant = invariant_id,
+                .status = status,
+            };
+            invariant_count += 1;
+        }
+
         return self.provider.infer(.{
-            .operator_id = self.operator.id,
-            .operator_name = self.operator.name,
-            .role = self.operator.role,
-            .profile = self.operator.runtime.profile,
-            .observation = observation,
-            .provides_variables = self.operator.provides_variables[0..self.operator.provides_variable_count],
-            .provides_invariants = self.operator.provides_invariants[0..self.operator.provides_invariant_count],
+            .operator_id = self.operator_id,
+            .operator_name = self.operator_name,
+            .role = self.role,
+            .profile = self.profile,
+            .timeout_ms = self.timeout_ms,
+            .round = obs.round(),
+            .observations = observations[0..observation_count],
+            .invariants = invariants[0..invariant_count],
+            .provides_variables = self.provided_variables[0..self.provided_variable_count],
+            .provides_invariants = self.provided_invariants[0..self.provided_invariant_count],
         });
     }
 };
