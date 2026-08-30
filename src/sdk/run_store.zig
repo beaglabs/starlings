@@ -1370,6 +1370,79 @@ test "durable event log survives close load and replay without operator executio
     try std.testing.expectEqual(live_snapshot.eligible_operators, replay_snapshot.eligible_operators);
 }
 
+test "replay preserves a crash-time open activation" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const R = execution.Runner(2, 0, 1, 16);
+    const Ops = struct {
+        fn derive(_: ?*const anyopaque, obs: R.Observation) !core.OperatorOutput {
+            var out = core.OperatorOutput{};
+            try out.addClaim(.{
+                .variable = 2,
+                .status = .derived,
+                .value = .{ .integer = obs.value(1).?.integer + 1 },
+                .source_operator = 10,
+            });
+            return out;
+        }
+
+        fn setup(runner: *R) !void {
+            try runner.addVariable(.{ .variable = .{
+                .id = 1,
+                .name = "input",
+                .kind = .integer,
+                .merge_policy = .latest,
+            } });
+            try runner.addVariable(.{ .variable = .{
+                .id = 2,
+                .name = "output",
+                .kind = .integer,
+                .merge_policy = .latest,
+            } });
+            try runner.addOperator(.{ .manifest = .{
+                .id = 10,
+                .name = "derive",
+                .requires_variables = &.{1},
+                .provides_variables = &.{2},
+            } }, null, derive);
+        }
+    };
+
+    var source = R.init(17, &.{2});
+    try Ops.setup(&source);
+    _ = try source.seedVariable(1, .observed, .{ .integer = 4 }, 1000);
+    _ = try source.runUntilQuiescent(4);
+
+    var writer = try createRun(io, std.testing.allocator, tmp.dir, &source);
+    const run_id = writer.run_id;
+    const records = source.eventRecords();
+    try std.testing.expect(records.len >= 3);
+    try std.testing.expectEqual(
+        event_log.EventKind.operator_started,
+        std.meta.activeTag(records[2].event),
+    );
+    for (records[0..3]) |record| try writer.appendRecord(record);
+    writer.deinit();
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const configuration = try loadConfiguration(io, arena, tmp.dir, run_id);
+    const loaded = try loadEventLog(R.max_event_records, io, arena, tmp.dir, run_id);
+
+    var replayed = R.init(configuration.seed, configuration.targetSlice());
+    try configuration.configure(&replayed);
+    try replayed.replayRecords(loaded.log.slice());
+
+    try std.testing.expectEqual(@as(?core.OperatorId, 10), try replayed.openActivationOperatorId());
+    try std.testing.expectEqual(@as(u64, 1), replayed.operatorActivationEpoch(10).?);
+    try std.testing.expectEqual(@as(usize, 0), replayed.pendingActivationCount());
+    try std.testing.expect(replayed.result().value(2) == null);
+}
+
 test "loader ignores only an unterminated crash tail" {
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
