@@ -68,7 +68,8 @@ pub const Supervisor = struct {
             .stdout = .pipe,
             .stderr = .pipe,
         }) catch return error.OperatorSpawnFailed;
-        errdefer child.kill(self.io);
+        var child_active = true;
+        errdefer if (child_active) child.kill(self.io);
 
         {
             var write_buffer: [4096]u8 = undefined;
@@ -99,16 +100,19 @@ pub const Supervisor = struct {
         while (true) {
             if (stdout_reader.buffered().len > self.max_stdout_bytes) {
                 child.kill(self.io);
+                child_active = false;
                 return error.OperatorStdoutTooLarge;
             }
             if (stderr_reader.buffered().len > self.max_stderr_bytes) {
                 child.kill(self.io);
+                child_active = false;
                 return error.OperatorStderrTooLarge;
             }
 
             const elapsed = timer.read();
             if (elapsed >= timeout_ns) {
                 child.kill(self.io);
+                child_active = false;
                 return error.OperatorTimeout;
             }
 
@@ -120,6 +124,7 @@ pub const Supervisor = struct {
             multi_reader.fill(4096, timeout) catch |err| switch (err) {
                 error.Timeout => {
                     child.kill(self.io);
+                    child_active = false;
                     return error.OperatorTimeout;
                 },
                 error.EndOfStream => break,
@@ -129,10 +134,12 @@ pub const Supervisor = struct {
 
         if (stdout_reader.buffered().len > self.max_stdout_bytes) {
             child.kill(self.io);
+            child_active = false;
             return error.OperatorStdoutTooLarge;
         }
         if (stderr_reader.buffered().len > self.max_stderr_bytes) {
             child.kill(self.io);
+            child_active = false;
             return error.OperatorStderrTooLarge;
         }
 
@@ -141,15 +148,16 @@ pub const Supervisor = struct {
         }
 
         const stdout = stdout_reader.buffered();
-        if (stdout.len > response_buffer.len) return error.WireBufferTooSmall;
-        @memcpy(response_buffer[0..stdout.len], stdout);
 
         const term = try child.wait(self.io);
+        child_active = false;
         switch (term) {
             .exited => |code| if (code != 0) return error.OperatorCrashed,
             .signal, .stopped, .unknown => return error.OperatorCrashed,
         }
 
+        if (stdout.len > response_buffer.len) return error.WireBufferTooSmall;
+        @memcpy(response_buffer[0..stdout.len], stdout);
         return response_buffer[0..stdout.len];
     }
 };
