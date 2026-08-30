@@ -144,22 +144,32 @@ fn replayRun(
     }
 
     const snapshot = runner.schedulerSnapshot();
+    const summary = runner.result().summary;
+    const open_activation = try runner.openActivationOperatorId();
+
+    var open_buffer: [32]u8 = undefined;
+    const open_text: []const u8 = if (open_activation) |operator_id|
+        try std.fmt.bufPrint(&open_buffer, "{d}", .{operator_id})
+    else
+        "none";
+
     var head_buffer: [64]u8 = undefined;
     const head = run_store.formatRunId(runner.eventHeadId(), &head_buffer);
 
     try writeLine(
         io,
         std.Io.File.stdout(),
-        "REPLAY {s} events={d} round={d} outcome={s} accepted={d} rejected={d} actions={d} pending={d} head={s}\n",
+        "REPLAY {s} events={d} round={d} outcome={s} accepted={d} rejected={d} actions={d} pending={d} open={s} head={s}\n",
         .{
             run_id_text,
             runner.eventRecords().len,
             snapshot.round,
             @tagName(snapshot.outcome),
-            runner.result().summary.accepted_claims,
-            runner.result().summary.rejected_claims,
-            runner.result().summary.proposed_actions,
+            summary.accepted_claims,
+            summary.rejected_claims,
+            summary.proposed_actions,
             snapshot.pending_activations,
+            open_text,
             head,
         },
     );
