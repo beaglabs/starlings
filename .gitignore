@@ -3,5 +3,11 @@ zig-out/
 *.o
 /trials/*
 !/trials/README.md
+!/trials/weightless-3d-paper-reconstruction/
+!/trials/weightless-3d-paper-reconstruction/README.md
+!/trials/weightless-3d-paper-reconstruction/trial.zig
+!/trials/weightless-3d-paper-reconstruction/population/
+!/trials/weightless-3d-paper-reconstruction/population/*.yaml
+/trials/weightless-3d-paper-reconstruction/out/
 models/
 .DS_Store
