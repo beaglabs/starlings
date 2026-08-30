@@ -5,3 +5,4 @@ zig-out/
 !/trials/README.md
 models/
 .DS_Store
+__pycache__/
