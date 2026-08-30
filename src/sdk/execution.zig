@@ -1870,6 +1870,49 @@ test "event sink failure latches the runner closed" {
 }
 
 
+test "artifact verifier failure becomes canonical validation failure" {
+    const R = Runner(0, 0, 1, 8);
+
+    const Ops = struct {
+        fn emit(_: ?*const anyopaque, _: R.Observation) !core.OperatorOutput {
+            var out = core.OperatorOutput{};
+            try out.addArtifact(output_state.artifactRef("text/plain", "missing"));
+            return out;
+        }
+    };
+
+    const Verify = struct {
+        fn reject(_: ?*anyopaque, _: core.ArtifactRef) anyerror!void {
+            return error.ArtifactNotPersisted;
+        }
+    };
+
+    var runner = R.init(44, &.{});
+    try runner.addOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "emit-unpersisted-artifact",
+    } }, null, Ops.emit);
+    try runner.setArtifactVerifier(.{
+        .verify_fn = Verify.reject,
+    });
+
+    try std.testing.expectError(
+        error.ArtifactNotPersisted,
+        runner.runUntilQuiescent(2),
+    );
+
+    const records = runner.eventRecords();
+    try std.testing.expect(records.len >= 3);
+    switch (records[records.len - 1].event) {
+        .operator_failed => |failure| {
+            try std.testing.expectEqual(event_log.FailureKind.validation, failure.kind);
+        },
+        else => return error.TestExpectedOperatorFailure,
+    }
+    try std.testing.expectEqual(@as(usize, 0), runner.artifactEmissionCount());
+}
+
+
 test "artifact and approval action state is event-derived and replayable" {
     const R = Runner(1, 0, 1, 16);
 
