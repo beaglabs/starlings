@@ -507,7 +507,7 @@ fn tokenize(source: []const u8) !ParsedLines {
 
         if (std.mem.indexOfScalar(u8, raw_line, '\t') != null) return error.TabsNotAllowed;
 
-        const without_cr = std.mem.trimRight(u8, raw_line, "\r ");
+        const without_cr = trimLineEnd(raw_line);
         const trimmed = std.mem.trim(u8, without_cr, " ");
         if (trimmed.len == 0 or trimmed[0] == '#') continue;
 
@@ -525,6 +525,16 @@ fn tokenize(source: []const u8) !ParsedLines {
     }
 
     return result;
+}
+
+fn trimLineEnd(line: []const u8) []const u8 {
+    var end = line.len;
+    while (end > 0) {
+        const ch = line[end - 1];
+        if (ch != ' ' and ch != '\r') break;
+        end -= 1;
+    }
+    return line[0..end];
 }
 
 fn scalarField(line: Line, key: []const u8) !?[]const u8 {
