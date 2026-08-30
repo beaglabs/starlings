@@ -221,13 +221,15 @@ Phase 1 rejects:
 - declaration counts beyond fixed contract limits;
 - deterministic identifier collisions.
 
-The YAML loader is pinned as a build dependency, while the protocol/SDK core remains directly testable with:
+Phase 1 uses a small purpose-built YAML subset parser inside Starlings rather than depending on a third-party YAML package. The parser accepts only the mapping/list/scalar shapes used by the pack contract and fails closed on unknown structure, tabs, malformed indentation, malformed quoting, and unsupported fields.
+
+The protocol/SDK core remains directly testable with:
 
 ```sh
 zig test src/root.zig
 ```
 
-The YAML-backed contract tests run through:
+The pack parser, compiler, CLI, and reference-pack gate run through:
 
 ```sh
 zig build test
@@ -242,6 +244,6 @@ Phase 1 is complete when:
 3. declarations compile into existing SDK `Variable`, `Invariant`, `RegisteredOperator`, and target IDs;
 4. dangling or duplicate declarations fail deterministically;
 5. `starlings pack validate` and `starlings pack inspect` work on the reference pack;
-6. direct protocol-core tests remain independent of the YAML dependency.
+6. direct protocol-core tests remain independent of pack-file parsing.
 
 Execution is deliberately not part of Phase 1. Reactive scheduling begins in Phase 2.
