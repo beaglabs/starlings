@@ -23,8 +23,8 @@ pub fn termSatisfied(registry: anytype, state: anytype, term: reg.DependencyTerm
         },
         .variable_resolved => |id| variableFresh(registry, state, id, round),
         .invariant_satisfied => |id| blk: {
-            const index = registry.invariantIndex(id) orelse break :blk false;
-            break :blk state.invariants[index].status == .satisfied;
+            const cell = state.invariantCell(registry, id) orelse break :blk false;
+            break :blk cell.status == .satisfied;
         },
     };
 }
@@ -144,4 +144,26 @@ test "dependency expressions support any and invariant prerequisites" {
 
     try state.setInvariant(&registry, 4, .satisfied, 1);
     try std.testing.expect(operatorEligible(&registry, &state, 1, 1));
+}
+
+
+test "zero-invariant registries support variable-only eligibility" {
+    const R = reg.Registry(2, 0, 1);
+    const S = reg.ContextState(2, 0);
+    var registry = R{};
+    var state = S{};
+
+    try registry.addVariable(.{ .variable = .{ .id = 1, .name = "input", .kind = .integer } });
+    try registry.addVariable(.{ .variable = .{ .id = 2, .name = "output", .kind = .integer } });
+    try registry.addOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "variable-only",
+        .requires_variables = &.{1},
+        .provides_variables = &.{2},
+    } });
+
+    try state.setVariable(&registry, 1, .observed, .{ .integer = 7 }, 1);
+    try std.testing.expect(registry.invariantIndex(99) == null);
+    try std.testing.expect(state.invariantCell(&registry, 99) == null);
+    try std.testing.expect(operatorEligible(&registry, &state, 0, 1));
 }
