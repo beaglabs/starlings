@@ -424,7 +424,7 @@ fn resolvePackTarget(
     if (target.len == 0) return error.MissingRuntimeTarget;
     if (std.fs.path.isAbsolute(target)) return target;
 
-    if (std.mem.indexOfAny(u8, target, "/\\") == null) return target;
+    if (!containsPathSeparator(target)) return target;
     try rejectParentTraversal(target);
     return std.fs.path.join(arena, &.{ pack_dir, target });
 }
@@ -440,6 +440,13 @@ fn resolveRuntimeArg(
         return std.fs.path.join(arena, &.{ pack_dir, relative });
     }
     return arg;
+}
+
+fn containsPathSeparator(path: []const u8) bool {
+    for (path) |ch| {
+        if (ch == '/' or ch == '\\') return true;
+    }
+    return false;
 }
 
 fn rejectParentTraversal(path: []const u8) !void {
@@ -488,7 +495,7 @@ test "one model provider backs multiple logical model operators" {
             .provides = .{ .variables = &.{"method.candidate"} },
         },
     };
-    var compiled = try contract.compile(.{
+    const compiled = try contract.compile(.{
         .manifest = .{
             .apiVersion = contract.api_version,
             .kind = contract.kind_name,
