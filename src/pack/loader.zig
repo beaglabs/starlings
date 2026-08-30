@@ -367,7 +367,7 @@ pub fn parseOperators(
             if (isForbiddenWorkflowKey(nested.text)) return error.WorkflowKeyForbidden;
 
             if (isHeader(nested, "runtime")) {
-                const result = try parseRuntime(lines, &i);
+                const result = try parseRuntime(arena, lines, &i);
                 runtime = result;
                 continue;
             }
@@ -414,7 +414,11 @@ pub fn validatePolicySource(source: []const u8) !void {
     }
 }
 
-fn parseRuntime(lines: []const Line, index: *usize) !contract.RuntimeDecl {
+fn parseRuntime(
+    arena: std.mem.Allocator,
+    lines: []const Line,
+    index: *usize,
+) !contract.RuntimeDecl {
     index.* += 1;
     var kind: ?contract.RuntimeKind = null;
     var target: ?[]const u8 = null;
@@ -462,7 +466,7 @@ fn parseRuntime(lines: []const Line, index: *usize) !contract.RuntimeDecl {
         return error.UnknownSchemaField;
     }
 
-    const args = try std.heap.page_allocator.alloc([]const u8, arg_count);
+    const args = try arena.alloc([]const u8, arg_count);
     @memcpy(args, arg_buf[0..arg_count]);
 
     return .{
