@@ -541,6 +541,14 @@ pub fn Runner(
                         return error.ReplayOperatorMismatch;
                     }
 
+                    var replay_output = core.OperatorOutput{};
+                    try replay_output.addClaim(payload.claim);
+                    try output_state.validateOutput(
+                        &self.registry,
+                        self.registry.operators[open_index].manifest,
+                        &replay_output,
+                    );
+
                     const claim_id = try self.claims.append(payload.claim);
                     if (!content_id.eql(claim_id, payload.claim_id)) {
                         return error.ClaimIdentityMismatch;
@@ -561,6 +569,15 @@ pub fn Runner(
                     if (payload.claim.source_operator != operator_id) {
                         return error.ReplayOperatorMismatch;
                     }
+
+                    var replay_output = core.OperatorOutput{};
+                    try replay_output.addInvariant(payload.claim);
+                    try output_state.validateOutput(
+                        &self.registry,
+                        self.registry.operators[open_index].manifest,
+                        &replay_output,
+                    );
+
                     try self.state.setInvariant(
                         &self.registry,
                         payload.claim.invariant,
@@ -577,7 +594,7 @@ pub fn Runner(
                         return error.ActivationEpochMismatch;
                     }
 
-                    self.proposed_actions += payload.actions;
+                    self.proposed_actions += @as(usize, payload.actions);
                     self.executors[index].last_settled_epoch = payload.activation_epoch;
                 },
                 .operator_failed => |payload| {
@@ -589,7 +606,7 @@ pub fn Runner(
                         return error.ActivationEpochMismatch;
                     }
 
-                    self.rejected_claims += payload.rejected_claims;
+                    self.rejected_claims += @as(usize, payload.rejected_claims);
                     self.executors[index].last_settled_epoch = payload.activation_epoch;
                 },
             }
