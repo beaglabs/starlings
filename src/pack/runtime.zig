@@ -139,6 +139,8 @@ pub const Runtime = struct {
             },
             .required_variable_count = operator.requires_variable_count,
             .required_invariant_count = operator.requires_invariant_count,
+            .provided_variable_count = operator.provides_variable_count,
+            .provided_invariant_count = operator.provides_invariant_count,
         };
         @memcpy(
             context.required_variables[0..operator.requires_variable_count],
@@ -147,6 +149,14 @@ pub const Runtime = struct {
         @memcpy(
             context.required_invariants[0..operator.requires_invariant_count],
             operator.requires_invariants[0..operator.requires_invariant_count],
+        );
+        @memcpy(
+            context.provided_variables[0..operator.provides_variable_count],
+            operator.provides_variables[0..operator.provides_variable_count],
+        );
+        @memcpy(
+            context.provided_invariants[0..operator.provides_invariant_count],
+            operator.provides_invariants[0..operator.provides_invariant_count],
         );
         return context;
     }
@@ -183,6 +193,10 @@ const ExternalContext = struct {
     required_variable_count: usize = 0,
     required_invariants: [contract.max_dependencies]core.InvariantId = undefined,
     required_invariant_count: usize = 0,
+    provided_variables: [contract.max_dependencies]core.VariableId = undefined,
+    provided_variable_count: usize = 0,
+    provided_invariants: [contract.max_dependencies]core.InvariantId = undefined,
+    provided_invariant_count: usize = 0,
 
     fn execute(
         raw_context: ?*const anyopaque,
@@ -215,10 +229,12 @@ const ExternalContext = struct {
             invariant_count += 1;
         }
 
-        return self.buffered.invokeState(
+        return self.buffered.invokeExecution(
             obs.round(),
             observations[0..observation_count],
             invariants[0..invariant_count],
+            self.provided_variables[0..self.provided_variable_count],
+            self.provided_invariants[0..self.provided_invariant_count],
         );
     }
 };
