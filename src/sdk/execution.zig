@@ -44,14 +44,14 @@ pub fn Runner(
 
             pub fn status(self: Observation, id: core.VariableId) ?core.EpistemicStatus {
                 if (!self.canRead(id)) return null;
-                const index = self.runner.registry.variableIndex(id) orelse return null;
-                return self.runner.state.variables[index].status;
+                const cell = self.runner.state.variableCell(&self.runner.registry, id) orelse return null;
+                return cell.status;
             }
 
             pub fn value(self: Observation, id: core.VariableId) ?core.Value {
                 if (!self.canRead(id)) return null;
-                const index = self.runner.registry.variableIndex(id) orelse return null;
-                return self.runner.state.variables[index].value;
+                const cell = self.runner.state.variableCell(&self.runner.registry, id) orelse return null;
+                return cell.value;
             }
 
             pub fn invariantStatus(self: Observation, id: core.InvariantId) ?core.InvariantStatus {
@@ -117,13 +117,13 @@ pub fn Runner(
             summary: core.Result,
 
             pub fn value(self: ExecutionResult, id: core.VariableId) ?core.Value {
-                const index = self.runner.registry.variableIndex(id) orelse return null;
-                return self.runner.state.variables[index].value;
+                const cell = self.runner.state.variableCell(&self.runner.registry, id) orelse return null;
+                return cell.value;
             }
 
             pub fn status(self: ExecutionResult, id: core.VariableId) ?core.EpistemicStatus {
-                const index = self.runner.registry.variableIndex(id) orelse return null;
-                return self.runner.state.variables[index].status;
+                const cell = self.runner.state.variableCell(&self.runner.registry, id) orelse return null;
+                return cell.status;
             }
 
             pub fn explain(self: ExecutionResult, id: core.VariableId) ?Explanation {
@@ -216,9 +216,10 @@ pub fn Runner(
             };
             try claim.validateShape();
 
-            const variable_index = self.registry.variableIndex(id) orelse return error.UnknownVariable;
+            _ = self.registry.variableIndex(id) orelse return error.UnknownVariable;
             if (value) |typed_value| {
-                if (typed_value.kind() != self.registry.variables[variable_index].variable.kind) {
+                const schema = self.registry.variableSchema(id) orelse return error.UnknownVariable;
+                if (typed_value.kind() != schema.variable.kind) {
                     return error.VariableTypeMismatch;
                 }
             }
@@ -515,10 +516,12 @@ pub fn Runner(
         fn makeResult(self: *const Self, outcome: core.ResultOutcome) ExecutionResult {
             var unresolved: usize = 0;
             var conflicting: usize = 0;
-            var i: usize = 0;
-            while (i < self.registry.variable_count) : (i += 1) {
-                if (self.state.variables[i].status == .unknown) unresolved += 1;
-                if (self.state.variables[i].status == .conflicting) conflicting += 1;
+            if (comptime max_variables != 0) {
+                var i: usize = 0;
+                while (i < self.registry.variable_count) : (i += 1) {
+                    if (self.state.variables[i].status == .unknown) unresolved += 1;
+                    if (self.state.variables[i].status == .conflicting) conflicting += 1;
+                }
             }
             return .{
                 .runner = self,
@@ -535,6 +538,7 @@ pub fn Runner(
         }
 
         fn isTerminalSuccess(self: *const Self) bool {
+            if (comptime max_variables == 0) return false;
             if (self.targets.len == 0) return false;
             for (self.targets) |id| {
                 const index = self.registry.variableIndex(id) orelse return false;
@@ -544,6 +548,7 @@ pub fn Runner(
         }
 
         fn hasTargetConflict(self: *const Self) bool {
+            if (comptime max_variables == 0) return false;
             for (self.targets) |id| {
                 const index = self.registry.variableIndex(id) orelse continue;
                 if (self.state.variables[index].status == .conflicting) return true;
@@ -552,6 +557,7 @@ pub fn Runner(
         }
 
         fn hasTargetBlock(self: *const Self) bool {
+            if (comptime max_variables == 0) return false;
             for (self.targets) |id| {
                 const index = self.registry.variableIndex(id) orelse continue;
                 switch (self.state.variables[index].status) {
@@ -585,24 +591,26 @@ pub fn Runner(
             hashU64(&hasher, self.seed);
 
             hashU64(&hasher, @intCast(self.registry.variable_count));
-            var i: usize = 0;
-            while (i < self.registry.variable_count) : (i += 1) {
-                const schema = self.registry.variables[i];
-                hashU32(&hasher, schema.variable.id);
-                hashSlice(&hasher, schema.variable.name);
-                hasher.update(&.{@intFromEnum(schema.variable.kind)});
-                hasher.update(&.{@intFromEnum(schema.variable.merge_policy)});
-                if (schema.variable.unit) |unit| {
-                    hasher.update(&.{1});
-                    hashSlice(&hasher, unit);
-                } else {
-                    hasher.update(&.{0});
-                }
-                if (schema.freshness_rounds) |freshness| {
-                    hasher.update(&.{1});
-                    hashU32(&hasher, freshness);
-                } else {
-                    hasher.update(&.{0});
+            if (comptime max_variables != 0) {
+                var i: usize = 0;
+                while (i < self.registry.variable_count) : (i += 1) {
+                    const schema = self.registry.variables[i];
+                    hashU32(&hasher, schema.variable.id);
+                    hashSlice(&hasher, schema.variable.name);
+                    hasher.update(&.{@intFromEnum(schema.variable.kind)});
+                    hasher.update(&.{@intFromEnum(schema.variable.merge_policy)});
+                    if (schema.variable.unit) |unit| {
+                        hasher.update(&.{1});
+                        hashSlice(&hasher, unit);
+                    } else {
+                        hasher.update(&.{0});
+                    }
+                    if (schema.freshness_rounds) |freshness| {
+                        hasher.update(&.{1});
+                        hashU32(&hasher, freshness);
+                    } else {
+                        hasher.update(&.{0});
+                    }
                 }
             }
 
@@ -1017,6 +1025,11 @@ pub fn Runner(
         ) void {
             hasher.update(&.{tag});
             hashU32(hasher, id);
+
+            if (comptime max_variables == 0) {
+                hashU64(hasher, 0);
+                return;
+            }
 
             const index = self.registry.variableIndex(id) orelse {
                 hashU64(hasher, 0);
