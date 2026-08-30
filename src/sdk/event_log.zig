@@ -87,7 +87,7 @@ pub const EventSink = struct {
     context: ?*anyopaque,
     append_fn: *const fn (?*anyopaque, EventRecord) anyerror!void,
 
-    pub fn append(self: EventSink, record: EventRecord) !void {
+    pub fn append(self: EventSink, record: EventRecord) anyerror!void {
         try self.append_fn(self.context, record);
     }
 };
