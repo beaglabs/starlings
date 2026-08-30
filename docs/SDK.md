@@ -93,6 +93,7 @@ The event ID is domain-separated BLAKE3 over the canonical event version, sequen
 Phase 2C records these event kinds:
 
 ```text
+run_started
 observation_added
 operator_started
 claim_accepted
@@ -100,6 +101,8 @@ invariant_changed
 operator_completed
 operator_failed
 ```
+
+`run_started` binds the event stream to the runner seed and a canonical configuration digest covering the registered variables, invariants, operators, eligibility declarations, and targets. Once the first run event is emitted, the registry is locked against mutation.
 
 Variable claims reuse the canonical claim identity from `output_state.claimContentId`. Operator-start events preserve the activation epoch and dependency fingerprint so replay can reconstruct the reactive scheduler state without re-executing an operator.
 
@@ -109,7 +112,7 @@ A fresh runner with the same registry, operator declarations, seed, and targets 
 try replayed.replayFrom(&live.events);
 ```
 
-Replay validates the event chain, operator authorization, activation ordering, dependency fingerprints, and event rounds while reconstructing:
+Replay validates the event chain, run configuration/seed, deterministic scheduler arbitration, operator authorization, activation ordering, dependency fingerprints, and event rounds while reconstructing:
 
 - materialized variable state;
 - invariant state;
