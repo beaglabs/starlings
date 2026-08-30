@@ -418,6 +418,10 @@ fn parseRuntime(lines: []const Line, index: *usize) !contract.RuntimeDecl {
     index.* += 1;
     var kind: ?contract.RuntimeKind = null;
     var target: ?[]const u8 = null;
+    var timeout_ms: ?u32 = null;
+    var arg_buf: [contract.max_runtime_args][]const u8 = undefined;
+    var arg_count: usize = 0;
+    var saw_args = false;
 
     while (index.* < lines.len and lines[index.*].indent > 4) {
         const line = lines[index.*];
@@ -426,17 +430,46 @@ fn parseRuntime(lines: []const Line, index: *usize) !contract.RuntimeDecl {
         if (try scalarField(line, "kind")) |value| {
             if (kind != null) return error.DuplicateSchemaField;
             kind = std.meta.stringToEnum(contract.RuntimeKind, value) orelse return error.InvalidEnum;
-        } else if (try scalarField(line, "target")) |value| {
+            index.* += 1;
+            continue;
+        }
+        if (try scalarField(line, "target")) |value| {
             if (target != null) return error.DuplicateSchemaField;
             target = value;
-        } else return error.UnknownSchemaField;
-
-        index.* += 1;
+            index.* += 1;
+            continue;
+        }
+        if (try scalarField(line, "timeout_ms")) |value| {
+            if (timeout_ms != null) return error.DuplicateSchemaField;
+            timeout_ms = std.fmt.parseInt(u32, value, 10) catch return error.InvalidInteger;
+            index.* += 1;
+            continue;
+        }
+        if (isHeader(line, "args")) {
+            if (saw_args) return error.DuplicateSchemaField;
+            saw_args = true;
+            index.* += 1;
+            while (index.* < lines.len and lines[index.*].indent > 6) {
+                const item = lines[index.*];
+                try expectIndent(item, 8);
+                if (arg_count >= arg_buf.len) return error.PackCapacityExceeded;
+                arg_buf[arg_count] = try listScalar(item);
+                arg_count += 1;
+                index.* += 1;
+            }
+            continue;
+        }
+        return error.UnknownSchemaField;
     }
+
+    const args = try std.heap.page_allocator.alloc([]const u8, arg_count);
+    @memcpy(args, arg_buf[0..arg_count]);
 
     return .{
         .kind = kind orelse return error.MissingSchemaField,
         .target = target,
+        .args = args,
+        .timeout_ms = timeout_ms orelse 30_000,
     };
 }
 
