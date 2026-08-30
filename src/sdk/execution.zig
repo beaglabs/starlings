@@ -96,6 +96,13 @@ pub fn Runner(
             conflict_count: usize,
         };
 
+        pub const SchedulerSnapshot = struct {
+            outcome: core.ResultOutcome,
+            round: u32,
+            eligible_operators: usize,
+            pending_activations: usize,
+        };
+
         pub const ExecutionResult = struct {
             runner: *const Self,
             summary: core.Result,
@@ -253,28 +260,62 @@ pub fn Runner(
         }
 
         pub fn run(self: *Self, max_rounds: u32) !ExecutionResult {
-            while (self.round < max_rounds) {
+            if (self.round >= max_rounds) {
+                return self.makeResult(self.outcomeAtBudgetBoundary());
+            }
+            return self.runUntilQuiescent(max_rounds - self.round);
+        }
+
+        pub fn runUntilQuiescent(self: *Self, max_activations: u32) !ExecutionResult {
+            var activations: u32 = 0;
+
+            while (activations < max_activations) {
                 if (self.isTerminalSuccess()) return self.makeResult(.success);
+
                 const progressed = try self.step();
                 if (!progressed) {
-                    if (self.isTerminalSuccess()) return self.makeResult(.success);
-                    if (self.hasTargetConflict()) return self.makeResult(.conflicting);
-                    return self.makeResult(.blocked);
+                    return self.makeResult(self.outcomeAtRest());
                 }
+                activations += 1;
             }
+
             if (self.isTerminalSuccess()) return self.makeResult(.success);
-            if (self.hasTargetConflict()) return self.makeResult(.conflicting);
-            return self.makeResult(.exhausted);
+            return self.makeResult(self.outcomeAtBudgetBoundary());
         }
 
         pub fn result(self: *const Self) ExecutionResult {
-            const outcome: core.ResultOutcome = if (self.isTerminalSuccess())
-                .success
-            else if (self.hasTargetConflict())
-                .conflicting
-            else
-                .running;
-            return self.makeResult(outcome);
+            return self.makeResult(self.currentOutcome());
+        }
+
+        pub fn schedulerSnapshot(self: *const Self) SchedulerSnapshot {
+            return .{
+                .outcome = self.currentOutcome(),
+                .round = self.round,
+                .eligible_operators = self.eligibleOperatorCount(),
+                .pending_activations = self.pendingActivationCount(),
+            };
+        }
+
+        pub fn pendingActivationCount(self: *const Self) usize {
+            var count: usize = 0;
+            var i: usize = 0;
+            while (i < self.registry.operator_count) : (i += 1) {
+                if (!eligibility.operatorEligible(&self.registry, &self.state, i, self.round)) continue;
+                if (!self.activationNeeded(i)) continue;
+                count += 1;
+            }
+            return count;
+        }
+
+        pub fn eligibleOperatorCount(self: *const Self) usize {
+            var count: usize = 0;
+            var i: usize = 0;
+            while (i < self.registry.operator_count) : (i += 1) {
+                if (eligibility.operatorEligible(&self.registry, &self.state, i, self.round)) {
+                    count += 1;
+                }
+            }
+            return count;
         }
 
         fn makeResult(self: *const Self, outcome: core.ResultOutcome) ExecutionResult {
@@ -300,14 +341,12 @@ pub fn Runner(
         }
 
         fn isTerminalSuccess(self: *const Self) bool {
+            if (self.targets.len == 0) return false;
             for (self.targets) |id| {
                 const index = self.registry.variableIndex(id) orelse return false;
-                const status = self.state.variables[index].status;
-                if (!status.isResolved() or status == .conflicting or status == .blocked or status == .unavailable) {
-                    return false;
-                }
+                if (!self.state.variables[index].status.carriesValue()) return false;
             }
-            return self.targets.len > 0;
+            return true;
         }
 
         fn hasTargetConflict(self: *const Self) bool {
@@ -316,6 +355,36 @@ pub fn Runner(
                 if (self.state.variables[index].status == .conflicting) return true;
             }
             return false;
+        }
+
+        fn hasTargetBlock(self: *const Self) bool {
+            for (self.targets) |id| {
+                const index = self.registry.variableIndex(id) orelse continue;
+                switch (self.state.variables[index].status) {
+                    .not_visible, .unavailable, .blocked => return true,
+                    else => {},
+                }
+            }
+            return false;
+        }
+
+        fn currentOutcome(self: *const Self) core.ResultOutcome {
+            if (self.isTerminalSuccess()) return .success;
+            if (self.pendingActivationCount() != 0) return .running;
+            return self.outcomeAtRest();
+        }
+
+        fn outcomeAtRest(self: *const Self) core.ResultOutcome {
+            if (self.isTerminalSuccess()) return .success;
+            if (self.hasTargetConflict()) return .conflicting;
+            if (self.hasTargetBlock()) return .blocked;
+            return .quiescent;
+        }
+
+        fn outcomeAtBudgetBoundary(self: *const Self) core.ResultOutcome {
+            if (self.isTerminalSuccess()) return .success;
+            if (self.pendingActivationCount() != 0) return .exhausted;
+            return self.outcomeAtRest();
         }
 
         pub fn operatorActivationEpoch(self: *const Self, id: core.OperatorId) ?u64 {
@@ -526,7 +595,7 @@ test "runner assembles a dependency chain without a central workflow" {
     try std.testing.expect(!content_id.isZero(explanation.claim_id));
 }
 
-test "missing prerequisites terminate as blocked rather than fabricating state" {
+test "missing prerequisites become quiescent rather than fabricating state" {
     const R = Runner(2, 0, 2, 8);
     var runner = R.init(0, &.{2});
     try runner.addVariable(.{ .variable = .{ .id = 1, .name = "missing", .kind = .boolean } });
@@ -553,8 +622,9 @@ test "missing prerequisites terminate as blocked rather than fabricating state" 
     } }, null, Ops.run);
 
     const result = try runner.run(4);
-    try std.testing.expectEqual(core.ResultOutcome.blocked, result.summary.outcome);
+    try std.testing.expectEqual(core.ResultOutcome.quiescent, result.summary.outcome);
     try std.testing.expect(result.value(2) == null);
+    try std.testing.expectEqual(@as(usize, 0), runner.pendingActivationCount());
 }
 
 test "operator observations cannot read undeclared variables" {
@@ -678,4 +748,195 @@ test "operators with no dependencies activate only once" {
     try std.testing.expect(try runner.step());
     try std.testing.expect(!(try runner.step()));
     try std.testing.expectEqual(@as(u64, 1), runner.operatorActivationEpoch(20).?);
+}
+
+
+test "quiescent population resumes after an external observation" {
+    const R = Runner(2, 0, 1, 16);
+    var runner = R.init(0, &.{2});
+
+    try runner.addVariable(.{ .variable = .{
+        .id = 1,
+        .name = "input",
+        .kind = .integer,
+        .merge_policy = .latest,
+    } });
+    try runner.addVariable(.{ .variable = .{
+        .id = 2,
+        .name = "output",
+        .kind = .integer,
+        .merge_policy = .latest,
+    } });
+
+    const Ops = struct {
+        fn derive(_: ?*const anyopaque, obs: R.Observation) !core.OperatorOutput {
+            const input = obs.value(1).?.integer;
+            var out = core.OperatorOutput{};
+            try out.addClaim(.{
+                .variable = 2,
+                .status = .derived,
+                .value = .{ .integer = input * 2 },
+                .source_operator = 10,
+            });
+            return out;
+        }
+    };
+
+    try runner.addOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "derive",
+        .requires_variables = &.{1},
+        .provides_variables = &.{2},
+    } }, null, Ops.derive);
+
+    const idle = try runner.runUntilQuiescent(4);
+    try std.testing.expectEqual(core.ResultOutcome.quiescent, idle.summary.outcome);
+    try std.testing.expectEqual(@as(usize, 0), runner.pendingActivationCount());
+
+    _ = try runner.seedVariable(1, .observed, .{ .integer = 21 }, 1000);
+    const awake = runner.schedulerSnapshot();
+    try std.testing.expectEqual(core.ResultOutcome.running, awake.outcome);
+    try std.testing.expectEqual(@as(usize, 1), awake.pending_activations);
+
+    const done = try runner.runUntilQuiescent(4);
+    try std.testing.expectEqual(core.ResultOutcome.success, done.summary.outcome);
+    try std.testing.expect(core.Value.eql(done.value(2).?, .{ .integer = 42 }));
+}
+
+test "explicit non-value target closure is blocked at quiescence" {
+    const R = Runner(1, 0, 1, 8);
+    var runner = R.init(0, &.{1});
+
+    try runner.addVariable(.{ .variable = .{
+        .id = 1,
+        .name = "answer",
+        .kind = .boolean,
+        .merge_policy = .latest,
+    } });
+
+    const Ops = struct {
+        fn close(_: ?*const anyopaque, _: R.Observation) !core.OperatorOutput {
+            var out = core.OperatorOutput{};
+            try out.addClaim(.{
+                .variable = 1,
+                .status = .blocked,
+                .source_operator = 10,
+            });
+            return out;
+        }
+    };
+
+    try runner.addOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "close",
+        .provides_variables = &.{1},
+    } }, null, Ops.close);
+
+    const result = try runner.runUntilQuiescent(4);
+    try std.testing.expectEqual(core.ResultOutcome.blocked, result.summary.outcome);
+    try std.testing.expectEqual(core.EpistemicStatus.blocked, result.status(1).?);
+}
+
+test "activation budget exhaustion is distinct from quiescence" {
+    const R = Runner(3, 0, 2, 16);
+    var runner = R.init(0, &.{3});
+
+    try runner.addVariable(.{ .variable = .{
+        .id = 1,
+        .name = "input",
+        .kind = .integer,
+        .merge_policy = .latest,
+    } });
+    try runner.addVariable(.{ .variable = .{
+        .id = 2,
+        .name = "middle",
+        .kind = .integer,
+        .merge_policy = .latest,
+    } });
+    try runner.addVariable(.{ .variable = .{
+        .id = 3,
+        .name = "output",
+        .kind = .integer,
+        .merge_policy = .latest,
+    } });
+
+    const Ops = struct {
+        fn first(_: ?*const anyopaque, obs: R.Observation) !core.OperatorOutput {
+            var out = core.OperatorOutput{};
+            try out.addClaim(.{
+                .variable = 2,
+                .status = .derived,
+                .value = .{ .integer = obs.value(1).?.integer + 1 },
+                .source_operator = 10,
+            });
+            return out;
+        }
+
+        fn second(_: ?*const anyopaque, obs: R.Observation) !core.OperatorOutput {
+            var out = core.OperatorOutput{};
+            try out.addClaim(.{
+                .variable = 3,
+                .status = .derived,
+                .value = .{ .integer = obs.value(2).?.integer + 1 },
+                .source_operator = 11,
+            });
+            return out;
+        }
+    };
+
+    try runner.addOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "first",
+        .requires_variables = &.{1},
+        .provides_variables = &.{2},
+    } }, null, Ops.first);
+    try runner.addOperator(.{ .manifest = .{
+        .id = 11,
+        .name = "second",
+        .requires_variables = &.{2},
+        .provides_variables = &.{3},
+    } }, null, Ops.second);
+
+    _ = try runner.seedVariable(1, .observed, .{ .integer = 40 }, 1000);
+
+    const exhausted = try runner.runUntilQuiescent(1);
+    try std.testing.expectEqual(core.ResultOutcome.exhausted, exhausted.summary.outcome);
+    try std.testing.expectEqual(@as(usize, 1), runner.pendingActivationCount());
+
+    const done = try runner.runUntilQuiescent(1);
+    try std.testing.expectEqual(core.ResultOutcome.success, done.summary.outcome);
+    try std.testing.expect(core.Value.eql(done.value(3).?, .{ .integer = 42 }));
+}
+
+test "not-visible target is not counted as success" {
+    const R = Runner(1, 0, 1, 8);
+    var runner = R.init(0, &.{1});
+
+    try runner.addVariable(.{ .variable = .{
+        .id = 1,
+        .name = "target",
+        .kind = .boolean,
+        .merge_policy = .latest,
+    } });
+
+    const Ops = struct {
+        fn close(_: ?*const anyopaque, _: R.Observation) !core.OperatorOutput {
+            var out = core.OperatorOutput{};
+            try out.addClaim(.{
+                .variable = 1,
+                .status = .not_visible,
+                .source_operator = 10,
+            });
+            return out;
+        }
+    };
+
+    try runner.addOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "not-visible",
+        .provides_variables = &.{1},
+    } }, null, Ops.close);
+
+    const result = try runner.runUntilQuiescent(2);
+    try std.testing.expectEqual(core.ResultOutcome.blocked, result.summary.outcome);
 }
