@@ -45,8 +45,8 @@ pub fn Runner(
 
             pub fn invariantStatus(self: Observation, id: core.InvariantId) ?core.InvariantStatus {
                 if (!self.canReadInvariant(id)) return null;
-                const index = self.runner.registry.invariantIndex(id) orelse return null;
-                return self.runner.state.invariants[index].status;
+                const invariant_cell = self.runner.state.invariantCell(&self.runner.registry, id) orelse return null;
+                return invariant_cell.status;
             }
 
             fn canRead(self: Observation, id: core.VariableId) bool {
