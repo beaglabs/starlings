@@ -31,10 +31,6 @@ pub fn build(b: *std.Build) void {
     });
     const run_pack_tests = b.addRunArtifact(pack_tests);
 
-    const test_step = b.step("test", "Run protocol-core and Emergence Pack tests");
-    test_step.dependOn(&run_mod_tests.step);
-    test_step.dependOn(&run_pack_tests.step);
-
     const cli_module = b.createModule(.{
         .root_source_file = b.path("src/cli.zig"),
         .target = target,
@@ -47,6 +43,18 @@ pub fn build(b: *std.Build) void {
         .root_module = cli_module,
     });
     b.installArtifact(cli);
+
+    const validate_example = b.addRunArtifact(cli);
+    validate_example.addArgs(&.{
+        "pack",
+        "validate",
+        "examples/packs/coding-local",
+    });
+
+    const test_step = b.step("test", "Run protocol-core and Emergence Pack tests");
+    test_step.dependOn(&run_mod_tests.step);
+    test_step.dependOn(&run_pack_tests.step);
+    test_step.dependOn(&validate_example.step);
 
     const run_cli = b.addRunArtifact(cli);
     run_cli.step.dependOn(b.getInstallStep());
