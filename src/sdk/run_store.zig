@@ -1175,7 +1175,7 @@ test "durable store rejects runners outside replay capacity" {
         validateSnapshotBounds(&claims_runner),
     );
 
-    const TooManyEventSlots = execution.Runner(1, 0, max_replay_operators + 1, 1);
+    const TooManyEventSlots = execution.Runner(1, 0, max_replay_operators + max_replay_claims, 1);
     var event_runner = TooManyEventSlots.init(0, &.{});
     try std.testing.expectError(
         error.ReplayConfigurationCapacityExceeded,
