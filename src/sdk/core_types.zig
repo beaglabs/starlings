@@ -223,6 +223,7 @@ pub const OperatorOutput = struct {
 
 pub const ResultOutcome = enum(u8) {
     running,
+    quiescent,
     success,
     blocked,
     conflicting,
