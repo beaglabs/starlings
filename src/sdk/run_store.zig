@@ -1560,7 +1560,7 @@ test "loader rejects a tampered complete event record" {
     defer arena_state.deinit();
 
     try std.testing.expectError(
-        error.ClaimIdentityMismatch,
+        error.EventIdMismatch,
         loadEventLog(
             R.max_event_records,
             io,
