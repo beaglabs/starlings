@@ -825,7 +825,7 @@ test "pack schema rejects unknown fields and escaping paths" {
 }
 
 
-test "operator parser accepts semantic roles and model profiles" {
+test "operator parser accepts semantic roles and shared model profiles" {
     const source =
         \\operators:
         \\  - name: skeptic
@@ -844,6 +844,7 @@ test "operator parser accepts semantic roles and model profiles" {
 
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
+
     const parsed = try parseOperators(arena_state.allocator(), source);
     try std.testing.expectEqual(@as(usize, 1), parsed.operators.len);
     try std.testing.expectEqual(contract.OperatorRole.model, parsed.operators[0].role);
