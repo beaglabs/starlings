@@ -17,15 +17,6 @@ jobs:
         with:
           version: 0.16.0
       - name: Direct protocol-core test
-        shell: bash
-        run: |
-          zig test src/root.zig > zig-direct.log 2>&1 || true
-          cat zig-direct.log
-      - name: Upload Zig compiler log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: zig-direct-log
-          path: zig-direct.log
+        run: zig test src/root.zig
       - name: Package-boundary test
         run: zig build test
