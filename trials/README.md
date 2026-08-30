@@ -1,6 +1,6 @@
 # trials/
 
-This directory is reserved for **local generated experiment output**.
+This directory is reserved for **bounded experiment definitions and local generated output**.
 
 Generated TSV/JSON/trace/metadata files are intentionally not committed. The
 scientific record belongs in `docs/`:
@@ -10,7 +10,8 @@ scientific record belongs in `docs/`:
 - record the result summary and conclusion;
 - keep git history as the regeneration source.
 
-Everything under this directory except this README is ignored by Git.
+Generated output is ignored by Git. Small named trial definitions may be explicitly
+allow-listed in `.gitignore` so the experiment is reproducible.
 
 ## Local cleanup
 
