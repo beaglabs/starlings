@@ -355,6 +355,8 @@ pub fn parseOperators(
         if (line.indent != 2 or !startsListItem(line.text)) return error.InvalidYamlIndentation;
 
         const name = (try scalarTextField(line.text[2..], "name")) orelse return error.MissingSchemaField;
+        var role: contract.OperatorRole = .transform;
+        var saw_role = false;
         var runtime: ?contract.RuntimeDecl = null;
         var requires: contract.RequirementSet = .{};
         var provides: contract.RequirementSet = .{};
@@ -366,8 +368,16 @@ pub fn parseOperators(
 
             if (isForbiddenWorkflowKey(nested.text)) return error.WorkflowKeyForbidden;
 
+            if (try scalarField(nested, "role")) |value| {
+                if (saw_role) return error.DuplicateSchemaField;
+                role = std.meta.stringToEnum(contract.OperatorRole, value) orelse return error.InvalidEnum;
+                saw_role = true;
+                i += 1;
+                continue;
+            }
+
             if (isHeader(nested, "runtime")) {
-                const result = try parseRuntime(lines, &i);
+                const result = try parseRuntime(arena, lines, &i);
                 runtime = result;
                 continue;
             }
@@ -388,6 +398,7 @@ pub fn parseOperators(
         if (count >= out_buf.len) return error.PackCapacityExceeded;
         out_buf[count] = .{
             .name = name,
+            .role = role,
             .runtime = runtime orelse return error.MissingSchemaField,
             .requires = requires,
             .provides = provides,
@@ -414,10 +425,19 @@ pub fn validatePolicySource(source: []const u8) !void {
     }
 }
 
-fn parseRuntime(lines: []const Line, index: *usize) !contract.RuntimeDecl {
+fn parseRuntime(
+    arena: std.mem.Allocator,
+    lines: []const Line,
+    index: *usize,
+) !contract.RuntimeDecl {
     index.* += 1;
     var kind: ?contract.RuntimeKind = null;
     var target: ?[]const u8 = null;
+    var timeout_ms: ?u32 = null;
+    var profile: ?[]const u8 = null;
+    var arg_buf: [contract.max_runtime_args][]const u8 = undefined;
+    var arg_count: usize = 0;
+    var saw_args = false;
 
     while (index.* < lines.len and lines[index.*].indent > 4) {
         const line = lines[index.*];
@@ -426,17 +446,53 @@ fn parseRuntime(lines: []const Line, index: *usize) !contract.RuntimeDecl {
         if (try scalarField(line, "kind")) |value| {
             if (kind != null) return error.DuplicateSchemaField;
             kind = std.meta.stringToEnum(contract.RuntimeKind, value) orelse return error.InvalidEnum;
-        } else if (try scalarField(line, "target")) |value| {
+            index.* += 1;
+            continue;
+        }
+        if (try scalarField(line, "target")) |value| {
             if (target != null) return error.DuplicateSchemaField;
             target = value;
-        } else return error.UnknownSchemaField;
-
-        index.* += 1;
+            index.* += 1;
+            continue;
+        }
+        if (try scalarField(line, "timeout_ms")) |value| {
+            if (timeout_ms != null) return error.DuplicateSchemaField;
+            timeout_ms = std.fmt.parseInt(u32, value, 10) catch return error.InvalidInteger;
+            index.* += 1;
+            continue;
+        }
+        if (try scalarField(line, "profile")) |value| {
+            if (profile != null) return error.DuplicateSchemaField;
+            profile = value;
+            index.* += 1;
+            continue;
+        }
+        if (isHeader(line, "args")) {
+            if (saw_args) return error.DuplicateSchemaField;
+            saw_args = true;
+            index.* += 1;
+            while (index.* < lines.len and lines[index.*].indent > 6) {
+                const item = lines[index.*];
+                try expectIndent(item, 8);
+                if (arg_count >= arg_buf.len) return error.PackCapacityExceeded;
+                arg_buf[arg_count] = try listScalar(item);
+                arg_count += 1;
+                index.* += 1;
+            }
+            continue;
+        }
+        return error.UnknownSchemaField;
     }
+
+    const args = try arena.alloc([]const u8, arg_count);
+    @memcpy(args, arg_buf[0..arg_count]);
 
     return .{
         .kind = kind orelse return error.MissingSchemaField,
         .target = target,
+        .args = args,
+        .timeout_ms = timeout_ms orelse 30_000,
+        .profile = profile,
     };
 }
 
@@ -694,6 +750,34 @@ test "YAML pack documents parse and compile into the SDK contract" {
     try std.testing.expectEqual(@as(usize, 2), compiled.operator_count);
 }
 
+test "operator runtime parser accepts argv and timeout" {
+    const source =
+        \\operators:
+        \\  - name: check
+        \\    runtime:
+        \\      kind: subprocess
+        \\      target: /usr/bin/env
+        \\      timeout_ms: 1500
+        \\      args:
+        \\        - python3
+        \\        - ./operators/check.py
+        \\    provides:
+        \\      variables:
+        \\        - done
+    ;
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const parsed = try parseOperators(arena_state.allocator(), source);
+
+    try std.testing.expectEqual(@as(usize, 1), parsed.operators.len);
+    try std.testing.expectEqual(contract.RuntimeKind.subprocess, parsed.operators[0].runtime.kind);
+    try std.testing.expectEqual(@as(u32, 1500), parsed.operators[0].runtime.timeout_ms);
+    try std.testing.expectEqual(@as(usize, 2), parsed.operators[0].runtime.args.len);
+    try std.testing.expectEqualStrings("python3", parsed.operators[0].runtime.args[0]);
+    try std.testing.expectEqualStrings("./operators/check.py", parsed.operators[0].runtime.args[1]);
+}
+
 test "pack schema forbids authored workflow edges" {
     const source =
         \\apiVersion: starlings/v1
@@ -738,4 +822,32 @@ test "pack schema rejects unknown fields and escaping paths" {
     );
     try std.testing.expectError(error.PackPathEscapesRoot, validatePackRelativePath("../secrets.yaml"));
     try std.testing.expectError(error.PackPathEscapesRoot, validatePackRelativePath("/tmp/variables.yaml"));
+}
+
+
+test "operator parser accepts semantic roles and model profiles" {
+    const source =
+        \\operators:
+        \\  - name: skeptic
+        \\    role: model
+        \\    runtime:
+        \\      kind: model
+        \\      target: shared-local
+        \\      profile: skeptic
+        \\    requires:
+        \\      variables:
+        \\        - source.text
+        \\    provides:
+        \\      variables:
+        \\        - method.candidate
+    ;
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const parsed = try parseOperators(arena_state.allocator(), source);
+    try std.testing.expectEqual(@as(usize, 1), parsed.operators.len);
+    try std.testing.expectEqual(contract.OperatorRole.model, parsed.operators[0].role);
+    try std.testing.expectEqual(contract.RuntimeKind.model, parsed.operators[0].runtime.kind);
+    try std.testing.expectEqualStrings("shared-local", parsed.operators[0].runtime.target.?);
+    try std.testing.expectEqualStrings("skeptic", parsed.operators[0].runtime.profile.?);
 }
