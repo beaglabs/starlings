@@ -1,0 +1,48 @@
+variables:
+  - name: source.image
+    type: text
+    merge: latest
+
+  - name: resource.memory_mb
+    type: integer
+    merge: latest
+
+  - name: resource.gpu
+    type: boolean
+    merge: latest
+
+  - name: mesh.fast
+    type: artifact_ref
+    merge: latest
+
+  - name: mesh.fast.quality
+    type: float
+    merge: latest
+
+  - name: mesh.fidelity
+    type: artifact_ref
+    merge: latest
+
+  - name: mesh.fidelity.quality
+    type: float
+    merge: latest
+
+  - name: rig.fast
+    type: artifact_ref
+    merge: latest
+
+  - name: rig.fidelity
+    type: artifact_ref
+    merge: latest
+
+  - name: rig.fast.valid
+    type: boolean
+    merge: latest
+
+  - name: rig.fidelity.valid
+    type: boolean
+    merge: latest
+
+  - name: asset.selected
+    type: artifact_ref
+    merge: highest_confidence
