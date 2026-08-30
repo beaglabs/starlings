@@ -167,3 +167,20 @@ test "zero-invariant registries support variable-only eligibility" {
     try std.testing.expect(state.invariantCell(&registry, 99) == null);
     try std.testing.expect(operatorEligible(&registry, &state, 0, 1));
 }
+
+
+test "zero-variable registries support operator-only eligibility" {
+    const R = reg.Registry(0, 0, 1);
+    const S = reg.ContextState(0, 0);
+    var registry = R{};
+    var state = S{};
+
+    try registry.addOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "side-effect-only",
+    } });
+
+    try std.testing.expect(registry.variableIndex(1) == null);
+    try std.testing.expect(state.variableCell(&registry, 1) == null);
+    try std.testing.expect(operatorEligible(&registry, &state, 0, 0));
+}
