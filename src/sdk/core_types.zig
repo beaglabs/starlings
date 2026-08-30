@@ -59,11 +59,18 @@ pub const Value = union(ValueKind) {
     }
 };
 
+pub const MergePolicy = enum(u8) {
+    latest,
+    highest_confidence,
+    retain_all_conflict,
+};
+
 pub const Variable = struct {
     id: VariableId,
     name: []const u8,
     kind: ValueKind,
     unit: ?[]const u8 = null,
+    merge_policy: MergePolicy = .retain_all_conflict,
 };
 
 pub const Invariant = struct {
