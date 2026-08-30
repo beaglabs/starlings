@@ -1,5 +1,15 @@
 const std = @import("std");
 const pack_loader = @import("pack/loader.zig");
+const content_id = @import("core/content_id.zig");
+const execution = @import("sdk/execution.zig");
+const run_store = @import("sdk/run_store.zig");
+
+const ReplayRunner = execution.Runner(
+    run_store.max_replay_variables,
+    run_store.max_replay_invariants,
+    run_store.max_replay_operators,
+    run_store.max_replay_claims,
+);
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -63,13 +73,96 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
+    if (args.len == 3 and std.mem.eql(u8, args[1], "replay")) {
+        replayRun(
+            io,
+            init.arena.allocator(),
+            args[2],
+        ) catch |err| {
+            try writeLine(
+                io,
+                std.Io.File.stderr(),
+                "replay failed: {t}\n",
+                .{err},
+            );
+            std.process.exit(2);
+        };
+        return;
+    }
+
     try std.Io.File.stderr().writeStreamingAll(
         io,
         "usage:\n" ++
             "  starlings pack validate <pack-dir>\n" ++
-            "  starlings pack inspect <pack-dir>\n",
+            "  starlings pack inspect <pack-dir>\n" ++
+            "  starlings replay <run-id>\n",
     );
     std.process.exit(2);
+}
+
+fn replayRun(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    run_id_text: []const u8,
+) !void {
+    const run_id = try run_store.parseRunId(run_id_text);
+
+    var root = try run_store.openDefaultRoot(io);
+    defer root.close(io);
+
+    const configuration = try run_store.loadConfiguration(
+        io,
+        arena,
+        root,
+        run_id,
+    );
+
+    var runner = ReplayRunner.init(configuration.seed, configuration.targetSlice());
+    try configuration.configure(&runner);
+
+    const replay_digest = runner.configurationDigest();
+    if (!content_id.eql(replay_digest, configuration.configuration_digest)) {
+        return error.ReplayConfigurationMismatch;
+    }
+
+    const loaded = try run_store.loadEventLog(
+        ReplayRunner.max_event_records,
+        io,
+        arena,
+        root,
+        run_id,
+    );
+    try runner.replayRecords(loaded.log.slice());
+
+    if (loaded.ignored_trailing_bytes != 0) {
+        try writeLine(
+            io,
+            std.Io.File.stderr(),
+            "warning: ignored {d} unterminated trailing event bytes\n",
+            .{loaded.ignored_trailing_bytes},
+        );
+    }
+
+    const snapshot = runner.schedulerSnapshot();
+    var head_buffer: [64]u8 = undefined;
+    const head = run_store.formatRunId(runner.eventHeadId(), &head_buffer);
+
+    try writeLine(
+        io,
+        std.Io.File.stdout(),
+        "REPLAY {s} events={d} round={d} outcome={s} accepted={d} rejected={d} actions={d} pending={d} head={s}\n",
+        .{
+            run_id_text,
+            runner.eventRecords().len,
+            snapshot.round,
+            @tagName(snapshot.outcome),
+            runner.result().summary.accepted_claims,
+            runner.result().summary.rejected_claims,
+            runner.result().summary.proposed_actions,
+            snapshot.pending_activations,
+            head,
+        },
+    );
 }
 
 fn inspect(io: std.Io, compiled: anytype) !void {
