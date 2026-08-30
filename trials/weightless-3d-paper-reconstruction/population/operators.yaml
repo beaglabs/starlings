@@ -1,0 +1,134 @@
+operators:
+  - name: propose-extrusion
+    role: transform
+    runtime:
+      kind: native
+      target: propose-extrusion
+    requires:
+      variables:
+        - image.diameter
+    provides:
+      variables:
+        - shape.extrusion
+
+  - name: propose-revolution
+    role: transform
+    runtime:
+      kind: native
+      target: propose-revolution
+    requires:
+      variables:
+        - image.diameter
+        - image.symmetry
+    provides:
+      variables:
+        - shape.revolution
+
+  - name: validate-extrusion
+    role: validator
+    runtime:
+      kind: native
+      target: validate-extrusion
+    requires:
+      variables:
+        - image.diameter
+        - image.depth_hint
+        - shape.extrusion
+    provides:
+      variables:
+        - shape.extrusion.score
+
+  - name: validate-revolution
+    role: validator
+    runtime:
+      kind: native
+      target: validate-revolution
+    requires:
+      variables:
+        - image.diameter
+        - image.depth_hint
+        - image.symmetry
+        - shape.revolution
+    provides:
+      variables:
+        - shape.revolution.score
+
+  - name: select-extrusion
+    role: tool
+    runtime:
+      kind: native
+      target: select-extrusion
+    requires:
+      variables:
+        - shape.extrusion
+        - shape.extrusion.score
+    provides:
+      variables:
+        - shape.selected
+
+  - name: select-revolution
+    role: tool
+    runtime:
+      kind: native
+      target: select-revolution
+    requires:
+      variables:
+        - shape.revolution
+        - shape.revolution.score
+    provides:
+      variables:
+        - shape.selected
+
+  - name: skeletonize-medial
+    role: transform
+    runtime:
+      kind: native
+      target: skeletonize-medial
+    requires:
+      variables:
+        - shape.selected
+        - image.diameter
+    provides:
+      variables:
+        - skeleton.tree
+
+  - name: validate-skeleton-tree
+    role: validator
+    runtime:
+      kind: native
+      target: validate-skeleton-tree
+    requires:
+      variables:
+        - skeleton.tree
+    provides:
+      variables:
+        - skeleton.valid
+
+  - name: skin-distance
+    role: transform
+    runtime:
+      kind: native
+      target: skin-distance
+    requires:
+      variables:
+        - shape.selected
+        - skeleton.tree
+        - skeleton.valid
+    provides:
+      variables:
+        - skin.normalization_error
+        - skin.valid
+
+  - name: validate-asset
+    role: validator
+    runtime:
+      kind: native
+      target: validate-asset
+    requires:
+      variables:
+        - shape.selected
+        - skeleton.valid
+        - skin.valid
+    provides:
+      variables:
+        - asset.valid
