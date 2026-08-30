@@ -870,6 +870,16 @@ pub fn Runner(
     };
 }
 
+fn hashSlice(hasher: *std.crypto.hash.Blake3, bytes: []const u8) void {
+    hashU64(hasher, @intCast(bytes.len));
+    hasher.update(bytes);
+}
+
+fn hashIdSlice(hasher: *std.crypto.hash.Blake3, ids: []const u32) void {
+    hashU64(hasher, @intCast(ids.len));
+    for (ids) |id| hashU32(hasher, id);
+}
+
 fn hashU32(hasher: *std.crypto.hash.Blake3, value: u32) void {
     var bytes: [4]u8 = undefined;
     encodeU32(value, &bytes);
