@@ -151,6 +151,8 @@ pub fn Runner(
         proposed_actions: usize = 0,
         run_started_logged: bool = false,
         configuration_locked: bool = false,
+        event_sink: ?event_log.EventSink = null,
+        event_sink_failed: bool = false,
 
         pub fn init(seed: u64, targets: []const core.VariableId) Self {
             return .{ .seed = seed, .targets = targets };
@@ -180,6 +182,20 @@ pub fn Runner(
                 .execute_fn = execute_fn,
             };
             self.executor_count += 1;
+        }
+
+        pub fn addReplayOperator(self: *Self, registered: reg.RegisteredOperator) !void {
+            try self.addOperator(registered, null, replayOnlyExecute);
+        }
+
+        pub fn setEventSink(self: *Self, sink: event_log.EventSink) !void {
+            if (self.run_started_logged or self.events.len != 0) return error.RunAlreadyStarted;
+            if (self.event_sink != null) return error.EventSinkAlreadyConfigured;
+            self.event_sink = sink;
+        }
+
+        fn replayOnlyExecute(_: ?*const anyopaque, _: Observation) anyerror!core.OperatorOutput {
+            return error.ReplayOnlyOperatorExecuted;
         }
 
         pub fn seedVariable(
@@ -216,7 +232,7 @@ pub fn Runner(
                 self.round,
             );
             self.accepted_claims += 1;
-            _ = try self.events.append(.{ .observation_added = .{
+            _ = try self.appendRuntimeEvent(.{ .observation_added = .{
                 .round = self.round,
                 .claim = claim,
                 .claim_id = claim_id,
@@ -237,7 +253,7 @@ pub fn Runner(
             self.executors[chosen_index].last_input_fingerprint = input_fingerprint;
             const activation_epoch = self.executors[chosen_index].activation_epoch;
 
-            _ = try self.events.append(.{ .operator_started = .{
+            _ = try self.appendRuntimeEvent(.{ .operator_started = .{
                 .round = self.round,
                 .operator = chosen_id,
                 .activation_epoch = activation_epoch,
@@ -249,7 +265,7 @@ pub fn Runner(
                 .{ .runner = self, .operator_index = chosen_index },
             ) catch |err| {
                 self.executors[chosen_index].last_settled_epoch = activation_epoch;
-                _ = try self.events.append(.{ .operator_failed = .{
+                _ = try self.appendRuntimeEvent(.{ .operator_failed = .{
                     .round = self.round,
                     .operator = chosen_id,
                     .activation_epoch = activation_epoch,
@@ -265,7 +281,7 @@ pub fn Runner(
             ) catch |err| {
                 self.rejected_claims += output.variable_claim_count;
                 self.executors[chosen_index].last_settled_epoch = activation_epoch;
-                _ = try self.events.append(.{ .operator_failed = .{
+                _ = try self.appendRuntimeEvent(.{ .operator_failed = .{
                     .round = self.round,
                     .operator = chosen_id,
                     .activation_epoch = activation_epoch,
@@ -289,7 +305,7 @@ pub fn Runner(
                     self.round,
                 );
                 self.accepted_claims += 1;
-                _ = try self.events.append(.{ .claim_accepted = .{
+                _ = try self.appendRuntimeEvent(.{ .claim_accepted = .{
                     .round = self.round,
                     .claim = claim,
                     .claim_id = claim_id,
@@ -303,7 +319,7 @@ pub fn Runner(
                     claim.status,
                     self.round,
                 );
-                _ = try self.events.append(.{ .invariant_changed = .{
+                _ = try self.appendRuntimeEvent(.{ .invariant_changed = .{
                     .round = self.round,
                     .claim = claim,
                 } });
@@ -311,7 +327,7 @@ pub fn Runner(
 
             self.proposed_actions += output.action_count;
             self.executors[chosen_index].last_settled_epoch = activation_epoch;
-            _ = try self.events.append(.{ .operator_completed = .{
+            _ = try self.appendRuntimeEvent(.{ .operator_completed = .{
                 .round = self.round,
                 .operator = chosen_id,
                 .activation_epoch = activation_epoch,
@@ -516,16 +532,29 @@ pub fn Runner(
         }
 
         fn ensureRunStarted(self: *Self) !void {
+            if (self.event_sink_failed) return error.EventSinkFailed;
             if (self.run_started_logged) return;
 
             try self.events.ensureCapacity(1);
             const digest = self.configurationDigest();
-            _ = try self.events.append(.{ .run_started = .{
+            _ = try self.appendRuntimeEvent(.{ .run_started = .{
                 .seed = self.seed,
                 .configuration_digest = digest,
             } });
             self.run_started_logged = true;
             self.configuration_locked = true;
+        }
+
+        fn appendRuntimeEvent(self: *Self, event: event_log.RunEvent) !core.ContentId {
+            const id = try self.events.append(event);
+            if (self.event_sink) |sink| {
+                const record = self.events.records[self.events.len - 1];
+                sink.append(record) catch |err| {
+                    self.event_sink_failed = true;
+                    return err;
+                };
+            }
+            return id;
         }
 
         pub fn eventRecords(self: *const Self) []const event_log.EventRecord {
@@ -569,6 +598,7 @@ pub fn Runner(
             self.proposed_actions = 0;
             self.run_started_logged = false;
             self.configuration_locked = false;
+            self.event_sink_failed = false;
 
             if (comptime max_operators != 0) {
                 for (self.executors[0..self.executor_count]) |*executor| {
@@ -771,6 +801,20 @@ pub fn Runner(
             const index = self.registry.operatorIndex(id) orelse return null;
             if (index >= self.executor_count) return null;
             return self.executors[index].activation_epoch;
+        }
+
+        pub fn openActivationOperatorId(
+            self: *const Self,
+        ) error{MultipleOpenActivations}!?core.OperatorId {
+            if (comptime max_operators == 0) return null;
+
+            var found: ?core.OperatorId = null;
+            for (self.executors[0..self.executor_count], 0..) |executor, i| {
+                if (executor.activation_epoch <= executor.last_settled_epoch) continue;
+                if (found != null) return error.MultipleOpenActivations;
+                found = self.registry.operators[i].manifest.id;
+            }
+            return found;
         }
 
         fn activationNeeded(self: *const Self, operator_index: usize) bool {
@@ -1594,4 +1638,39 @@ test "replay rejects a different run seed before applying state" {
 
     try std.testing.expectError(error.ReplaySeedMismatch, replayed.replayFrom(&live.events));
     try std.testing.expectEqual(core.EpistemicStatus.unknown, replayed.state.variables[0].status);
+}
+
+
+test "event sink failure latches the runner closed" {
+    const R = Runner(1, 0, 0, 8);
+    var runner = R.init(9, &.{1});
+    try runner.addVariable(.{ .variable = .{
+        .id = 1,
+        .name = "input",
+        .kind = .integer,
+        .merge_policy = .latest,
+    } });
+
+    const Sink = struct {
+        fn append(_: ?*anyopaque, _: event_log.EventRecord) anyerror!void {
+            return error.SimulatedDurabilityFailure;
+        }
+    };
+
+    try runner.setEventSink(.{
+        .context = null,
+        .append_fn = Sink.append,
+    });
+
+    try std.testing.expectError(
+        error.SimulatedDurabilityFailure,
+        runner.seedVariable(1, .observed, .{ .integer = 7 }, 1000),
+    );
+    try std.testing.expectEqual(@as(usize, 1), runner.eventRecords().len);
+
+    try std.testing.expectError(
+        error.EventSinkFailed,
+        runner.seedVariable(1, .observed, .{ .integer = 8 }, 1000),
+    );
+    try std.testing.expectEqual(@as(usize, 1), runner.eventRecords().len);
 }

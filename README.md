@@ -127,6 +127,21 @@ The runtime dequeues a message, resolves the recipient, advances logical time, a
 
 Seeded entropy is exposed explicitly for experiments without hard-wiring one scheduler into the foundation.
 
+### Durable replay
+
+The SDK can persist the canonical runtime event chain under
+`.starlings/runs/<run-id>/` and reconstruct a replay-only runner after process
+restart. Durable replay validates the configuration snapshot, event hash chain,
+operator/activation ordering, and scheduler state without invoking operator
+implementations.
+
+```bash
+starlings replay <run-id>
+```
+
+See [Durable Replay v1](docs/DURABLE_REPLAY.md) for the storage format, crash-tail
+semantics, replay envelope, and acceptance path.
+
 ## Content-addressed provenance
 
 Starlings treats provenance as part of the protocol, not a logging afterthought.
