@@ -1,0 +1,3 @@
+actions:
+  default: deny
+  note: Phase 1 reserves the policy surface; action execution arrives in Phase 3.

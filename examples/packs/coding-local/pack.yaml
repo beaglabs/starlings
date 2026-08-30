@@ -1,0 +1,19 @@
+apiVersion: starlings/v1
+kind: EmergencePack
+
+metadata:
+  name: coding-local
+  version: 0.1.0
+
+state:
+  variables: variables.yaml
+  invariants: invariants.yaml
+
+population:
+  operators: operators.yaml
+
+policy:
+  actions: policies/actions.yaml
+
+targets:
+  - patch.validated

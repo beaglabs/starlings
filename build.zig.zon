@@ -9,6 +9,9 @@
         "build.zig.zon",
         "LICENSE",
         "README.md",
+        "docs",
+        "examples",
+        "python",
         "src",
     },
 }
