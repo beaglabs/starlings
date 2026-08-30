@@ -17,6 +17,19 @@ jobs:
         with:
           version: 0.16.0
       - name: Direct protocol-core test
-        run: zig test src/root.zig
+        id: direct
+        continue-on-error: true
+        run: zig test src/root.zig > zig-test.log 2>&1
+      - name: Upload Zig compiler log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zig-test-log
+          path: zig-test.log
+      - name: Fail if direct test failed
+        if: steps.direct.outcome == 'failure'
+        run: |
+          cat zig-test.log
+          exit 1
       - name: Package-boundary test
         run: zig build test
