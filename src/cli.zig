@@ -159,7 +159,7 @@ fn replayRun(
     try writeLine(
         io,
         std.Io.File.stdout(),
-        "REPLAY {s} events={d} round={d} outcome={s} accepted={d} rejected={d} actions={d} pending={d} open={s} head={s}\n",
+        "REPLAY {s} events={d} round={d} outcome={s} accepted={d} rejected={d} actions={d} artifacts={d} pending={d} approvals={d} open={s} head={s}\n",
         .{
             run_id_text,
             runner.eventRecords().len,
@@ -168,7 +168,9 @@ fn replayRun(
             summary.accepted_claims,
             summary.rejected_claims,
             summary.proposed_actions,
+            runner.artifactEmissionCount(),
             snapshot.pending_activations,
+            snapshot.pending_approvals,
             open_text,
             head,
         },
