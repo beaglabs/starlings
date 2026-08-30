@@ -422,11 +422,11 @@ fn resolvePackTarget(
     target: []const u8,
 ) ![]const u8 {
     if (target.len == 0) return error.MissingRuntimeTarget;
-    if (std.fs.path.isAbsolute(target)) return target;
+    if (pathIsAbsolute(target)) return target;
 
     if (!containsPathSeparator(target)) return target;
     try rejectParentTraversal(target);
-    return std.fs.path.join(arena, &.{ pack_dir, target });
+    return joinPackPath(arena, pack_dir, target);
 }
 
 fn resolveRuntimeArg(
@@ -437,9 +437,36 @@ fn resolveRuntimeArg(
     if (std.mem.startsWith(u8, arg, "./") or std.mem.startsWith(u8, arg, ".\\")) {
         const relative = arg[2..];
         try rejectParentTraversal(relative);
-        return std.fs.path.join(arena, &.{ pack_dir, relative });
+        return joinPackPath(arena, pack_dir, relative);
     }
     return arg;
+}
+
+fn pathIsAbsolute(path: []const u8) bool {
+    if (path.len == 0) return false;
+    if (path[0] == '/' or path[0] == '\\') return true;
+    return path.len >= 2 and std.ascii.isAlphabetic(path[0]) and path[1] == ':';
+}
+
+fn joinPackPath(
+    arena: std.mem.Allocator,
+    pack_dir: []const u8,
+    relative: []const u8,
+) ![]const u8 {
+    const separator_needed = pack_dir.len != 0 and
+        pack_dir[pack_dir.len - 1] != '/' and
+        pack_dir[pack_dir.len - 1] != '\\';
+    const prefix_len = pack_dir.len + @as(usize, if (separator_needed) 1 else 0);
+    const out = try arena.alloc(u8, prefix_len + relative.len);
+
+    if (pack_dir.len != 0) @memcpy(out[0..pack_dir.len], pack_dir);
+    var cursor = pack_dir.len;
+    if (separator_needed) {
+        out[cursor] = '/';
+        cursor += 1;
+    }
+    @memcpy(out[cursor..], relative);
+    return out;
 }
 
 fn containsPathSeparator(path: []const u8) bool {
