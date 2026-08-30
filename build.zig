@@ -29,4 +29,20 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_pack_tests.step);
 
+    const weightless_3d_module = b.createModule(.{
+        .root_source_file = b.path("trials/weightless-3d-paper-reconstruction/trial.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    weightless_3d_module.addImport("starlings", mod);
+    const weightless_3d_tests = b.addTest(.{
+        .root_module = weightless_3d_module,
+    });
+    const run_weightless_3d_tests = b.addRunArtifact(weightless_3d_tests);
+
+    const weightless_3d_step = b.step(
+        "trial-weightless-3d",
+        "Run the weightless 3D paper reconstruction trial",
+    );
+    weightless_3d_step.dependOn(&run_weightless_3d_tests.step);
 }
