@@ -99,6 +99,8 @@ pub fn Registry(
         }
 
         pub fn invariantIndex(self: *const Self, id: core.InvariantId) ?usize {
+            if (comptime max_invariants == 0) return null;
+
             var i: usize = 0;
             while (i < self.invariant_count) : (i += 1) {
                 if (self.invariants[i].id == id) return i;
@@ -162,6 +164,8 @@ pub fn ContextState(comptime max_variables: usize, comptime max_invariants: usiz
             status: core.InvariantStatus,
             round: u32,
         ) !void {
+            if (comptime max_invariants == 0) return error.UnknownInvariant;
+
             const index = registry.invariantIndex(id) orelse return error.UnknownInvariant;
             if (index >= max_invariants) return error.RegistryCapacityExceeded;
             self.invariants[index] = .{ .status = status, .updated_round = round };
@@ -174,6 +178,8 @@ pub fn ContextState(comptime max_variables: usize, comptime max_invariants: usiz
         }
 
         pub fn invariantCell(self: *const Self, registry: anytype, id: core.InvariantId) ?InvariantCell {
+            if (comptime max_invariants == 0) return null;
+
             const index = registry.invariantIndex(id) orelse return null;
             if (index >= max_invariants) return null;
             return self.invariants[index];
