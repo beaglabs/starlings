@@ -151,6 +151,8 @@ pub fn Runner(
         proposed_actions: usize = 0,
         run_started_logged: bool = false,
         configuration_locked: bool = false,
+        event_sink: ?event_log.EventSink = null,
+        event_sink_failed: bool = false,
 
         pub fn init(seed: u64, targets: []const core.VariableId) Self {
             return .{ .seed = seed, .targets = targets };
