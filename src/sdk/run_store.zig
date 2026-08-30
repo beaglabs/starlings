@@ -3,6 +3,7 @@ const content_id = @import("../core/content_id.zig");
 const core = @import("core_types.zig");
 const reg = @import("registry.zig");
 const output_state = @import("output_state.zig");
+const artifact_store = @import("artifact_store.zig");
 const event_log = @import("event_log.zig");
 const execution = @import("execution.zig");
 
@@ -111,6 +112,7 @@ pub const RunWriter = struct {
     io: std.Io,
     allocator: std.mem.Allocator,
     events_file: std.Io.File,
+    artifacts: artifact_store.Store,
     run_id: core.ContentId,
     seed: u64,
     configuration_digest: core.ContentId,
@@ -121,6 +123,19 @@ pub const RunWriter = struct {
 
     pub fn deinit(self: *RunWriter) void {
         self.events_file.close(self.io);
+        self.artifacts.deinit();
+    }
+
+    pub fn putArtifact(
+        self: *RunWriter,
+        media_type: []const u8,
+        bytes: []const u8,
+    ) !core.ArtifactRef {
+        return self.artifacts.put(media_type, bytes);
+    }
+
+    pub fn artifactVerifier(self: *RunWriter) artifact_store.Verifier {
+        return self.artifacts.verifier();
     }
 
     pub fn eventSink(self: *RunWriter) event_log.EventSink {
@@ -243,11 +258,16 @@ pub fn createRunWithId(
         .read = true,
         .exclusive = true,
     });
+    errdefer events_file.close(io);
+
+    var artifacts = try artifact_store.Store.create(io, allocator, run_dir);
+    errdefer artifacts.deinit();
 
     return .{
         .io = io,
         .allocator = allocator,
         .events_file = events_file,
+        .artifacts = artifacts,
         .run_id = run_id,
         .seed = runner.seed,
         .configuration_digest = configuration_digest,
@@ -434,6 +454,17 @@ pub fn loadEventLog(
 
     try result.log.validate();
     return result;
+}
+
+pub fn openArtifactStore(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    root_dir: std.Io.Dir,
+    run_id: core.ContentId,
+) !artifact_store.Store {
+    var run_dir = try openRunDir(io, root_dir, run_id);
+    defer run_dir.close(io);
+    return artifact_store.Store.open(io, allocator, run_dir);
 }
 
 pub fn openDefaultRoot(io: std.Io) !std.Io.Dir {
