@@ -351,3 +351,169 @@ test "runtime path resolution keeps explicit pack-relative args local" {
         ),
     );
 }
+
+
+test "heterogeneous pack binds native python and subprocess into one durable run" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+
+    const variables = [_]contract.VariableDecl{
+        .{ .name = "input.value", .@"type" = .integer, .merge = .latest },
+        .{ .name = "native.value", .@"type" = .integer, .merge = .latest },
+        .{ .name = "python.value", .@"type" = .integer, .merge = .latest },
+        .{ .name = "final.ok", .@"type" = .boolean, .merge = .latest },
+    };
+    const invariants = [_]contract.InvariantDecl{
+        .{ .name = "native.ready", .requires = &.{"native.value"} },
+    };
+    const operators = [_]contract.OperatorDecl{
+        .{
+            .name = "native-gate",
+            .runtime = .{ .kind = .native, .target = "acceptance-native" },
+            .requires = .{ .variables = &.{"input.value"} },
+            .provides = .{
+                .variables = &.{"native.value"},
+                .invariants = &.{"native.ready"},
+            },
+        },
+        .{
+            .name = "python-derive",
+            .runtime = .{
+                .kind = .python,
+                .target = "examples/packs/phase3-run/operators/derive.py",
+                .timeout_ms = 5000,
+            },
+            .requires = .{
+                .variables = &.{"native.value"},
+                .invariants = &.{"native.ready"},
+            },
+            .provides = .{ .variables = &.{"python.value"} },
+        },
+        .{
+            .name = "subprocess-check",
+            .runtime = .{
+                .kind = .subprocess,
+                .target = "/usr/bin/env",
+                .args = &.{
+                    "python3",
+                    "./examples/packs/phase3-run/operators/check.py",
+                },
+                .timeout_ms = 5000,
+            },
+            .requires = .{ .variables = &.{"python.value"} },
+            .provides = .{ .variables = &.{"final.ok"} },
+        },
+    };
+
+    var compiled = try contract.compile(.{
+        .manifest = .{
+            .apiVersion = contract.api_version,
+            .kind = contract.kind_name,
+            .metadata = .{ .name = "phase3-heterogeneous", .version = "0.1.0" },
+            .state = .{ .variables = "variables.yaml", .invariants = "invariants.yaml" },
+            .population = .{ .operators = "operators.yaml" },
+            .targets = &.{"final.ok"},
+        },
+        .variable_file = .{ .variables = &variables },
+        .invariant_file = .{ .invariants = &invariants },
+        .operator_file = .{ .operators = &operators },
+    });
+
+    const NativeContext = struct {
+        input_id: core.VariableId,
+        output_id: core.VariableId,
+        invariant_id: core.InvariantId,
+
+        fn execute(
+            raw_context: ?*const anyopaque,
+            obs: RuntimeRunner.Observation,
+        ) !core.OperatorOutput {
+            const opaque = raw_context orelse return error.MissingNativeContext;
+            const self: *const @This() = @ptrCast(@alignCast(opaque));
+            const input = obs.value(self.input_id) orelse return error.MissingNativeInput;
+
+            var out = core.OperatorOutput{};
+            try out.addClaim(.{
+                .variable = self.output_id,
+                .status = .derived,
+                .value = .{ .integer = input.integer + 1 },
+                .source_operator = obs.operatorId(),
+            });
+            try out.addInvariant(.{
+                .invariant = self.invariant_id,
+                .status = .satisfied,
+                .source_operator = obs.operatorId(),
+            });
+            return out;
+        }
+    };
+
+    const native_context = NativeContext{
+        .input_id = compiled.variableId("input.value").?,
+        .output_id = compiled.variableId("native.value").?,
+        .invariant_id = compiled.invariantId("native.ready").?,
+    };
+    const bindings = [_]NativeBinding{
+        .{
+            .name = "acceptance-native",
+            .context = &native_context,
+            .execute_fn = NativeContext.execute,
+        },
+    };
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var runtime = try Runtime.init(
+        std.testing.io,
+        std.testing.allocator,
+        arena,
+        ".",
+        &compiled,
+        77,
+        &bindings,
+    );
+    defer runtime.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var writer = try run_store.createRun(
+        std.testing.io,
+        std.testing.allocator,
+        tmp.dir,
+        &runtime.runner,
+    );
+    defer writer.deinit();
+
+    try runtime.runner.setArtifactVerifier(writer.artifactVerifier());
+    try runtime.runner.setEventSink(writer.eventSink());
+    try runtime.seedInputs(&.{
+        .{ .name = "input.value", .value = "6" },
+    });
+
+    const result = try runtime.runner.runUntilQuiescent(8);
+    try std.testing.expectEqual(core.ResultOutcome.success, result.summary.outcome);
+    try std.testing.expect(core.Value.eql(
+        result.value(compiled.variableId("native.value").?).?,
+        .{ .integer = 7 },
+    ));
+    try std.testing.expect(core.Value.eql(
+        result.value(compiled.variableId("python.value").?).?,
+        .{ .integer = 8 },
+    ));
+    try std.testing.expect(core.Value.eql(
+        result.value(compiled.variableId("final.ok").?).?,
+        .{ .boolean = true },
+    ));
+    try std.testing.expectEqual(
+        core.InvariantStatus.satisfied,
+        runtime.runner.state.invariantCell(
+            &runtime.runner.registry,
+            compiled.invariantId("native.ready").?,
+        ).?.status,
+    );
+    try std.testing.expectEqual(
+        @as(u64, @intCast(runtime.runner.eventRecords().len)),
+        writer.next_sequence,
+    );
+}
