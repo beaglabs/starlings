@@ -387,6 +387,11 @@ pub fn Runner(
             hasher.update(&.{tag});
             hashU32(hasher, id);
 
+            if (comptime max_invariants == 0) {
+                hashU64(hasher, 0);
+                return;
+            }
+
             const index = self.registry.invariantIndex(id) orelse {
                 hashU64(hasher, 0);
                 return;
