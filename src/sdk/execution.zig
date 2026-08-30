@@ -31,6 +31,10 @@ pub fn Runner(
                 return self.runner.registry.operators[self.operator_index].manifest.id;
             }
 
+            pub fn activationEpoch(self: Observation) u64 {
+                return self.runner.executors[self.operator_index].activation_epoch;
+            }
+
             pub fn status(self: Observation, id: core.VariableId) ?core.EpistemicStatus {
                 if (!self.canRead(id)) return null;
                 const index = self.runner.registry.variableIndex(id) orelse return null;
@@ -79,7 +83,9 @@ pub fn Runner(
         const Executor = struct {
             context: ?*const anyopaque = null,
             execute_fn: ExecuteFn,
-            has_run: bool = false,
+            has_activated: bool = false,
+            activation_epoch: u64 = 0,
+            last_input_fingerprint: core.ContentId = content_id.zero,
         };
 
         pub const Explanation = struct {
@@ -189,8 +195,8 @@ pub fn Runner(
             var candidate_count: usize = 0;
             var i: usize = 0;
             while (i < self.registry.operator_count) : (i += 1) {
-                if (self.executors[i].has_run) continue;
                 if (!eligibility.operatorEligible(&self.registry, &self.state, i, self.round)) continue;
+                if (!self.activationNeeded(i)) continue;
                 eligible_ids[candidate_count] = self.registry.operators[i].manifest.id;
                 candidate_count += 1;
             }
@@ -198,16 +204,19 @@ pub fn Runner(
 
             const chosen_id = self.chooseOperator(eligible_ids[0..candidate_count]);
             const chosen_index = self.registry.operatorIndex(chosen_id).?;
+            const input_fingerprint = self.activationFingerprint(chosen_index);
+
             self.round +%= 1;
+            self.executors[chosen_index].has_activated = true;
+            self.executors[chosen_index].activation_epoch +%= 1;
+            self.executors[chosen_index].last_input_fingerprint = input_fingerprint;
 
             const output = self.executors[chosen_index].execute_fn(
                 self.executors[chosen_index].context,
                 .{ .runner = self, .operator_index = chosen_index },
             ) catch |err| {
-                self.executors[chosen_index].has_run = true;
                 return err;
             };
-            self.executors[chosen_index].has_run = true;
 
             output_state.validateOutput(
                 &self.registry,
@@ -309,6 +318,84 @@ pub fn Runner(
             return false;
         }
 
+        pub fn operatorActivationEpoch(self: *const Self, id: core.OperatorId) ?u64 {
+            const index = self.registry.operatorIndex(id) orelse return null;
+            if (index >= self.executor_count) return null;
+            return self.executors[index].activation_epoch;
+        }
+
+        fn activationNeeded(self: *const Self, operator_index: usize) bool {
+            if (!self.executors[operator_index].has_activated) return true;
+            const current = self.activationFingerprint(operator_index);
+            return !std.mem.eql(
+                u8,
+                &current,
+                &self.executors[operator_index].last_input_fingerprint,
+            );
+        }
+
+        fn activationFingerprint(self: *const Self, operator_index: usize) core.ContentId {
+            var hasher = std.crypto.hash.Blake3.init(.{});
+            hasher.update("starlings-sdk-activation-input-v1");
+
+            const op = self.registry.operators[operator_index];
+            hashU32(&hasher, op.manifest.id);
+
+            for (op.manifest.requires_variables) |id| {
+                self.hashVariableDependency(&hasher, 1, id);
+            }
+            for (op.manifest.requires_invariants) |id| {
+                self.hashInvariantDependency(&hasher, 2, id);
+            }
+            for (op.eligibility.terms) |term| {
+                switch (term) {
+                    .variable_known => |id| self.hashVariableDependency(&hasher, 3, id),
+                    .variable_resolved => |id| self.hashVariableDependency(&hasher, 4, id),
+                    .invariant_satisfied => |id| self.hashInvariantDependency(&hasher, 5, id),
+                }
+            }
+
+            var digest: core.ContentId = undefined;
+            hasher.final(&digest);
+            return digest;
+        }
+
+        fn hashVariableDependency(
+            self: *const Self,
+            hasher: *std.crypto.hash.Blake3,
+            tag: u8,
+            id: core.VariableId,
+        ) void {
+            hasher.update(&.{tag});
+            hashU32(hasher, id);
+
+            const index = self.registry.variableIndex(id) orelse {
+                hashU64(hasher, 0);
+                return;
+            };
+            const cell = self.state.variables[index];
+            hashU64(hasher, cell.revision);
+            hasher.update(&.{@intFromEnum(cell.status)});
+        }
+
+        fn hashInvariantDependency(
+            self: *const Self,
+            hasher: *std.crypto.hash.Blake3,
+            tag: u8,
+            id: core.InvariantId,
+        ) void {
+            hasher.update(&.{tag});
+            hashU32(hasher, id);
+
+            const index = self.registry.invariantIndex(id) orelse {
+                hashU64(hasher, 0);
+                return;
+            };
+            const cell = self.state.invariants[index];
+            hashU64(hasher, cell.revision);
+            hasher.update(&.{@intFromEnum(cell.status)});
+        }
+
         fn chooseOperator(self: *const Self, ids: []const core.OperatorId) core.OperatorId {
             var chosen = ids[0];
             var chosen_priority = priority(self.seed, self.round, chosen);
@@ -322,6 +409,18 @@ pub fn Runner(
             return chosen;
         }
     };
+}
+
+fn hashU32(hasher: *std.crypto.hash.Blake3, value: u32) void {
+    var bytes: [4]u8 = undefined;
+    encodeU32(value, &bytes);
+    hasher.update(&bytes);
+}
+
+fn hashU64(hasher: *std.crypto.hash.Blake3, value: u64) void {
+    var bytes: [8]u8 = undefined;
+    encodeU64(value, &bytes);
+    hasher.update(&bytes);
 }
 
 fn priority(seed: u64, round: u32, operator_id: core.OperatorId) core.ContentId {
@@ -486,4 +585,92 @@ test "operator observations cannot read undeclared variables" {
     _ = try runner.seedVariable(2, .observed, .{ .integer = 999 }, 1000);
     const result = try runner.run(4);
     try std.testing.expectEqual(core.ResultOutcome.success, result.summary.outcome);
+}
+
+
+test "operator reactivates when a required input revision changes" {
+    const R = Runner(2, 0, 1, 16);
+    var runner = R.init(0, &.{});
+
+    try runner.addVariable(.{ .variable = .{
+        .id = 1,
+        .name = "input",
+        .kind = .integer,
+        .merge_policy = .latest,
+    } });
+    try runner.addVariable(.{ .variable = .{
+        .id = 2,
+        .name = "output",
+        .kind = .integer,
+        .merge_policy = .latest,
+    } });
+
+    const Ops = struct {
+        fn derive(_: ?*const anyopaque, obs: R.Observation) !core.OperatorOutput {
+            const input = obs.value(1).?.integer;
+            var out = core.OperatorOutput{};
+            try out.addClaim(.{
+                .variable = 2,
+                .status = .derived,
+                .value = .{ .integer = input + 1 },
+                .source_operator = 10,
+            });
+            return out;
+        }
+    };
+
+    try runner.addOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "derive",
+        .requires_variables = &.{1},
+        .provides_variables = &.{2},
+    } }, null, Ops.derive);
+
+    _ = try runner.seedVariable(1, .observed, .{ .integer = 1 }, 1000);
+    try std.testing.expect(try runner.step());
+    try std.testing.expectEqual(@as(u64, 1), runner.operatorActivationEpoch(10).?);
+    try std.testing.expect(core.Value.eql(runner.result().value(2).?, .{ .integer = 2 }));
+
+    try std.testing.expect(!(try runner.step()));
+    try std.testing.expectEqual(@as(u64, 1), runner.operatorActivationEpoch(10).?);
+
+    _ = try runner.seedVariable(1, .observed, .{ .integer = 2 }, 1000);
+    try std.testing.expect(try runner.step());
+    try std.testing.expectEqual(@as(u64, 2), runner.operatorActivationEpoch(10).?);
+    try std.testing.expect(core.Value.eql(runner.result().value(2).?, .{ .integer = 3 }));
+}
+
+test "operators with no dependencies activate only once" {
+    const R = Runner(1, 0, 1, 8);
+    var runner = R.init(0, &.{});
+
+    try runner.addVariable(.{ .variable = .{
+        .id = 1,
+        .name = "heartbeat",
+        .kind = .boolean,
+        .merge_policy = .latest,
+    } });
+
+    const Ops = struct {
+        fn emit(_: ?*const anyopaque, _: R.Observation) !core.OperatorOutput {
+            var out = core.OperatorOutput{};
+            try out.addClaim(.{
+                .variable = 1,
+                .status = .derived,
+                .value = .{ .boolean = true },
+                .source_operator = 20,
+            });
+            return out;
+        }
+    };
+
+    try runner.addOperator(.{ .manifest = .{
+        .id = 20,
+        .name = "once",
+        .provides_variables = &.{1},
+    } }, null, Ops.emit);
+
+    try std.testing.expect(try runner.step());
+    try std.testing.expect(!(try runner.step()));
+    try std.testing.expectEqual(@as(u64, 1), runner.operatorActivationEpoch(20).?);
 }
