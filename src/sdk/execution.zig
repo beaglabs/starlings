@@ -745,7 +745,7 @@ pub fn Runner(
             self.round = round;
         }
 
-        fn openActivationIndex(self: *const Self) !usize {
+        fn openActivationIndex(self: *const Self) error{ NoOpenActivation, MultipleOpenActivations }!usize {
             if (comptime max_operators == 0) return error.NoOpenActivation;
 
             var found: ?usize = null;
