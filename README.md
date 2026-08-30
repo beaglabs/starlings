@@ -40,27 +40,27 @@ The protocol core lives here. The application and stress experiments that valida
 
 Starlings separates **operator behavior** from **coordination semantics**.
 
-```text
-                local observation
-                       │
-                       ▼
-                 local policy πᵢ
-                       │
-                 typed proposal
-                       │
-                       ▼
-                admissibility C
-                  │         │
-             accepted     rejected
-                  │
-                  ▼
-            transition F
-                  │
-                  ▼
-           local/global state
-                  │
-                  ▼
-             observable Φ
+```mermaid
+flowchart TD
+    O["Local observation Ωᵢ(Σₜ)"]
+    P["Local policy πᵢ"]
+    Q["Typed proposal pᵢ,ₜ"]
+    C{"Admissibility C"}
+    A["Accepted"]
+    R["Rejected"]
+    F["Transition F"]
+    S["Local / global state Σₜ₊₁"]
+    PHI["Observable Φ"]
+
+    O --> P
+    P --> Q
+    Q --> C
+    C -->|accepted| A
+    C -->|rejected| R
+    A --> F
+    F --> S
+    S --> PHI
+    R --> S
 ```
 
 The runtime owns admissibility, accounting, provenance, and replay. Operators own local decisions.
