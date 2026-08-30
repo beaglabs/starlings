@@ -1,0 +1,109 @@
+operators:
+  - name: fast-reconstruction
+    role: model
+    runtime:
+      kind: model
+      target: fake-3d
+      profile: triposr
+    requires:
+      variables:
+        - source.image
+        - resource.memory_mb
+    provides:
+      variables:
+        - mesh.fast
+        - mesh.fast.quality
+
+  - name: fidelity-reconstruction
+    role: model
+    runtime:
+      kind: model
+      target: fake-3d
+      profile: triposg
+    requires:
+      variables:
+        - source.image
+        - resource.memory_mb
+        - resource.gpu
+    provides:
+      variables:
+        - mesh.fidelity
+        - mesh.fidelity.quality
+
+  - name: rig-fast
+    role: model
+    runtime:
+      kind: model
+      target: fake-3d
+      profile: unirig-fast
+    requires:
+      variables:
+        - mesh.fast
+    provides:
+      variables:
+        - rig.fast
+
+  - name: rig-fidelity
+    role: model
+    runtime:
+      kind: model
+      target: fake-3d
+      profile: unirig-fidelity
+    requires:
+      variables:
+        - mesh.fidelity
+    provides:
+      variables:
+        - rig.fidelity
+
+  - name: validate-fast
+    role: validator
+    runtime:
+      kind: native
+      target: validate-fast
+    requires:
+      variables:
+        - rig.fast
+    provides:
+      variables:
+        - rig.fast.valid
+
+  - name: validate-fidelity
+    role: validator
+    runtime:
+      kind: native
+      target: validate-fidelity
+    requires:
+      variables:
+        - rig.fidelity
+    provides:
+      variables:
+        - rig.fidelity.valid
+
+  - name: select-fast
+    role: tool
+    runtime:
+      kind: native
+      target: select-fast
+    requires:
+      variables:
+        - rig.fast
+        - rig.fast.valid
+        - mesh.fast.quality
+    provides:
+      variables:
+        - asset.selected
+
+  - name: select-fidelity
+    role: tool
+    runtime:
+      kind: native
+      target: select-fidelity
+    requires:
+      variables:
+        - rig.fidelity
+        - rig.fidelity.valid
+        - mesh.fidelity.quality
+    provides:
+      variables:
+        - asset.selected
