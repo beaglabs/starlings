@@ -731,6 +731,34 @@ test "YAML pack documents parse and compile into the SDK contract" {
     try std.testing.expectEqual(@as(usize, 2), compiled.operator_count);
 }
 
+test "operator runtime parser accepts argv and timeout" {
+    const source =
+        \\operators:
+        \\  - name: check
+        \\    runtime:
+        \\      kind: subprocess
+        \\      target: /usr/bin/env
+        \\      timeout_ms: 1500
+        \\      args:
+        \\        - python3
+        \\        - ./operators/check.py
+        \\    provides:
+        \\      variables:
+        \\        - done
+    ;
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const parsed = try parseOperators(arena_state.allocator(), source);
+
+    try std.testing.expectEqual(@as(usize, 1), parsed.operators.len);
+    try std.testing.expectEqual(contract.RuntimeKind.subprocess, parsed.operators[0].runtime.kind);
+    try std.testing.expectEqual(@as(u32, 1500), parsed.operators[0].runtime.timeout_ms);
+    try std.testing.expectEqual(@as(usize, 2), parsed.operators[0].runtime.args.len);
+    try std.testing.expectEqualStrings("python3", parsed.operators[0].runtime.args[0]);
+    try std.testing.expectEqualStrings("./operators/check.py", parsed.operators[0].runtime.args[1]);
+}
+
 test "pack schema forbids authored workflow edges" {
     const source =
         \\apiVersion: starlings/v1
