@@ -548,7 +548,8 @@ fn scalarTextField(text: []const u8, key: []const u8) !?[]const u8 {
 
     const value = std.mem.trim(u8, text[key.len + 1 ..], " ");
     if (value.len == 0) return error.MissingSchemaField;
-    return unquote(value);
+    const unquoted = try unquote(value);
+    return unquoted;
 }
 
 fn isHeader(line: Line, key: []const u8) bool {
