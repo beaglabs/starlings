@@ -1697,7 +1697,7 @@ test "append-only events replay to identical materialized and scheduler state" {
     try std.testing.expectEqual(core.ResultOutcome.success, live_result.summary.outcome);
     try std.testing.expect(core.Value.eql(live_result.value(3).?, .{ .integer = 42 }));
     try live.validateEventLog();
-    try std.testing.expectEqual(@as(usize, 9), live.eventRecords().len);
+    try std.testing.expectEqual(@as(usize, 10), live.eventRecords().len);
 
     var replayed = R.init(73, &.{3});
     try Ops.setup(&replayed);
@@ -1833,4 +1833,120 @@ test "event sink failure latches the runner closed" {
         runner.seedVariable(1, .observed, .{ .integer = 8 }, 1000),
     );
     try std.testing.expectEqual(@as(usize, 1), runner.eventRecords().len);
+}
+
+
+test "artifact and approval action state is event-derived and replayable" {
+    const R = Runner(1, 0, 1, 16);
+
+    const Ops = struct {
+        fn emit(_: ?*const anyopaque, _: R.Observation) !core.OperatorOutput {
+            var out = core.OperatorOutput{};
+            try out.addArtifact(output_state.artifactRef(
+                "application/json",
+                "{\"result\":42}",
+            ));
+            try out.addAction(.{
+                .name = "publish-result",
+                .payload = "artifact:result",
+                .requires_approval = true,
+            });
+            return out;
+        }
+    };
+
+    var live = R.init(31, &.{});
+    try live.addOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "emit",
+    } }, null, Ops.emit);
+
+    _ = try live.runUntilQuiescent(2);
+    try std.testing.expectEqual(@as(usize, 1), live.artifactEmissionCount());
+    try std.testing.expectEqual(@as(usize, 1), live.actionProposalCount());
+    try std.testing.expectEqual(@as(usize, 1), live.pendingApprovalCount());
+    try std.testing.expectEqual(@as(usize, 1), live.schedulerSnapshot().pending_approvals);
+
+    var action_id: ?core.ContentId = null;
+    for (live.eventRecords()) |record| {
+        switch (record.event) {
+            .action_proposed => |payload| action_id = payload.action_id,
+            else => {},
+        }
+    }
+    const proposed = action_id orelse return error.TestExpectedActionProposal;
+    try std.testing.expectEqual(
+        data_plane.ActionStatus.pending_approval,
+        live.actionStatus(proposed).?,
+    );
+
+    try live.approveAction(proposed);
+    try std.testing.expectEqual(@as(usize, 0), live.pendingApprovalCount());
+    try std.testing.expectEqual(
+        data_plane.ActionStatus.approved,
+        live.actionStatus(proposed).?,
+    );
+
+    var replayed = R.init(31, &.{});
+    try replayed.addReplayOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "emit",
+    } });
+    try replayed.replayFrom(&live.events);
+
+    try std.testing.expectEqual(live.eventRecords().len, replayed.eventRecords().len);
+    try std.testing.expect(content_id.eql(live.eventHeadId(), replayed.eventHeadId()));
+    try std.testing.expectEqual(@as(usize, 1), replayed.artifactEmissionCount());
+    try std.testing.expectEqual(@as(usize, 1), replayed.actionProposalCount());
+    try std.testing.expectEqual(@as(usize, 0), replayed.pendingApprovalCount());
+    try std.testing.expectEqual(
+        data_plane.ActionStatus.approved,
+        replayed.actionStatus(proposed).?,
+    );
+}
+
+test "operator timeout and crash remain distinct canonical failures" {
+    const TimeoutRunner = Runner(0, 0, 1, 4);
+    const TimeoutOp = struct {
+        fn run(_: ?*const anyopaque, _: TimeoutRunner.Observation) !core.OperatorOutput {
+            return error.OperatorTimeout;
+        }
+    };
+
+    var timed_out = TimeoutRunner.init(3, &.{});
+    try timed_out.addOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "timeout",
+    } }, null, TimeoutOp.run);
+
+    try std.testing.expectError(error.OperatorTimeout, timed_out.step());
+    const timeout_event = timed_out.eventRecords()[timed_out.eventRecords().len - 1].event;
+    switch (timeout_event) {
+        .operator_failed => |payload| {
+            try std.testing.expectEqual(event_log.FailureKind.timeout, payload.kind);
+        },
+        else => return error.TestExpectedOperatorFailure,
+    }
+
+    const CrashRunner = Runner(0, 0, 1, 4);
+    const CrashOp = struct {
+        fn run(_: ?*const anyopaque, _: CrashRunner.Observation) !core.OperatorOutput {
+            return error.OperatorCrashed;
+        }
+    };
+
+    var crashed = CrashRunner.init(3, &.{});
+    try crashed.addOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "crash",
+    } }, null, CrashOp.run);
+
+    try std.testing.expectError(error.OperatorCrashed, crashed.step());
+    const crash_event = crashed.eventRecords()[crashed.eventRecords().len - 1].event;
+    switch (crash_event) {
+        .operator_failed => |payload| {
+            try std.testing.expectEqual(event_log.FailureKind.crash, payload.kind);
+        },
+        else => return error.TestExpectedOperatorFailure,
+    }
 }
