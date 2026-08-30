@@ -1,0 +1,9 @@
+invariants:
+  - name: task.present
+    requires:
+      - task.text
+
+  - name: candidate.compiles
+    requires:
+      - candidate.patch
+      - compile.status
