@@ -9,6 +9,7 @@ pub const benchmark = @import("core/benchmark.zig");
 pub const formal_population = @import("core/formal_population.zig");
 pub const sdk = @import("sdk/root.zig");
 pub const pack = @import("pack/contract.zig");
+pub const pack_runtime = @import("pack/runtime.zig");
 pub const provenance = @import("provenance/provenance.zig");
 pub const provenance_validation = @import("provenance/provenance_validation.zig");
 pub const provenance_stress = @import("provenance/provenance_stress.zig");
@@ -26,6 +27,7 @@ test {
     _ = formal_population;
     _ = sdk;
     _ = pack;
+    _ = pack_runtime;
     _ = provenance;
     _ = provenance_validation;
     _ = provenance_stress;
