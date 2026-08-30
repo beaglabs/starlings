@@ -1,0 +1,63 @@
+operators:
+  - name: task-encoder
+    runtime:
+      kind: python
+      target: operators/task_encoder.py
+    requires:
+      variables:
+        - task.text
+    provides:
+      variables:
+        - task.embedding
+
+  - name: repo-search
+    runtime:
+      kind: subprocess
+      target: tools/repo_search
+    requires:
+      variables:
+        - task.text
+        - task.embedding
+    provides:
+      variables:
+        - relevant.symbols
+
+  - name: patch-search
+    runtime:
+      kind: native
+    requires:
+      variables:
+        - relevant.symbols
+      invariants:
+        - task.present
+    provides:
+      variables:
+        - candidate.patch
+
+  - name: compiler
+    runtime:
+      kind: subprocess
+      target: tools/compile_candidate
+    requires:
+      variables:
+        - candidate.patch
+    provides:
+      variables:
+        - compile.status
+      invariants:
+        - candidate.compiles
+
+  - name: tests
+    runtime:
+      kind: subprocess
+      target: tools/run_tests
+    requires:
+      variables:
+        - candidate.patch
+        - compile.status
+      invariants:
+        - candidate.compiles
+    provides:
+      variables:
+        - tests.status
+        - patch.validated
