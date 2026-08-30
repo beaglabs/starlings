@@ -384,8 +384,8 @@ const ModelContext = struct {
         raw_context: ?*const anyopaque,
         obs: AgentRunner.Observation,
     ) !core.OperatorOutput {
-        const opaque = raw_context orelse return error.MissingModelContext;
-        const self: *const ModelContext = @ptrCast(@alignCast(opaque));
+        const context_ptr = raw_context orelse return error.MissingModelContext;
+        const self: *const ModelContext = @ptrCast(@alignCast(context_ptr));
 
         var observations: [contract.max_dependencies]external.WireObservation = undefined;
         var observation_count: usize = 0;
@@ -617,8 +617,8 @@ test "one model provider backs multiple logical model operators" {
         calls: usize = 0,
 
         fn infer(raw: ?*anyopaque, request: ModelRequest) !core.OperatorOutput {
-            const opaque = raw orelse return error.MissingModelState;
-            const self: *@This() = @ptrCast(@alignCast(opaque));
+            const state_ptr = raw orelse return error.MissingModelState;
+            const self: *@This() = @ptrCast(@alignCast(state_ptr));
             self.calls += 1;
 
             if (request.observations.len != 1) return error.UnboundedModelObservation;
