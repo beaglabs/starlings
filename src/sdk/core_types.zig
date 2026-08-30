@@ -135,7 +135,7 @@ pub const DiagnosticLevel = enum(u8) {
     debug,
     info,
     warning,
-    error,
+    error_level,
 };
 
 pub const Diagnostic = struct {
