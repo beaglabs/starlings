@@ -43,6 +43,7 @@ pub fn Registry(
         operator_count: usize = 0,
 
         pub fn addVariable(self: *Self, schema: VariableSchema) !void {
+            if (comptime max_variables == 0) return error.RegistryCapacityExceeded;
             if (self.variable_count >= max_variables) return error.RegistryCapacityExceeded;
             if (self.variableIndex(schema.variable.id) != null) return error.DuplicateVariable;
             self.variables[self.variable_count] = schema;
@@ -91,11 +92,19 @@ pub fn Registry(
         }
 
         pub fn variableIndex(self: *const Self, id: core.VariableId) ?usize {
+            if (comptime max_variables == 0) return null;
+
             var i: usize = 0;
             while (i < self.variable_count) : (i += 1) {
                 if (self.variables[i].variable.id == id) return i;
             }
             return null;
+        }
+
+        pub fn variableSchema(self: *const Self, id: core.VariableId) ?VariableSchema {
+            if (comptime max_variables == 0) return null;
+            const index = self.variableIndex(id) orelse return null;
+            return self.variables[index];
         }
 
         pub fn invariantIndex(self: *const Self, id: core.InvariantId) ?usize {
@@ -148,6 +157,7 @@ pub fn ContextState(comptime max_variables: usize, comptime max_invariants: usiz
             value: ?core.Value,
             round: u32,
         ) !void {
+            if (comptime max_variables == 0) return error.UnknownVariable;
             const index = registry.variableIndex(id) orelse return error.UnknownVariable;
             if (index >= max_variables) return error.RegistryCapacityExceeded;
             if (status.carriesValue() != (value != null)) return error.InvalidEpistemicValue;
@@ -183,6 +193,7 @@ pub fn ContextState(comptime max_variables: usize, comptime max_invariants: usiz
         }
 
         pub fn variableCell(self: *const Self, registry: anytype, id: core.VariableId) ?VariableCell {
+            if (comptime max_variables == 0) return null;
             const index = registry.variableIndex(id) orelse return null;
             if (index >= max_variables) return null;
             return self.variables[index];

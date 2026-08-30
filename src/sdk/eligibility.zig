@@ -3,11 +3,11 @@ const core = @import("core_types.zig");
 const reg = @import("registry.zig");
 
 pub fn variableFresh(registry: anytype, state: anytype, id: core.VariableId, round: u32) bool {
-    const index = registry.variableIndex(id) orelse return false;
-    const cell = state.variables[index];
+    const cell = state.variableCell(registry, id) orelse return false;
     if (!cell.status.isResolved()) return false;
 
-    if (registry.variables[index].freshness_rounds) |ttl| {
+    const schema = registry.variableSchema(id) orelse return false;
+    if (schema.freshness_rounds) |ttl| {
         if (round < cell.updated_round) return false;
         return (round - cell.updated_round) <= ttl;
     }
@@ -17,9 +17,9 @@ pub fn variableFresh(registry: anytype, state: anytype, id: core.VariableId, rou
 pub fn termSatisfied(registry: anytype, state: anytype, term: reg.DependencyTerm, round: u32) bool {
     return switch (term) {
         .variable_known => |id| blk: {
-            const index = registry.variableIndex(id) orelse break :blk false;
             if (!variableFresh(registry, state, id, round)) break :blk false;
-            break :blk state.variables[index].status.carriesValue();
+            const cell = state.variableCell(registry, id) orelse break :blk false;
+            break :blk cell.status.carriesValue();
         },
         .variable_resolved => |id| variableFresh(registry, state, id, round),
         .invariant_satisfied => |id| blk: {
@@ -166,4 +166,21 @@ test "zero-invariant registries support variable-only eligibility" {
     try std.testing.expect(registry.invariantIndex(99) == null);
     try std.testing.expect(state.invariantCell(&registry, 99) == null);
     try std.testing.expect(operatorEligible(&registry, &state, 0, 1));
+}
+
+
+test "zero-variable registries support operator-only eligibility" {
+    const R = reg.Registry(0, 0, 1);
+    const S = reg.ContextState(0, 0);
+    var registry = R{};
+    var state = S{};
+
+    try registry.addOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "side-effect-only",
+    } });
+
+    try std.testing.expect(registry.variableIndex(1) == null);
+    try std.testing.expect(state.variableCell(&registry, 1) == null);
+    try std.testing.expect(operatorEligible(&registry, &state, 0, 0));
 }

@@ -2,6 +2,7 @@ const std = @import("std");
 const content_id = @import("../core/content_id.zig");
 const core = @import("core_types.zig");
 const reg = @import("registry.zig");
+const data_plane = @import("data_plane.zig");
 
 pub const canonical_claim_version: u8 = 1;
 pub const canonical_artifact_version: u8 = 1;
@@ -65,9 +66,10 @@ pub fn MaterializedState(comptime max_variables: usize) type {
             claim_id: core.ContentId,
             round: u32,
         ) !void {
+            if (comptime max_variables == 0) return error.UnknownVariable;
             const index = registry.variableIndex(claim.variable) orelse return error.UnknownVariable;
             if (index >= max_variables) return error.RegistryCapacityExceeded;
-            const schema = registry.variables[index];
+            const schema = registry.variableSchema(claim.variable) orelse return error.UnknownVariable;
             const current = self.cells[index];
 
             switch (schema.variable.merge_policy) {
@@ -112,6 +114,7 @@ pub fn MaterializedState(comptime max_variables: usize) type {
         }
 
         pub fn cell(self: *const Self, registry: anytype, id: core.VariableId) ?MaterializedCell {
+            if (comptime max_variables == 0) return null;
             const index = registry.variableIndex(id) orelse return null;
             if (index >= max_variables) return null;
             return self.cells[index];
@@ -152,10 +155,11 @@ pub fn validateOutput(registry: anytype, manifest: core.OperatorManifest, output
     for (output.claims()) |claim| {
         try claim.validateShape();
         if (claim.source_operator != manifest.id) return error.SourceOperatorMismatch;
-        const index = registry.variableIndex(claim.variable) orelse return error.UnknownVariable;
+        _ = registry.variableIndex(claim.variable) orelse return error.UnknownVariable;
         if (!containsVariable(manifest.provides_variables, claim.variable)) return error.UnauthorizedVariableWrite;
         if (claim.value) |value| {
-            if (value.kind() != registry.variables[index].variable.kind) return error.VariableTypeMismatch;
+            const schema = registry.variableSchema(claim.variable) orelse return error.UnknownVariable;
+            if (value.kind() != schema.variable.kind) return error.VariableTypeMismatch;
         }
     }
 
@@ -164,6 +168,13 @@ pub fn validateOutput(registry: anytype, manifest: core.OperatorManifest, output
         if (claim.source_operator != manifest.id) return error.SourceOperatorMismatch;
         if (registry.invariantIndex(claim.invariant) == null) return error.UnknownInvariant;
         if (!containsInvariant(manifest.provides_invariants, claim.invariant)) return error.UnauthorizedInvariantWrite;
+    }
+
+    for (output.artifacts[0..output.artifact_count]) |artifact| {
+        try data_plane.validateArtifact(artifact);
+    }
+    for (output.actions[0..output.action_count]) |action| {
+        try data_plane.validateAction(action);
     }
 }
 

@@ -37,6 +37,27 @@ class WireTests(unittest.TestCase):
             "END\n",
         )
 
+    def test_encode_approval_action(self):
+        response = wire.encode_response(
+            10,
+            {
+                "actions": [
+                    {
+                        "name": "publish-result",
+                        "payload": "artifact:answer",
+                        "requires_approval": True,
+                    }
+                ]
+            },
+        )
+        self.assertEqual(
+            response,
+            "STARLINGS/1 RESPONSE\n"
+            "operator=10\n"
+            "action=publish-result,1,artifact:answer\n"
+            "END\n",
+        )
+
     def test_real_python_subprocess_operator_roundtrip(self):
         source = textwrap.dedent(
             """

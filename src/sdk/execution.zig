@@ -4,6 +4,7 @@ const reg = @import("registry.zig");
 const eligibility = @import("eligibility.zig");
 const output_state = @import("output_state.zig");
 const event_log = @import("event_log.zig");
+const data_plane = @import("data_plane.zig");
 const content_id = @import("../core/content_id.zig");
 
 pub fn Runner(
@@ -43,14 +44,14 @@ pub fn Runner(
 
             pub fn status(self: Observation, id: core.VariableId) ?core.EpistemicStatus {
                 if (!self.canRead(id)) return null;
-                const index = self.runner.registry.variableIndex(id) orelse return null;
-                return self.runner.state.variables[index].status;
+                const cell = self.runner.state.variableCell(&self.runner.registry, id) orelse return null;
+                return cell.status;
             }
 
             pub fn value(self: Observation, id: core.VariableId) ?core.Value {
                 if (!self.canRead(id)) return null;
-                const index = self.runner.registry.variableIndex(id) orelse return null;
-                return self.runner.state.variables[index].value;
+                const cell = self.runner.state.variableCell(&self.runner.registry, id) orelse return null;
+                return cell.value;
             }
 
             pub fn invariantStatus(self: Observation, id: core.InvariantId) ?core.InvariantStatus {
@@ -108,6 +109,7 @@ pub fn Runner(
             round: u32,
             eligible_operators: usize,
             pending_activations: usize,
+            pending_approvals: usize,
         };
 
         pub const ExecutionResult = struct {
@@ -115,13 +117,13 @@ pub fn Runner(
             summary: core.Result,
 
             pub fn value(self: ExecutionResult, id: core.VariableId) ?core.Value {
-                const index = self.runner.registry.variableIndex(id) orelse return null;
-                return self.runner.state.variables[index].value;
+                const cell = self.runner.state.variableCell(&self.runner.registry, id) orelse return null;
+                return cell.value;
             }
 
             pub fn status(self: ExecutionResult, id: core.VariableId) ?core.EpistemicStatus {
-                const index = self.runner.registry.variableIndex(id) orelse return null;
-                return self.runner.state.variables[index].status;
+                const cell = self.runner.state.variableCell(&self.runner.registry, id) orelse return null;
+                return cell.status;
             }
 
             pub fn explain(self: ExecutionResult, id: core.VariableId) ?Explanation {
@@ -214,9 +216,10 @@ pub fn Runner(
             };
             try claim.validateShape();
 
-            const variable_index = self.registry.variableIndex(id) orelse return error.UnknownVariable;
+            _ = self.registry.variableIndex(id) orelse return error.UnknownVariable;
             if (value) |typed_value| {
-                if (typed_value.kind() != self.registry.variables[variable_index].variable.kind) {
+                const schema = self.registry.variableSchema(id) orelse return error.UnknownVariable;
+                if (typed_value.kind() != schema.variable.kind) {
                     return error.VariableTypeMismatch;
                 }
             }
@@ -269,7 +272,7 @@ pub fn Runner(
                     .round = self.round,
                     .operator = chosen_id,
                     .activation_epoch = activation_epoch,
-                    .kind = .execution,
+                    .kind = classifyExecutionFailure(err),
                 } });
                 return err;
             };
@@ -292,7 +295,11 @@ pub fn Runner(
             };
 
             try self.events.ensureCapacity(
-                output.variable_claim_count + output.invariant_claim_count + 1,
+                output.variable_claim_count +
+                    output.invariant_claim_count +
+                    output.artifact_count +
+                    output.action_count +
+                    1,
             );
 
             for (output.claims()) |claim| {
@@ -322,6 +329,32 @@ pub fn Runner(
                 _ = try self.appendRuntimeEvent(.{ .invariant_changed = .{
                     .round = self.round,
                     .claim = claim,
+                } });
+            }
+
+            for (output.artifacts[0..output.artifact_count]) |artifact| {
+                _ = try self.appendRuntimeEvent(.{ .artifact_emitted = .{
+                    .round = self.round,
+                    .operator = chosen_id,
+                    .activation_epoch = activation_epoch,
+                    .artifact_id = artifact.id,
+                    .size_bytes = artifact.size_bytes,
+                } });
+            }
+
+            for (output.actions[0..output.action_count], 0..) |action, ordinal| {
+                const action_id = data_plane.actionContentId(
+                    action,
+                    chosen_id,
+                    activation_epoch,
+                    @intCast(ordinal),
+                );
+                _ = try self.appendRuntimeEvent(.{ .action_proposed = .{
+                    .round = self.round,
+                    .operator = chosen_id,
+                    .activation_epoch = activation_epoch,
+                    .action_id = action_id,
+                    .requires_approval = action.requires_approval,
                 } });
             }
 
@@ -369,6 +402,7 @@ pub fn Runner(
                 .round = self.round,
                 .eligible_operators = self.eligibleOperatorCount(),
                 .pending_activations = self.pendingActivationCount(),
+                .pending_approvals = self.pendingApprovalCount(),
             };
         }
 
@@ -394,13 +428,100 @@ pub fn Runner(
             return count;
         }
 
+        pub fn artifactEmissionCount(self: *const Self) usize {
+            var count: usize = 0;
+            for (self.events.slice()) |record| {
+                if (std.meta.activeTag(record.event) == .artifact_emitted) count += 1;
+            }
+            return count;
+        }
+
+        pub fn actionProposalCount(self: *const Self) usize {
+            var count: usize = 0;
+            for (self.events.slice()) |record| {
+                if (std.meta.activeTag(record.event) == .action_proposed) count += 1;
+            }
+            return count;
+        }
+
+        pub fn actionStatus(
+            self: *const Self,
+            action_id: core.ContentId,
+        ) ?data_plane.ActionStatus {
+            var status: ?data_plane.ActionStatus = null;
+            for (self.events.slice()) |record| {
+                switch (record.event) {
+                    .action_proposed => |payload| {
+                        if (!content_id.eql(payload.action_id, action_id)) continue;
+                        status = if (payload.requires_approval)
+                            .pending_approval
+                        else
+                            .ready;
+                    },
+                    .action_decided => |payload| {
+                        if (!content_id.eql(payload.action_id, action_id)) continue;
+                        status = switch (payload.decision) {
+                            .approved => .approved,
+                            .rejected => .rejected,
+                        };
+                    },
+                    else => {},
+                }
+            }
+            return status;
+        }
+
+        pub fn pendingApprovalCount(self: *const Self) usize {
+            var count: usize = 0;
+            for (self.events.slice()) |record| {
+                switch (record.event) {
+                    .action_proposed => |payload| {
+                        if (!payload.requires_approval) continue;
+                        if (self.actionStatus(payload.action_id)) |status| {
+                            if (status == .pending_approval) count += 1;
+                        }
+                    },
+                    else => {},
+                }
+            }
+            return count;
+        }
+
+        pub fn approveAction(self: *Self, action_id: core.ContentId) !void {
+            try self.decideAction(action_id, .approved);
+        }
+
+        pub fn rejectAction(self: *Self, action_id: core.ContentId) !void {
+            try self.decideAction(action_id, .rejected);
+        }
+
+        fn decideAction(
+            self: *Self,
+            action_id: core.ContentId,
+            decision: data_plane.ActionDecision,
+        ) !void {
+            const status = self.actionStatus(action_id) orelse return error.UnknownAction;
+            if (status != .pending_approval) return error.ActionNotPendingApproval;
+
+            try self.ensureRunStarted();
+            try self.requireNoOpenActivation();
+            try self.events.ensureCapacity(1);
+            _ = try self.appendRuntimeEvent(.{ .action_decided = .{
+                .round = self.round,
+                .action_id = action_id,
+                .decision = decision,
+            } });
+        }
+
         fn makeResult(self: *const Self, outcome: core.ResultOutcome) ExecutionResult {
             var unresolved: usize = 0;
             var conflicting: usize = 0;
-            var i: usize = 0;
-            while (i < self.registry.variable_count) : (i += 1) {
-                if (self.state.variables[i].status == .unknown) unresolved += 1;
-                if (self.state.variables[i].status == .conflicting) conflicting += 1;
+            if (comptime max_variables != 0) {
+                var i: usize = 0;
+                while (i < self.registry.variable_count) : (i += 1) {
+                    if (self.state.variables[i].status == .unknown) unresolved += 1;
+                    if (self.state.variables[i].status == .conflicting) conflicting += 1;
+                }
             }
             return .{
                 .runner = self,
@@ -417,6 +538,7 @@ pub fn Runner(
         }
 
         fn isTerminalSuccess(self: *const Self) bool {
+            if (comptime max_variables == 0) return false;
             if (self.targets.len == 0) return false;
             for (self.targets) |id| {
                 const index = self.registry.variableIndex(id) orelse return false;
@@ -426,6 +548,7 @@ pub fn Runner(
         }
 
         fn hasTargetConflict(self: *const Self) bool {
+            if (comptime max_variables == 0) return false;
             for (self.targets) |id| {
                 const index = self.registry.variableIndex(id) orelse continue;
                 if (self.state.variables[index].status == .conflicting) return true;
@@ -434,6 +557,7 @@ pub fn Runner(
         }
 
         fn hasTargetBlock(self: *const Self) bool {
+            if (comptime max_variables == 0) return false;
             for (self.targets) |id| {
                 const index = self.registry.variableIndex(id) orelse continue;
                 switch (self.state.variables[index].status) {
@@ -467,24 +591,26 @@ pub fn Runner(
             hashU64(&hasher, self.seed);
 
             hashU64(&hasher, @intCast(self.registry.variable_count));
-            var i: usize = 0;
-            while (i < self.registry.variable_count) : (i += 1) {
-                const schema = self.registry.variables[i];
-                hashU32(&hasher, schema.variable.id);
-                hashSlice(&hasher, schema.variable.name);
-                hasher.update(&.{@intFromEnum(schema.variable.kind)});
-                hasher.update(&.{@intFromEnum(schema.variable.merge_policy)});
-                if (schema.variable.unit) |unit| {
-                    hasher.update(&.{1});
-                    hashSlice(&hasher, unit);
-                } else {
-                    hasher.update(&.{0});
-                }
-                if (schema.freshness_rounds) |freshness| {
-                    hasher.update(&.{1});
-                    hashU32(&hasher, freshness);
-                } else {
-                    hasher.update(&.{0});
+            if (comptime max_variables != 0) {
+                var i: usize = 0;
+                while (i < self.registry.variable_count) : (i += 1) {
+                    const schema = self.registry.variables[i];
+                    hashU32(&hasher, schema.variable.id);
+                    hashSlice(&hasher, schema.variable.name);
+                    hasher.update(&.{@intFromEnum(schema.variable.kind)});
+                    hasher.update(&.{@intFromEnum(schema.variable.merge_policy)});
+                    if (schema.variable.unit) |unit| {
+                        hasher.update(&.{1});
+                        hashSlice(&hasher, unit);
+                    } else {
+                        hasher.update(&.{0});
+                    }
+                    if (schema.freshness_rounds) |freshness| {
+                        hasher.update(&.{1});
+                        hashU32(&hasher, freshness);
+                    } else {
+                        hasher.update(&.{0});
+                    }
                 }
             }
 
@@ -763,6 +889,41 @@ pub fn Runner(
                     self.rejected_claims += @as(usize, payload.rejected_claims);
                     self.executors[index].last_settled_epoch = payload.activation_epoch;
                 },
+                .artifact_emitted => |payload| {
+                    if (!self.run_started_logged) return error.MissingRunStarted;
+                    if (comptime max_operators == 0) return error.UnknownOperator;
+                    try self.advanceReplayRound(payload.round, true);
+                    const index = try self.openActivationIndex();
+                    const operator_id = self.registry.operators[index].manifest.id;
+                    if (operator_id != payload.operator) return error.ReplayOperatorMismatch;
+                    if (self.executors[index].activation_epoch != payload.activation_epoch) {
+                        return error.ActivationEpochMismatch;
+                    }
+                },
+                .action_proposed => |payload| {
+                    if (!self.run_started_logged) return error.MissingRunStarted;
+                    if (comptime max_operators == 0) return error.UnknownOperator;
+                    try self.advanceReplayRound(payload.round, true);
+                    const index = try self.openActivationIndex();
+                    const operator_id = self.registry.operators[index].manifest.id;
+                    if (operator_id != payload.operator) return error.ReplayOperatorMismatch;
+                    if (self.executors[index].activation_epoch != payload.activation_epoch) {
+                        return error.ActivationEpochMismatch;
+                    }
+                    if (self.actionStatus(payload.action_id) != null) {
+                        return error.DuplicateActionProposal;
+                    }
+                },
+                .action_decided => |payload| {
+                    if (!self.run_started_logged) return error.MissingRunStarted;
+                    try self.requireNoOpenActivation();
+                    try self.advanceReplayRound(payload.round, true);
+                    const status = self.actionStatus(payload.action_id) orelse
+                        return error.UnknownAction;
+                    if (status != .pending_approval) {
+                        return error.ActionNotPendingApproval;
+                    }
+                },
             }
         }
 
@@ -865,6 +1026,11 @@ pub fn Runner(
             hasher.update(&.{tag});
             hashU32(hasher, id);
 
+            if (comptime max_variables == 0) {
+                hashU64(hasher, 0);
+                return;
+            }
+
             const index = self.registry.variableIndex(id) orelse {
                 hashU64(hasher, 0);
                 return;
@@ -928,6 +1094,12 @@ pub fn Runner(
             return chosen;
         }
     };
+}
+
+fn classifyExecutionFailure(err: anyerror) event_log.FailureKind {
+    if (err == error.OperatorTimeout) return .timeout;
+    if (err == error.OperatorCrashed) return .crash;
+    return .execution;
 }
 
 fn hashSlice(hasher: *std.crypto.hash.Blake3, bytes: []const u8) void {
@@ -1537,7 +1709,7 @@ test "append-only events replay to identical materialized and scheduler state" {
     try std.testing.expectEqual(core.ResultOutcome.success, live_result.summary.outcome);
     try std.testing.expect(core.Value.eql(live_result.value(3).?, .{ .integer = 42 }));
     try live.validateEventLog();
-    try std.testing.expectEqual(@as(usize, 9), live.eventRecords().len);
+    try std.testing.expectEqual(@as(usize, 10), live.eventRecords().len);
 
     var replayed = R.init(73, &.{3});
     try Ops.setup(&replayed);
@@ -1673,4 +1845,120 @@ test "event sink failure latches the runner closed" {
         runner.seedVariable(1, .observed, .{ .integer = 8 }, 1000),
     );
     try std.testing.expectEqual(@as(usize, 1), runner.eventRecords().len);
+}
+
+
+test "artifact and approval action state is event-derived and replayable" {
+    const R = Runner(1, 0, 1, 16);
+
+    const Ops = struct {
+        fn emit(_: ?*const anyopaque, _: R.Observation) !core.OperatorOutput {
+            var out = core.OperatorOutput{};
+            try out.addArtifact(output_state.artifactRef(
+                "application/json",
+                "{\"result\":42}",
+            ));
+            try out.addAction(.{
+                .name = "publish-result",
+                .payload = "artifact:result",
+                .requires_approval = true,
+            });
+            return out;
+        }
+    };
+
+    var live = R.init(31, &.{});
+    try live.addOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "emit",
+    } }, null, Ops.emit);
+
+    _ = try live.runUntilQuiescent(2);
+    try std.testing.expectEqual(@as(usize, 1), live.artifactEmissionCount());
+    try std.testing.expectEqual(@as(usize, 1), live.actionProposalCount());
+    try std.testing.expectEqual(@as(usize, 1), live.pendingApprovalCount());
+    try std.testing.expectEqual(@as(usize, 1), live.schedulerSnapshot().pending_approvals);
+
+    var action_id: ?core.ContentId = null;
+    for (live.eventRecords()) |record| {
+        switch (record.event) {
+            .action_proposed => |payload| action_id = payload.action_id,
+            else => {},
+        }
+    }
+    const proposed = action_id orelse return error.TestExpectedActionProposal;
+    try std.testing.expectEqual(
+        data_plane.ActionStatus.pending_approval,
+        live.actionStatus(proposed).?,
+    );
+
+    try live.approveAction(proposed);
+    try std.testing.expectEqual(@as(usize, 0), live.pendingApprovalCount());
+    try std.testing.expectEqual(
+        data_plane.ActionStatus.approved,
+        live.actionStatus(proposed).?,
+    );
+
+    var replayed = R.init(31, &.{});
+    try replayed.addReplayOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "emit",
+    } });
+    try replayed.replayFrom(&live.events);
+
+    try std.testing.expectEqual(live.eventRecords().len, replayed.eventRecords().len);
+    try std.testing.expect(content_id.eql(live.eventHeadId(), replayed.eventHeadId()));
+    try std.testing.expectEqual(@as(usize, 1), replayed.artifactEmissionCount());
+    try std.testing.expectEqual(@as(usize, 1), replayed.actionProposalCount());
+    try std.testing.expectEqual(@as(usize, 0), replayed.pendingApprovalCount());
+    try std.testing.expectEqual(
+        data_plane.ActionStatus.approved,
+        replayed.actionStatus(proposed).?,
+    );
+}
+
+test "operator timeout and crash remain distinct canonical failures" {
+    const TimeoutRunner = Runner(0, 0, 1, 4);
+    const TimeoutOp = struct {
+        fn run(_: ?*const anyopaque, _: TimeoutRunner.Observation) !core.OperatorOutput {
+            return error.OperatorTimeout;
+        }
+    };
+
+    var timed_out = TimeoutRunner.init(3, &.{});
+    try timed_out.addOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "timeout",
+    } }, null, TimeoutOp.run);
+
+    try std.testing.expectError(error.OperatorTimeout, timed_out.step());
+    const timeout_event = timed_out.eventRecords()[timed_out.eventRecords().len - 1].event;
+    switch (timeout_event) {
+        .operator_failed => |payload| {
+            try std.testing.expectEqual(event_log.FailureKind.timeout, payload.kind);
+        },
+        else => return error.TestExpectedOperatorFailure,
+    }
+
+    const CrashRunner = Runner(0, 0, 1, 4);
+    const CrashOp = struct {
+        fn run(_: ?*const anyopaque, _: CrashRunner.Observation) !core.OperatorOutput {
+            return error.OperatorCrashed;
+        }
+    };
+
+    var crashed = CrashRunner.init(3, &.{});
+    try crashed.addOperator(.{ .manifest = .{
+        .id = 10,
+        .name = "crash",
+    } }, null, CrashOp.run);
+
+    try std.testing.expectError(error.OperatorCrashed, crashed.step());
+    const crash_event = crashed.eventRecords()[crashed.eventRecords().len - 1].event;
+    switch (crash_event) {
+        .operator_failed => |payload| {
+            try std.testing.expectEqual(event_log.FailureKind.crash, payload.kind);
+        },
+        else => return error.TestExpectedOperatorFailure,
+    }
 }

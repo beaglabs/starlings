@@ -2,6 +2,7 @@ const std = @import("std");
 const content_id = @import("../core/content_id.zig");
 const core = @import("core_types.zig");
 const output_state = @import("output_state.zig");
+const data_plane = @import("data_plane.zig");
 
 pub const canonical_event_version: u8 = 1;
 
@@ -13,6 +14,9 @@ pub const EventKind = enum(u8) {
     invariant_changed = 5,
     operator_completed = 6,
     operator_failed = 7,
+    artifact_emitted = 8,
+    action_proposed = 9,
+    action_decided = 10,
 };
 
 pub const RunStarted = struct {
@@ -56,6 +60,8 @@ pub const OperatorCompleted = struct {
 pub const FailureKind = enum(u8) {
     execution,
     validation,
+    timeout,
+    crash,
 };
 
 pub const OperatorFailed = struct {
@@ -66,6 +72,28 @@ pub const OperatorFailed = struct {
     rejected_claims: u16 = 0,
 };
 
+pub const ArtifactEmitted = struct {
+    round: u32,
+    operator: core.OperatorId,
+    activation_epoch: u64,
+    artifact_id: core.ContentId,
+    size_bytes: u64,
+};
+
+pub const ActionProposed = struct {
+    round: u32,
+    operator: core.OperatorId,
+    activation_epoch: u64,
+    action_id: core.ContentId,
+    requires_approval: bool,
+};
+
+pub const ActionDecided = struct {
+    round: u32,
+    action_id: core.ContentId,
+    decision: data_plane.ActionDecision,
+};
+
 pub const RunEvent = union(EventKind) {
     run_started: RunStarted,
     observation_added: ObservationAdded,
@@ -74,6 +102,9 @@ pub const RunEvent = union(EventKind) {
     invariant_changed: InvariantChanged,
     operator_completed: OperatorCompleted,
     operator_failed: OperatorFailed,
+    artifact_emitted: ArtifactEmitted,
+    action_proposed: ActionProposed,
+    action_decided: ActionDecided,
 };
 
 pub const EventRecord = struct {
@@ -210,6 +241,25 @@ pub fn eventContentId(
             hasher.update(&.{@intFromEnum(payload.kind)});
             hashU16(&hasher, payload.rejected_claims);
         },
+        .artifact_emitted => |payload| {
+            hashU32(&hasher, payload.round);
+            hashU32(&hasher, payload.operator);
+            hashU64(&hasher, payload.activation_epoch);
+            hasher.update(&payload.artifact_id);
+            hashU64(&hasher, payload.size_bytes);
+        },
+        .action_proposed => |payload| {
+            hashU32(&hasher, payload.round);
+            hashU32(&hasher, payload.operator);
+            hashU64(&hasher, payload.activation_epoch);
+            hasher.update(&payload.action_id);
+            hasher.update(&.{if (payload.requires_approval) 1 else 0});
+        },
+        .action_decided => |payload| {
+            hashU32(&hasher, payload.round);
+            hasher.update(&payload.action_id);
+            hasher.update(&.{@intFromEnum(payload.decision)});
+        },
     }
 
     var digest: core.ContentId = undefined;
@@ -245,6 +295,19 @@ fn validateEvent(event: RunEvent) !void {
         .operator_failed => |payload| {
             if (payload.operator == 0) return error.InvalidOperatorId;
             if (payload.activation_epoch == 0) return error.InvalidActivationEpoch;
+        },
+        .artifact_emitted => |payload| {
+            if (payload.operator == 0) return error.InvalidOperatorId;
+            if (payload.activation_epoch == 0) return error.InvalidActivationEpoch;
+            if (content_id.isZero(payload.artifact_id)) return error.InvalidArtifactId;
+        },
+        .action_proposed => |payload| {
+            if (payload.operator == 0) return error.InvalidOperatorId;
+            if (payload.activation_epoch == 0) return error.InvalidActivationEpoch;
+            if (content_id.isZero(payload.action_id)) return error.InvalidActionId;
+        },
+        .action_decided => |payload| {
+            if (content_id.isZero(payload.action_id)) return error.InvalidActionId;
         },
     }
 }
