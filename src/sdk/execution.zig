@@ -189,7 +189,6 @@ pub fn Runner(
             value: ?core.Value,
             confidence_permille: u16,
         ) !core.ContentId {
-            try self.ensureRunStarted();
             const claim: core.Claim = .{
                 .variable = id,
                 .status = status,
@@ -197,6 +196,16 @@ pub fn Runner(
                 .confidence_permille = confidence_permille,
                 .source_operator = 0,
             };
+            try claim.validateShape();
+
+            const variable_index = self.registry.variableIndex(id) orelse return error.UnknownVariable;
+            if (value) |typed_value| {
+                if (typed_value.kind() != self.registry.variables[variable_index].variable.kind) {
+                    return error.VariableTypeMismatch;
+                }
+            }
+
+            try self.ensureRunStarted();
             try self.events.ensureCapacity(1);
             const claim_id = try self.claims.append(claim);
             try self.materialized.applyClaim(
@@ -1529,4 +1538,53 @@ test "replay rejects a tampered event chain" {
     } });
 
     try std.testing.expectError(error.EventIdMismatch, replayed.replayFrom(&tampered));
+}
+
+
+test "run configuration locks after the first runtime event" {
+    const R = Runner(2, 0, 0, 8);
+    var runner = R.init(5, &.{1});
+
+    try runner.addVariable(.{ .variable = .{
+        .id = 1,
+        .name = "input",
+        .kind = .integer,
+        .merge_policy = .latest,
+    } });
+
+    _ = try runner.seedVariable(1, .observed, .{ .integer = 7 }, 1000);
+
+    try std.testing.expectError(
+        error.RunConfigurationLocked,
+        runner.addVariable(.{ .variable = .{
+            .id = 2,
+            .name = "late",
+            .kind = .integer,
+        } }),
+    );
+    try std.testing.expectEqual(event_log.EventKind.run_started, std.meta.activeTag(runner.eventRecords()[0].event));
+}
+
+test "replay rejects a different run seed before applying state" {
+    const R = Runner(1, 0, 0, 8);
+
+    var live = R.init(11, &.{1});
+    try live.addVariable(.{ .variable = .{
+        .id = 1,
+        .name = "input",
+        .kind = .integer,
+        .merge_policy = .latest,
+    } });
+    _ = try live.seedVariable(1, .observed, .{ .integer = 9 }, 1000);
+
+    var replayed = R.init(12, &.{1});
+    try replayed.addVariable(.{ .variable = .{
+        .id = 1,
+        .name = "input",
+        .kind = .integer,
+        .merge_policy = .latest,
+    } });
+
+    try std.testing.expectError(error.ReplaySeedMismatch, replayed.replayFrom(&live.events));
+    try std.testing.expectEqual(core.EpistemicStatus.unknown, replayed.state.variables[0].status);
 }
