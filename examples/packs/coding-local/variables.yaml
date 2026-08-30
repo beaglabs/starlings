@@ -1,0 +1,25 @@
+variables:
+  - name: task.text
+    type: text
+    merge: latest
+
+  - name: task.embedding
+    type: artifact_ref
+
+  - name: relevant.symbols
+    type: artifact_ref
+
+  - name: candidate.patch
+    type: artifact_ref
+
+  - name: compile.status
+    type: text
+    merge: latest
+
+  - name: tests.status
+    type: text
+    merge: latest
+
+  - name: patch.validated
+    type: boolean
+    merge: latest
