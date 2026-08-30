@@ -10,11 +10,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const yaml = b.dependency("yaml", .{
-        .target = target,
-        .optimize = optimize,
-    }).module("yaml");
-
     const mod_tests = b.addTest(.{
         .root_module = mod,
     });
@@ -25,7 +20,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    pack_test_module.addImport("yaml", yaml);
     const pack_tests = b.addTest(.{
         .root_module = pack_test_module,
     });
@@ -36,7 +30,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    cli_module.addImport("yaml", yaml);
 
     const cli = b.addExecutable(.{
         .name = "starlings",
