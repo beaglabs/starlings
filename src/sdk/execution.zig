@@ -149,16 +149,20 @@ pub fn Runner(
         accepted_claims: usize = 0,
         rejected_claims: usize = 0,
         proposed_actions: usize = 0,
+        run_started_logged: bool = false,
+        configuration_locked: bool = false,
 
         pub fn init(seed: u64, targets: []const core.VariableId) Self {
             return .{ .seed = seed, .targets = targets };
         }
 
         pub fn addVariable(self: *Self, schema: reg.VariableSchema) !void {
+            if (self.configuration_locked) return error.RunConfigurationLocked;
             try self.registry.addVariable(schema);
         }
 
         pub fn addInvariant(self: *Self, invariant: core.Invariant) !void {
+            if (self.configuration_locked) return error.RunConfigurationLocked;
             try self.registry.addInvariant(invariant);
         }
 
@@ -168,6 +172,7 @@ pub fn Runner(
             context: ?*const anyopaque,
             execute_fn: ExecuteFn,
         ) !void {
+            if (self.configuration_locked) return error.RunConfigurationLocked;
             if (self.executor_count >= max_operators) return error.RegistryCapacityExceeded;
             try self.registry.addOperator(registered);
             self.executors[self.executor_count] = .{
@@ -184,6 +189,7 @@ pub fn Runner(
             value: ?core.Value,
             confidence_permille: u16,
         ) !core.ContentId {
+            try self.ensureRunStarted();
             const claim: core.Claim = .{
                 .variable = id,
                 .status = status,
@@ -210,6 +216,7 @@ pub fn Runner(
         }
 
         pub fn step(self: *Self) !bool {
+            try self.ensureRunStarted();
             const chosen_id = self.nextPendingOperatorId() orelse return false;
             const chosen_index = self.registry.operatorIndex(chosen_id).?;
             const input_fingerprint = self.activationFingerprint(chosen_index);
@@ -429,6 +436,93 @@ pub fn Runner(
             return self.outcomeAtRest();
         }
 
+        pub fn configurationDigest(self: *const Self) core.ContentId {
+            var hasher = std.crypto.hash.Blake3.init(.{});
+            hasher.update("starlings-sdk-run-configuration-v1");
+            hashU64(&hasher, self.seed);
+
+            hashU64(&hasher, @intCast(self.registry.variable_count));
+            var i: usize = 0;
+            while (i < self.registry.variable_count) : (i += 1) {
+                const schema = self.registry.variables[i];
+                hashU32(&hasher, schema.variable.id);
+                hashSlice(&hasher, schema.variable.name);
+                hasher.update(&.{@intFromEnum(schema.variable.kind)});
+                hasher.update(&.{@intFromEnum(schema.variable.merge_policy)});
+                if (schema.variable.unit) |unit| {
+                    hasher.update(&.{1});
+                    hashSlice(&hasher, unit);
+                } else {
+                    hasher.update(&.{0});
+                }
+                if (schema.freshness_rounds) |freshness| {
+                    hasher.update(&.{1});
+                    hashU32(&hasher, freshness);
+                } else {
+                    hasher.update(&.{0});
+                }
+            }
+
+            hashU64(&hasher, @intCast(self.registry.invariant_count));
+            i = 0;
+            while (i < self.registry.invariant_count) : (i += 1) {
+                const invariant = self.registry.invariants[i];
+                hashU32(&hasher, invariant.id);
+                hashSlice(&hasher, invariant.name);
+                hashU64(&hasher, @intCast(invariant.requires.len));
+                for (invariant.requires) |id| hashU32(&hasher, id);
+            }
+
+            hashU64(&hasher, @intCast(self.registry.operator_count));
+            i = 0;
+            while (i < self.registry.operator_count) : (i += 1) {
+                const op = self.registry.operators[i];
+                hashU32(&hasher, op.manifest.id);
+                hashSlice(&hasher, op.manifest.name);
+                hashIdSlice(&hasher, op.manifest.requires_variables);
+                hashIdSlice(&hasher, op.manifest.requires_invariants);
+                hashIdSlice(&hasher, op.manifest.provides_variables);
+                hashIdSlice(&hasher, op.manifest.provides_invariants);
+                hasher.update(&.{@intFromEnum(op.eligibility.mode)});
+                hashU64(&hasher, @intCast(op.eligibility.terms.len));
+                for (op.eligibility.terms) |term| {
+                    switch (term) {
+                        .variable_known => |id| {
+                            hasher.update(&.{1});
+                            hashU32(&hasher, id);
+                        },
+                        .variable_resolved => |id| {
+                            hasher.update(&.{2});
+                            hashU32(&hasher, id);
+                        },
+                        .invariant_satisfied => |id| {
+                            hasher.update(&.{3});
+                            hashU32(&hasher, id);
+                        },
+                    }
+                }
+            }
+
+            hashIdSlice(&hasher, self.targets);
+
+            var digest: core.ContentId = undefined;
+            hasher.final(&digest);
+            return digest;
+        }
+
+        fn ensureRunStarted(self: *Self) !void {
+            if (self.run_started_logged) return;
+
+            try self.events.ensureCapacity(1);
+            const digest = self.configurationDigest();
+            _ = try self.events.append(.{ .run_started = .{
+                .seed = self.seed,
+                .configuration_digest = digest,
+            } });
+            self.run_started_logged = true;
+            self.configuration_locked = true;
+        }
+
         pub fn eventRecords(self: *const Self) []const event_log.EventRecord {
             return self.events.slice();
         }
@@ -468,6 +562,8 @@ pub fn Runner(
             self.accepted_claims = 0;
             self.rejected_claims = 0;
             self.proposed_actions = 0;
+            self.run_started_logged = false;
+            self.configuration_locked = false;
 
             var i: usize = 0;
             while (i < self.executor_count) : (i += 1) {
@@ -480,7 +576,21 @@ pub fn Runner(
 
         fn applyReplayEvent(self: *Self, event: event_log.RunEvent) !void {
             switch (event) {
+                .run_started => |payload| {
+                    if (self.run_started_logged) return error.DuplicateRunStarted;
+                    if (self.round != 0) return error.EventRoundMismatch;
+                    if (payload.seed != self.seed) return error.ReplaySeedMismatch;
+
+                    const expected = self.configurationDigest();
+                    if (!content_id.eql(expected, payload.configuration_digest)) {
+                        return error.ReplayConfigurationMismatch;
+                    }
+
+                    self.run_started_logged = true;
+                    self.configuration_locked = true;
+                },
                 .observation_added => |payload| {
+                    if (!self.run_started_logged) return error.MissingRunStarted;
                     try self.requireNoOpenActivation();
                     try self.advanceReplayRound(payload.round, false);
 
@@ -498,6 +608,7 @@ pub fn Runner(
                     self.accepted_claims += 1;
                 },
                 .operator_started => |payload| {
+                    if (!self.run_started_logged) return error.MissingRunStarted;
                     try self.requireNoOpenActivation();
 
                     const index = self.registry.operatorIndex(payload.operator) orelse
@@ -532,6 +643,7 @@ pub fn Runner(
                     self.executors[index].last_input_fingerprint = payload.input_fingerprint;
                 },
                 .claim_accepted => |payload| {
+                    if (!self.run_started_logged) return error.MissingRunStarted;
                     try self.advanceReplayRound(payload.round, true);
                     const open_index = try self.openActivationIndex();
                     const operator_id = self.registry.operators[open_index].manifest.id;
@@ -561,6 +673,7 @@ pub fn Runner(
                     self.accepted_claims += 1;
                 },
                 .invariant_changed => |payload| {
+                    if (!self.run_started_logged) return error.MissingRunStarted;
                     try self.advanceReplayRound(payload.round, true);
                     const open_index = try self.openActivationIndex();
                     const operator_id = self.registry.operators[open_index].manifest.id;
@@ -584,6 +697,7 @@ pub fn Runner(
                     );
                 },
                 .operator_completed => |payload| {
+                    if (!self.run_started_logged) return error.MissingRunStarted;
                     try self.advanceReplayRound(payload.round, true);
                     const index = try self.openActivationIndex();
                     const operator_id = self.registry.operators[index].manifest.id;
@@ -596,6 +710,7 @@ pub fn Runner(
                     self.executors[index].last_settled_epoch = payload.activation_epoch;
                 },
                 .operator_failed => |payload| {
+                    if (!self.run_started_logged) return error.MissingRunStarted;
                     try self.advanceReplayRound(payload.round, true);
                     const index = try self.openActivationIndex();
                     const operator_id = self.registry.operators[index].manifest.id;
@@ -1352,7 +1467,7 @@ test "append-only events replay to identical materialized and scheduler state" {
     try std.testing.expectEqual(core.ResultOutcome.success, live_result.summary.outcome);
     try std.testing.expect(core.Value.eql(live_result.value(3).?, .{ .integer = 42 }));
     try live.validateEventLog();
-    try std.testing.expectEqual(@as(usize, 8), live.eventRecords().len);
+    try std.testing.expectEqual(@as(usize, 9), live.eventRecords().len);
 
     var replayed = R.init(73, &.{3});
     try Ops.setup(&replayed);
