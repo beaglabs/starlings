@@ -476,8 +476,8 @@ pub fn Runner(
                 switch (record.event) {
                     .action_proposed => |payload| {
                         if (!payload.requires_approval) continue;
-                        if (self.actionStatus(payload.action_id) == .pending_approval) {
-                            count += 1;
+                        if (self.actionStatus(payload.action_id)) |status| {
+                            if (status == .pending_approval) count += 1;
                         }
                     },
                     else => {},
@@ -499,12 +499,11 @@ pub fn Runner(
             action_id: core.ContentId,
             decision: data_plane.ActionDecision,
         ) !void {
-            try self.ensureRunStarted();
-            try self.requireNoOpenActivation();
-
             const status = self.actionStatus(action_id) orelse return error.UnknownAction;
             if (status != .pending_approval) return error.ActionNotPendingApproval;
 
+            try self.ensureRunStarted();
+            try self.requireNoOpenActivation();
             try self.events.ensureCapacity(1);
             _ = try self.appendRuntimeEvent(.{ .action_decided = .{
                 .round = self.round,
