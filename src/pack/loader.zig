@@ -88,7 +88,6 @@ pub fn parseManifest(
     arena: std.mem.Allocator,
     source: []const u8,
 ) !contract.Manifest {
-    _ = arena;
     const parsed = try tokenize(source);
     const lines = parsed.slice();
     if (lines.len == 0) return error.EmptyYamlDocument;
@@ -226,10 +225,13 @@ pub fn parseVariables(
     var buf: [contract.max_variables]contract.VariableDecl = undefined;
     var count: usize = 0;
     var current: ?contract.VariableDecl = null;
+    var has_type = false;
+    var has_merge = false;
 
     for (lines[1..]) |line| {
         if (line.indent == 2 and startsListItem(line.text)) {
             if (current) |decl| {
+                if (!has_type) return error.MissingSchemaField;
                 if (count >= buf.len) return error.PackCapacityExceeded;
                 buf[count] = decl;
                 count += 1;
@@ -239,8 +241,10 @@ pub fn parseVariables(
             const name = (try scalarTextField(item, "name")) orelse return error.MissingSchemaField;
             current = .{
                 .name = name,
-                .@"type" = undefined,
+                .@"type" = .text,
             };
+            has_type = false;
+            has_merge = false;
             continue;
         }
 
@@ -248,14 +252,21 @@ pub fn parseVariables(
         var decl = current.?;
 
         if (try scalarField(line, "type")) |value| {
+            if (has_type) return error.DuplicateSchemaField;
             decl.@"type" = std.meta.stringToEnum(contract.ValueType, value) orelse return error.InvalidEnum;
+            has_type = true;
         } else if (try scalarField(line, "unit")) |value| {
+            if (decl.unit != null) return error.DuplicateSchemaField;
             decl.unit = value;
         } else if (try scalarField(line, "merge")) |value| {
+            if (has_merge) return error.DuplicateSchemaField;
             decl.merge = std.meta.stringToEnum(contract.Merge, value) orelse return error.InvalidEnum;
+            has_merge = true;
         } else if (try scalarField(line, "freshness_rounds")) |value| {
+            if (decl.freshness_rounds != null) return error.DuplicateSchemaField;
             decl.freshness_rounds = std.fmt.parseInt(u32, value, 10) catch return error.InvalidInteger;
         } else {
+            if (isForbiddenWorkflowKey(line.text)) return error.WorkflowKeyForbidden;
             return error.UnknownSchemaField;
         }
 
@@ -263,6 +274,7 @@ pub fn parseVariables(
     }
 
     if (current) |decl| {
+        if (!has_type) return error.MissingSchemaField;
         if (count >= buf.len) return error.PackCapacityExceeded;
         buf[count] = decl;
         count += 1;
@@ -270,11 +282,6 @@ pub fn parseVariables(
 
     const out = try arena.alloc(contract.VariableDecl, count);
     @memcpy(out, buf[0..count]);
-
-    for (out) |decl| {
-        _ = @tagName(decl.@"type");
-    }
-
     return .{ .variables = out };
 }
 
