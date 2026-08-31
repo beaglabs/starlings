@@ -47,14 +47,19 @@ python -m murmurations.benchmarking.run replay \
 The committed shard-000 recipe uses 60 public repositories pinned to exact
 commits across Python, Rust, Go, JavaScript/TypeScript, C/C++, Zig, and Java.
 Static code/document windows use the full catalog. Dynamic repair episodes use
-only repositories whose clean verifier passes inside the pinned ZViz corpus
-environment. Serious corpus generation never executes repository commands on
-the host.
+only repositories whose clean verifier passes in an ephemeral Daytona sandbox
+created from the pinned `murmurations-corpus-v1` snapshot. Serious corpus
+generation never executes repository commands on the host.
 
-On a Linux corpus builder, prepare the pinned ZViz runtime/rootfs once:
+Install the pinned Daytona SDK, configure your Daytona credentials, and prepare
+the corpus snapshot once. This can be run directly from macOS; no Lima, Docker,
+or local language toolchains are required:
 
 ```sh
-bash murmurations/training/corpus/zviz/prepare.sh
+python3 -m pip install -r murmurations/requirements.txt
+export DAYTONA_API_KEY=...
+export DAYTONA_API_URL=https://app.daytona.io/api
+python3 -m murmurations.training.prepare_daytona --replace
 ```
 
 Then run the small stratified probe/build:
@@ -92,7 +97,7 @@ deduplication. Generated files include SHA-256 digests in the QA report.
 ### Terminal-backed evidence in shard-000
 
 Dynamic trajectories can retrieve semantic operators backed by argv-only
-commands executed inside ZViz:
+commands executed inside the episode's Daytona sandbox:
 
 - `type.check` — compiler/type-checker diagnostics;
 - `package.metadata` — local manifest/package/dependency metadata;
@@ -136,24 +141,25 @@ The split is repository-level, not row-level.
 ## Generate dynamic repair trajectories
 
 Dynamic repair trajectories are a serious-corpus operation and are generated
-through `build_shard`, which requires the configured ZViz sandbox. The
+through `build_shard`, which requires the configured Daytona snapshot. The
 low-level trajectory generator is not a host-execution path.
 
 For each successful episode the generator:
 
-1. checks out/selects a pinned clean repository;
-2. runs its supported verifier inside ZViz and requires a pass;
-3. copies it into an isolated work directory mounted at `/tmp/work`;
-4. tries controlled source mutations;
-5. keeps only a mutation that changes the sandboxed verifier to failure;
-6. exposes repo/search/AST/docs/check/test operators through OR;
-7. executes terminal-backed operators inside the same ZViz environment;
-8. records an attributable bootstrap repair trajectory;
-9. applies the known inverse mutation;
-10. reruns the sandboxed verifier and records the result.
+1. checks out/selects the pinned repository locally for static inspection only;
+2. creates one ephemeral Daytona sandbox from the pinned corpus snapshot;
+3. clones and checks out the exact repository commit remotely;
+4. runs deterministic ecosystem preparation inside that sandbox;
+5. runs the clean verifier remotely and requires a pass;
+6. tries controlled source mutations locally and synchronizes only changed source files;
+7. keeps only a mutation that changes the remote verifier to failure;
+8. exposes repo/search/AST/docs/check/test operators through OR;
+9. executes terminal-backed operators inside the same Daytona sandbox;
+10. applies the known inverse mutation and reruns the remote verifier.
 
-Failed mutation attempts are discarded instead of mislabeled. Shard QA also
-fails if terminal argv evidence is not attributed to ZViz.
+Failed mutation attempts are discarded instead of mislabeled. The sandbox is
+deleted when the episode ends, and shard QA fails if terminal argv evidence is
+not attributed to Daytona.
 
 ## Materialize trajectories
 
