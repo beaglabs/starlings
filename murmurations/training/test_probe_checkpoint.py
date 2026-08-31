@@ -40,7 +40,6 @@ class ProbeCheckpointTests(unittest.TestCase):
                     "commit": "b" * 40,
                     "passed": True,
                     "probe_signature": "v2:snapshot",
-                    "probe_signature": "v2:snapshot",
                 },
             )
             loaded = _load_checkpoint(checkpoint, catalog, probe_signature="v2:snapshot")
@@ -72,6 +71,7 @@ class ProbeCheckpointTests(unittest.TestCase):
                     "repository": "example/repo",
                     "commit": "a" * 40,
                     "passed": True,
+                    "probe_signature": "v2:snapshot",
                 },
             )
             self.assertEqual(
