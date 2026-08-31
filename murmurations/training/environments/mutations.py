@@ -45,17 +45,42 @@ class Mutation:
         )
 
 
+def _purge_python_bytecode(root: Path) -> None:
+    """Remove stale Python bytecode before verifier runs.
+
+    Mutation rules often preserve source-file size (for example == -> !=).
+    Python's timestamp/size pyc validation can therefore reuse bytecode from
+    the clean verification when a mutation is written within the same
+    filesystem timestamp tick. That creates false negatives in mutation
+    testing, especially on macOS.
+    """
+
+    for cache_dir in root.rglob("__pycache__"):
+        if cache_dir.is_dir():
+            shutil.rmtree(cache_dir, ignore_errors=True)
+    for pyc in root.rglob("*.pyc"):
+        try:
+            pyc.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def verify(root: str | Path, argv: Sequence[str], timeout_seconds: int) -> Verification:
+    root_path = Path(root)
+    _purge_python_bytecode(root_path)
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     try:
         completed = subprocess.run(
             list(argv),
-            cwd=Path(root),
+            cwd=root_path,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             timeout=timeout_seconds,
             check=False,
+            env=env,
         )
     except FileNotFoundError:
         return Verification(False, None, f"command not found: {argv[0]}")
