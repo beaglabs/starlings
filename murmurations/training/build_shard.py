@@ -21,8 +21,7 @@ from murmurations.training.probe_repositories import probe_repository_catalog
 
 def _write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "
-", encoding="utf-8")
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
 
 
 def _record_dict(record: RepoRecord) -> dict[str, Any]:
@@ -72,8 +71,7 @@ def _catalog_for_run(
     path = output_dir / "catalog-subset.jsonl"
     with path.open("w", encoding="utf-8") as handle:
         for record in selected:
-            handle.write(json.dumps(_record_dict(record), sort_keys=True) + "
-")
+            handle.write(json.dumps(_record_dict(record), sort_keys=True) + "\\n")
     return path
 
 
