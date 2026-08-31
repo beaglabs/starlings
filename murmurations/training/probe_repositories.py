@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import shutil
 import time
 from typing import Any
 
@@ -27,6 +28,94 @@ def _record_dict(record: RepoRecord) -> dict[str, Any]:
     }
 
 
+def _checkpoint_path(report_path: str | Path | None) -> Path | None:
+    if report_path is None:
+        return None
+    target = Path(report_path)
+    return target.with_name(target.name + ".checkpoint.jsonl")
+
+
+def _load_checkpoint(
+    checkpoint: Path | None,
+    catalog: RepoCatalog,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    if checkpoint is None or not checkpoint.exists():
+        return {}
+    allowed = {(record.name, record.commit) for record in catalog.records}
+    rows: dict[tuple[str, str], dict[str, Any]] = {}
+    with checkpoint.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            key = (str(row.get("repository") or ""), str(row.get("commit") or ""))
+            if key in allowed:
+                rows[key] = row
+    return rows
+
+
+def _append_checkpoint(checkpoint: Path | None, row: dict[str, Any]) -> None:
+    if checkpoint is None:
+        return
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    with checkpoint.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, sort_keys=True) + "\n")
+        handle.flush()
+
+
+def _write_outputs(
+    *,
+    catalog: RepoCatalog,
+    results: list[dict[str, Any]],
+    report_path: str | Path | None,
+    eligible_catalog_path: str | Path | None,
+) -> dict[str, Any]:
+    eligible_keys = {
+        (str(row.get("repository") or ""), str(row.get("commit") or ""))
+        for row in results
+        if row.get("passed")
+    }
+    eligible_records = [
+        record
+        for record in catalog.records
+        if (record.name, record.commit) in eligible_keys
+    ]
+    by_language: dict[str, dict[str, int]] = {}
+    for row in results:
+        language = str(row.get("language") or "unknown")
+        stats = by_language.setdefault(language, {"total": 0, "eligible": 0})
+        stats["total"] += 1
+        if row.get("passed"):
+            stats["eligible"] += 1
+    report = {
+        "repositories": len(catalog.records),
+        "completed": len(results),
+        "eligible": len(eligible_records),
+        "eligibility_rate": len(eligible_records) / max(1, len(results)),
+        "by_language": dict(sorted(by_language.items())),
+        "results": results,
+    }
+    if report_path is not None:
+        target = Path(report_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        tmp.replace(target)
+    if eligible_catalog_path is not None:
+        target = Path(eligible_catalog_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(target.name + ".tmp")
+        with tmp.open("w", encoding="utf-8") as handle:
+            for record in eligible_records:
+                handle.write(json.dumps(_record_dict(record), sort_keys=True) + "\n")
+        tmp.replace(target)
+    return report
+
+
 def probe_repository_catalog(
     catalog_path: str | Path,
     *,
@@ -35,15 +124,30 @@ def probe_repository_catalog(
     report_path: str | Path | None = None,
     eligible_catalog_path: str | Path | None = None,
     sandbox_runner=None,
+    prune_checkouts: bool = False,
 ) -> dict[str, Any]:
     catalog = RepoCatalog.from_jsonl(catalog_path)
-    results: list[dict[str, Any]] = []
-    eligible: list[RepoRecord] = []
+    checkpoint = _checkpoint_path(report_path)
+    completed = _load_checkpoint(checkpoint, catalog)
+    results: list[dict[str, Any]] = [
+        completed[(record.name, record.commit)]
+        for record in catalog.records
+        if (record.name, record.commit) in completed
+    ]
 
     if sandbox_runner is None:
         raise RuntimeError("repository eligibility probing requires Daytona")
 
+    if completed:
+        print(
+            f"[probe] resuming completed={len(completed)}/{len(catalog.records)}",
+            flush=True,
+        )
+
     for record in catalog.records:
+        key = (record.name, record.commit)
+        if key in completed:
+            continue
         started = time.monotonic()
         row: dict[str, Any] = {
             "repository": record.name,
@@ -70,46 +174,39 @@ def probe_repository_catalog(
                     "sandbox_snapshot": result.sandbox_snapshot,
                 }
             )
-            if result.passed:
-                eligible.append(record)
-            else:
+            if not result.passed:
                 row["error"] = "clean verifier failed"
         except Exception as exc:
             row.update({"passed": False, "error": str(exc)})
         row["seconds"] = round(time.monotonic() - started, 3)
         results.append(row)
-
-    by_language: dict[str, dict[str, int]] = {}
-    for row in results:
-        language = str(row.get("language") or "unknown")
-        stats = by_language.setdefault(language, {"total": 0, "eligible": 0})
-        stats["total"] += 1
-        if row.get("passed"):
-            stats["eligible"] += 1
-
-    report = {
-        "repositories": len(catalog.records),
-        "eligible": len(eligible),
-        "eligibility_rate": len(eligible) / max(1, len(catalog.records)),
-        "by_language": dict(sorted(by_language.items())),
-        "results": results,
-    }
-
-    if report_path is not None:
-        target = Path(report_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            json.dumps(report, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
+        completed[key] = row
+        _append_checkpoint(checkpoint, row)
+        report = _write_outputs(
+            catalog=catalog,
+            results=results,
+            report_path=report_path,
+            eligible_catalog_path=eligible_catalog_path,
         )
+        print(
+            f"[probe] checkpoint completed={len(results)}/{len(catalog.records)} "
+            f"eligible={report['eligible']}",
+            flush=True,
+        )
+        if prune_checkouts and record.path is None:
+            try:
+                root = Path(root)
+            except UnboundLocalError:
+                root = None
+            if root is not None and root.exists():
+                shutil.rmtree(root, ignore_errors=True)
 
-    if eligible_catalog_path is not None:
-        target = Path(eligible_catalog_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("w", encoding="utf-8") as handle:
-            for record in eligible:
-                handle.write(json.dumps(_record_dict(record), sort_keys=True) + "\n")
-
+    report = _write_outputs(
+        catalog=catalog,
+        results=results,
+        report_path=report_path,
+        eligible_catalog_path=eligible_catalog_path,
+    )
     return report
 
 
@@ -132,6 +229,7 @@ def main() -> None:
         report_path=args.report,
         eligible_catalog_path=args.eligible_catalog,
         sandbox_runner=sandbox,
+        prune_checkouts=True,
     )
     print(
         json.dumps(
