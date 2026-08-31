@@ -10,6 +10,8 @@ import shutil
 import subprocess
 from typing import Sequence
 
+from murmurations.utils.canonical import canonical_id
+
 
 _SOURCE_EXTENSIONS = {".c", ".cc", ".cpp", ".go", ".h", ".hpp", ".js", ".py", ".rs", ".ts", ".zig"}
 _SKIP_DIRS = {".git", ".venv", "node_modules", "target", "zig-cache", ".zig-cache", "test", "tests"}
@@ -28,6 +30,25 @@ class Verification:
     output: str
 
 
+def mutation_fingerprint(
+    relative_path: str,
+    line_number: int,
+    kind: str,
+    original_line: str,
+    mutated_line: str,
+) -> str:
+    return canonical_id(
+        {
+            "version": 1,
+            "path": relative_path,
+            "line": line_number,
+            "kind": kind,
+            "original": original_line,
+            "mutated": mutated_line,
+        }
+    )
+
+
 @dataclass(frozen=True)
 class Mutation:
     relative_path: str
@@ -39,6 +60,16 @@ class Mutation:
     broken_verification: Verification
 
     @property
+    def fingerprint(self) -> str:
+        return mutation_fingerprint(
+            self.relative_path,
+            self.line_number,
+            self.kind,
+            self.original_line,
+            self.mutated_line,
+        )
+
+    @property
     def repair_text(self) -> str:
         return (
             f"Restore {self.relative_path}:{self.line_number} from "
@@ -47,15 +78,6 @@ class Mutation:
 
 
 def _purge_python_bytecode(root: Path) -> None:
-    """Remove stale Python bytecode before verifier runs.
-
-    Mutation rules often preserve source-file size (for example == -> !=).
-    Python's timestamp/size pyc validation can therefore reuse bytecode from
-    the clean verification when a mutation is written within the same
-    filesystem timestamp tick. That creates false negatives in mutation
-    testing, especially on macOS.
-    """
-
     for cache_dir in list(root.rglob("__pycache__")):
         if cache_dir.is_dir():
             shutil.rmtree(cache_dir, ignore_errors=True)
@@ -87,7 +109,8 @@ def verify(root: str | Path, argv: Sequence[str], timeout_seconds: int) -> Verif
         return Verification(False, None, f"command not found: {argv[0]}")
     except subprocess.TimeoutExpired as exc:
         output = exc.stdout if isinstance(exc.stdout, str) else ""
-        return Verification(False, None, (output or "")[-8000:] + "\n[TIMEOUT]")
+        return Verification(False, None, (output or "")[-8000:] + "
+[TIMEOUT]")
     return Verification(completed.returncode == 0, completed.returncode, completed.stdout[-8000:])
 
 
@@ -124,8 +147,9 @@ def inject_verified_mutation(
     seed: int,
     timeout_seconds: int = 120,
     max_attempts: int = 64,
+    excluded_fingerprints: set[str] | None = None,
 ) -> Mutation:
-    """Copy a clean repo and retain only a mutation that verifier catches."""
+    """Copy a clean repo and retain a unique mutation caught by its verifier."""
 
     source = Path(source_root).resolve()
     workspace = Path(workspace_root).resolve()
@@ -134,16 +158,36 @@ def inject_verified_mutation(
     shutil.copytree(
         source,
         workspace,
-        ignore=shutil.ignore_patterns(".git", ".venv", "node_modules", "target", "zig-cache", ".zig-cache"),
+        ignore=shutil.ignore_patterns(
+            ".git", ".venv", "node_modules", "target", "zig-cache", ".zig-cache"
+        ),
     )
 
     clean = verify(workspace, verifier_argv, timeout_seconds)
     if not clean.passed:
-        raise RuntimeError("source repository verifier does not pass; cannot establish mutation ground truth")
+        raise RuntimeError(
+            "source repository verifier does not pass; cannot establish mutation ground truth"
+        )
 
+    excluded = excluded_fingerprints or set()
     candidates = _candidate_mutations(workspace)
     random.Random(seed).shuffle(candidates)
-    for path, index, mutated_line, original_line, kind in candidates[:max_attempts]:
+    attempted = 0
+    for path, index, mutated_line, original_line, kind in candidates:
+        relative_path = str(path.relative_to(workspace))
+        fingerprint = mutation_fingerprint(
+            relative_path,
+            index + 1,
+            kind,
+            original_line,
+            mutated_line,
+        )
+        if fingerprint in excluded:
+            continue
+        if attempted >= max_attempts:
+            break
+        attempted += 1
+
         lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
         if index >= len(lines) or lines[index] != original_line:
             continue
@@ -152,7 +196,7 @@ def inject_verified_mutation(
         broken = verify(workspace, verifier_argv, timeout_seconds)
         if not broken.passed:
             return Mutation(
-                relative_path=str(path.relative_to(workspace)),
+                relative_path=relative_path,
                 line_number=index + 1,
                 kind=kind,
                 original_line=original_line,
@@ -163,7 +207,9 @@ def inject_verified_mutation(
         lines[index] = original_line
         path.write_text("".join(lines), encoding="utf-8")
 
-    raise RuntimeError("could not find a verifier-caught mutation within max_attempts")
+    raise RuntimeError(
+        "could not find a new verifier-caught mutation within max_attempts"
+    )
 
 
 def repair_mutation(workspace_root: str | Path, mutation: Mutation) -> None:

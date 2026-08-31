@@ -1,4 +1,4 @@
-"""Materialize ordinary code/document continuation windows from dynamic repositories."""
+"""Stream ordinary code/document continuation windows from repositories."""
 
 from __future__ import annotations
 
@@ -47,27 +47,46 @@ def materialize_repository_code(
     eval_fraction: float = 0.1,
     chunk_chars: int = 6000,
     max_files_per_repo: int = 2000,
-) -> dict[str, int]:
+) -> dict[str, object]:
     catalog = RepoCatalog.from_jsonl(catalog_path)
-    rows = {"train": [], "eval": []}
+    counts = {"train": 0, "eval": 0}
+    repo_counts: dict[str, int] = {}
+    failures: list[dict[str, str]] = []
 
-    for record in catalog.records:
-        root = checkout_repository(record, cache_dir)
-        split = split_for_repo(record.identity, eval_fraction)
-        for index, path in enumerate(_files(root)):
-            if index >= max_files_per_repo:
-                break
+    train_path = Path(train_output)
+    eval_path = Path(eval_output)
+    train_path.parent.mkdir(parents=True, exist_ok=True)
+    eval_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with (
+        train_path.open("w", encoding="utf-8") as train_handle,
+        eval_path.open("w", encoding="utf-8") as eval_handle,
+    ):
+        for record in catalog.records:
             try:
-                text = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+                root = checkout_repository(record, cache_dir)
+            except Exception as exc:
+                failures.append({"repository": record.name, "error": str(exc)})
                 continue
-            rel = path.relative_to(root)
-            for prefix, continuation in _windows(text, chunk_chars):
-                rows[split].append(
-                    {
+
+            split = split_for_repo(record.identity, eval_fraction)
+            handle = eval_handle if split == "eval" else train_handle
+            produced = 0
+            for index, path in enumerate(_files(root)):
+                if index >= max_files_per_repo:
+                    break
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                rel = path.relative_to(root)
+                for prefix, continuation in _windows(text, chunk_chars):
+                    row = {
                         "context": (
                             f"REPOSITORY: {record.name} commit={record.commit} "
-                            f"license={record.license}\nFILE: {rel}\n{prefix}"
+                            f"license={record.license}
+FILE: {rel}
+{prefix}"
                         ),
                         "language_target": continuation,
                         "operation": "NOOP",
@@ -81,18 +100,25 @@ def materialize_repository_code(
                         "provenance": {
                             "source_type": "repository_code",
                             "repository_identity": record.identity,
+                            "repository": record.name,
+                            "language": record.language,
+                            "license": record.license,
+                            "commit": record.commit,
                             "path": str(rel),
                         },
                     }
-                )
+                    handle.write(json.dumps(row, sort_keys=True) + "
+")
+                    counts[split] += 1
+                    produced += 1
+            repo_counts[record.name] = produced
 
-    for split, output_path in (("train", train_output), ("eval", eval_output)):
-        path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as handle:
-            for row in rows[split]:
-                handle.write(json.dumps(row, sort_keys=True) + "\n")
-    return {"train_rows": len(rows["train"]), "eval_rows": len(rows["eval"])}
+    return {
+        "train_rows": counts["train"],
+        "eval_rows": counts["eval"],
+        "repositories": dict(sorted(repo_counts.items())),
+        "failures": failures,
+    }
 
 
 def main() -> None:
