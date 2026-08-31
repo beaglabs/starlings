@@ -25,6 +25,12 @@ def _summary(event: dict[str, Any]) -> str:
         f"{event['id']} {frame['operation']} operator={frame.get('operator_ref')} argument={argument}"
     ]
     env = event.get("environment") or {}
+    argv = env.get("argv")
+    if isinstance(argv, list) and argv:
+        lines.append(
+            f"ARGV[{event['id']}]: "
+            + json.dumps([str(item) for item in argv], separators=(",", ":"))
+        )
     output = env.get("output")
     if isinstance(output, str) and output:
         lines.append(f"RESULT[{event['id']}]: {output[-1600:]}")
