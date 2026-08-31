@@ -58,6 +58,116 @@ class CorpusTests(unittest.TestCase):
         two = mutation_fingerprint("src/a.py", 4, "eq_to_ne", "a == b", "a != b")
         self.assertNotEqual(one, two)
 
+    def test_qa_rejects_non_zviz_terminal_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog = root / "catalog.jsonl"
+            catalog.write_text(
+                json.dumps(
+                    {
+                        "name": "fixture",
+                        "commit": "fixture-v1",
+                        "license": "MIT",
+                        "language": "python",
+                        "path": str(root),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            repo = RepoCatalog.from_jsonl(catalog).records[0]
+
+            episodes = root / "episodes.jsonl"
+            episodes.write_text(
+                json.dumps(
+                    {
+                        "repository": {
+                            "name": repo.name,
+                            "identity": repo.identity,
+                            "language": repo.language,
+                            "license": repo.license,
+                        },
+                        "mutation": {
+                            "kind": "eq_to_ne",
+                            "fingerprint": "b3:" + "02" * 32,
+                        },
+                        "events": [
+                            {
+                                "frame": {
+                                    "operation": "EXECUTE",
+                                    "operator_ref": "repo.tests",
+                                },
+                                "environment": {
+                                    "argv": ["python3", "-m", "unittest"],
+                                    "sandbox_backend": "local",
+                                },
+                            }
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            def write_row(path: Path, source_type: str) -> None:
+                path.write_text(
+                    json.dumps(
+                        {
+                            "context": "x",
+                            "language_target": "",
+                            "operation": "NOOP",
+                            "argument": {"kind": "NONE"},
+                            "provenance": {
+                                "source_type": source_type,
+                                "repository_identity": repo.identity,
+                                "repository": repo.name,
+                                "content_sha256": "01" * 32,
+                            },
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+
+            code_train = root / "code-train.jsonl"
+            code_eval = root / "code-eval.jsonl"
+            trajectory_train = root / "trajectory-train.jsonl"
+            trajectory_eval = root / "trajectory-eval.jsonl"
+            write_row(code_train, "repository_code")
+            write_row(trajectory_train, "trajectory")
+            code_eval.write_text("", encoding="utf-8")
+            trajectory_eval.write_text("", encoding="utf-8")
+
+            report = validate_corpus_shard(
+                catalog_path=catalog,
+                episodes_path=episodes,
+                code_train_path=code_train,
+                code_eval_path=code_eval,
+                trajectory_train_path=trajectory_train,
+                trajectory_eval_path=trajectory_eval,
+                generation_report={
+                    "success_rate": 1.0,
+                    "eligible_repositories": 1,
+                },
+                quality={
+                    "min_catalog_repositories": 1,
+                    "min_generation_success_rate": 0.0,
+                    "min_eligible_repositories": 1,
+                    "min_dynamic_repositories": 1,
+                    "min_unique_mutations": 1,
+                    "min_code_rows": 1,
+                    "min_trajectory_rows": 1,
+                    "min_terminal_argv_events": 1,
+                    "require_zviz_terminal_execution": True,
+                },
+            )
+            self.assertFalse(report["passed"])
+            self.assertFalse(report["gates"]["terminal_execution_is_zviz"])
+            self.assertEqual(
+                report["terminal_evidence"]["sandbox_backends"],
+                {"local": 1},
+            )
+
     def test_qa_rejects_repository_split_leakage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
