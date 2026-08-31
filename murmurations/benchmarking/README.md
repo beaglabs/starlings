@@ -1,44 +1,55 @@
-# Benchmarking
+# Murmurations benchmarking
 
-Murmurations keeps three evaluation layers separate:
+Evaluation keeps four layers separate:
 
-1. **model competence** — language/code likelihood, operation selection, typed
-   argument grounding, parent pointers, and confidence calibration;
-2. **protocol integrity** — canonical identity, direct-parent closure,
-   Merkle-DAG acyclicity, and replayability;
-3. **environment outcome** — whether an emitted candidate actually compiles,
-   passes tests, survives hidden/property tests, or meets another executable
-   success condition.
-
-Keeping these separate prevents fluent language from hiding broken provenance,
-or perfect provenance plumbing from being mistaken for task competence.
+1. **model competence** — language likelihood, operation selection, argument
+   grounding, operator pointers, parent pointers, confidence;
+2. **Operator Retrieval** — whether the needed operator was exposed in the
+   bounded retrieved set and at what rank;
+3. **protocol integrity** — canonical identity, parent closure, DAG acyclicity,
+   and replay;
+4. **environment outcome** — compiler/test/hidden-verifier success.
 
 ## Head benchmark
 
 ```sh
-python -m murmurations.benchmarking.run heads \\
-  --checkpoint murmurations/training/runs/murmuration-500m-v0/final \\
-  --tokenizer murmurations/models/murmuration-500m-v0/tokenizer \\
-  --data data/murmurations/heldout.jsonl \\
-  --device auto
+python -m murmurations.benchmarking.run heads \
+  --checkpoint murmurations/training/runs/murmuration-500m-v0/final \
+  --tokenizer murmurations/models/murmuration-500m-v0/tokenizer \
+  --data data/murmurations/trajectory-eval.jsonl
 ```
 
-Metrics include language NLL/perplexity, operation accuracy, argument-kind and
-span accuracy, parent pointers/count, and confidence MAE.
+Metrics include operation accuracy, argument kind/start/end, true joint argument
+span exact match, operator-pointer accuracy, parent-pointer/count accuracy,
+confidence MAE, and language NLL/perplexity.
+
+## OR benchmark
+
+Generated episodes retain the actual bounded candidate set visible at every
+operator-bearing action:
+
+```sh
+python -m murmurations.benchmarking.run or \
+  --episodes data/murmurations/episodes.jsonl
+```
+
+This reports retrieval recall@k and MRR over actions with an operator reference.
 
 ## Replay benchmark
 
+The replay evaluator accepts either flat action-frame JSONL or generated episode
+JSONL and verifies the canonical action DAG:
+
 ```sh
-python -m murmurations.benchmarking.run replay --trace run/frames.jsonl
+python -m murmurations.benchmarking.run replay \
+  --trace data/murmurations/episodes.jsonl
 ```
 
-A replay trace is append-only and parent-closed. The command fails on identity
-mismatch, missing parents, or cycles.
+It fails on identity mismatch, missing parents, or cycles.
 
-## Coding-repair outcome benchmark
+## Coding outcome benchmark
 
-The scoring backend accepts a YAML file of explicit argv commands. It does not
-invoke a shell and it does not prescribe how the candidate was produced.
+Executable candidate scoring remains independent of how a patch was produced:
 
 ```yaml
 tasks:
@@ -50,22 +61,13 @@ tasks:
       - [zig, build, test]
 ```
 
-Score a candidate workspace:
-
 ```sh
-python -m murmurations.benchmarking.run coding \\
-  --spec benchmarks/zig.yaml \\
+python -m murmurations.benchmarking.run coding \
+  --spec benchmarks/zig.yaml \
   --candidate-root /tmp/candidate
 ```
 
-This is intentionally compatible with normal transformer inference, the
-protocol-native baseline, later multi-agent populations, and later local-k=7
-micro-dynamics. All can be judged by the same external verifier.
-
-## System-level metrics to add to traces
-
-Full Starlings episodes should also record success versus test-time compute:
-operation count, compiler/test calls, challenges resolved, retractions,
-delegations, unique evidence, active logical agents, active micro-agent
-fraction, recurrent ticks, wall time, and final outcome. These are properties
-of the emergent system, not of a particular benchmark workflow.
+For scientific comparisons, use the same held-out repositories and verifiers
+for a conventional 500M baseline, protocol-native model, +OR, +operator
+execution, later populations, and only then local-k=7 dynamics. Report success
+alongside test-time compute and operator counts.

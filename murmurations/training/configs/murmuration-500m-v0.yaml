@@ -14,8 +14,12 @@ tokenizer:
   path: murmurations/models/murmuration-500m-v0/tokenizer
 
 training:
-  train_data: data/murmurations/train.jsonl
-  eval_data: data/murmurations/eval.jsonl
+  train_data:
+    - data/murmurations/pretrain-train.jsonl
+    - data/murmurations/trajectory-train.jsonl
+  eval_data:
+    - data/murmurations/pretrain-eval.jsonl
+    - data/murmurations/trajectory-eval.jsonl
   output_dir: murmurations/training/runs/murmuration-500m-v0
   seed: 17
   mixed_precision: bf16
@@ -39,6 +43,7 @@ loss_weights:
   argument_kind: 0.5
   argument_start: 0.5
   argument_end: 0.5
+  operator_pointer: 0.75
   parent_pointer: 0.5
   parent_count: 0.25
   confidence: 0.1

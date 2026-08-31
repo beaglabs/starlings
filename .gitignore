@@ -8,4 +8,6 @@ murmurations/training/runs/
 murmurations/benchmarking/results/
 murmurations/models/**/weights/*
 murmurations/models/**/tokenizer/*
+/data/murmurations/
+/.cache/murmurations/
 .DS_Store

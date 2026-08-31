@@ -1,4 +1,4 @@
-"""Train a 32k byte-level BPE tokenizer for language, code, and protocol traces."""
+"""Train a byte-level BPE tokenizer for language, code, and protocol traces."""
 
 from __future__ import annotations
 
@@ -32,31 +32,31 @@ def iter_corpus(paths: list[str]) -> Iterable[str]:
                     yield line
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input", nargs="+", required=True)
-    parser.add_argument("--output", required=True)
-    parser.add_argument("--vocab-size", type=int, default=32768)
-    args = parser.parse_args()
-
-    output = Path(args.output)
+def train_tokenizer(paths: list[str], output_path: str | Path, vocab_size: int) -> int:
+    output = Path(output_path)
     output.mkdir(parents=True, exist_ok=True)
 
     tokenizer = Tokenizer(models.BPE(unk_token="<UNK>"))
     tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
     tokenizer.decoder = decoders.ByteLevel()
     trainer = trainers.BpeTrainer(
-        vocab_size=args.vocab_size,
+        vocab_size=vocab_size,
         min_frequency=2,
         special_tokens=list(BASE_SPECIAL_TOKENS) + list(CONTROL_TOKENS),
         initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
         show_progress=True,
     )
-    tokenizer.train_from_iterator(iter_corpus(args.input), trainer=trainer)
+    tokenizer.train_from_iterator(iter_corpus(paths), trainer=trainer)
+    actual = tokenizer.get_vocab_size()
+    if actual != vocab_size:
+        raise ValueError(
+            f"tokenizer produced {actual} tokens, expected exactly {vocab_size}; "
+            "provide a larger/more varied corpus or lower vocab_size"
+        )
     tokenizer.save(str(output / "tokenizer.json"))
 
     metadata = {
-        "vocab_size": tokenizer.get_vocab_size(),
+        "vocab_size": actual,
         "pad_token": "<PAD>",
         "bos_token": "<BOS>",
         "eos_token": "<EOS>",
@@ -66,6 +66,16 @@ def main() -> None:
     (output / "tokenizer_config.json").write_text(
         json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    return actual
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", nargs="+", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--vocab-size", type=int, default=32768)
+    args = parser.parse_args()
+    train_tokenizer(args.input, args.output, args.vocab_size)
 
 
 if __name__ == "__main__":

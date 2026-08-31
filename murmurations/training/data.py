@@ -1,4 +1,4 @@
-"""JSONL trajectory dataset for protocol-native supervision."""
+"""JSONL trajectory and code-window dataset for protocol-native supervision."""
 
 from __future__ import annotations
 
@@ -22,24 +22,27 @@ def _find_subsequence(haystack: Sequence[int], needle: Sequence[int]) -> tuple[i
 
 
 class ProtocolDataset(Dataset[dict[str, Any]]):
-    """Trajectory JSONL with language + structured action supervision.
+    """Language/code + structured action supervision from one or more JSONL files."""
 
-    Argument, operator, and parent labels are pointers into exact strings already
-    present in context. The model never emits BLAKE3 identities or arbitrary
-    tool names from the vocabulary when a retrieved operator is available.
-    """
-
-    def __init__(self, path: str | Path, tokenizer: Any, max_seq_len: int) -> None:
+    def __init__(
+        self,
+        path: str | Path | Sequence[str | Path],
+        tokenizer: Any,
+        max_seq_len: int,
+    ) -> None:
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
         self.rows: list[dict[str, Any]] = []
-        with Path(path).open("r", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if line:
-                    self.rows.append(json.loads(line))
+        paths = [path] if isinstance(path, (str, Path)) else list(path)
+        for raw_path in paths:
+            current = Path(raw_path)
+            with current.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if line:
+                        self.rows.append(json.loads(line))
         if not self.rows:
-            raise ValueError(f"dataset is empty: {path}")
+            raise ValueError(f"dataset is empty: {paths}")
 
     def __len__(self) -> int:
         return len(self.rows)
@@ -75,7 +78,7 @@ class ProtocolDataset(Dataset[dict[str, Any]]):
         if len(input_ids) > self.max_seq_len:
             raise ValueError(
                 f"example length {len(input_ids)} exceeds max_seq_len={self.max_seq_len}; "
-                "pre-chunk trajectories so evidence references remain intact"
+                "pre-chunk source/trajectory windows so evidence references remain intact"
             )
 
         operation = Operation[str(row.get("operation", "NOOP")).upper()]

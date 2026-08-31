@@ -51,11 +51,11 @@ class ActionFrame:
     operation: Operation
     argument_kind: ArgumentKind = ArgumentKind.NONE
     argument: str | None = None
-    operator_ref: str | None = None
     parents: tuple[str, ...] = ()
     confidence_permille: int = 1000
     actor: str | None = None
     metadata: Mapping[str, Any] | None = None
+    operator_ref: str | None = None
 
     def __post_init__(self) -> None:
         if not 0 <= self.confidence_permille <= 1000:

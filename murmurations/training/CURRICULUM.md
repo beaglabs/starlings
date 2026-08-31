@@ -1,64 +1,60 @@
 # Training curriculum
 
-The curriculum is staged, but the **runtime behavior must not become a memorized
-workflow**. Each stage should contain varied successful and unsuccessful action
-orders so the policy learns epistemic utility from local state rather than a
-fixed sequence.
+The curriculum is staged, but runtime behavior must not become a memorized
+workflow. Training should vary successful and unsuccessful action order,
+available operators, repository shape, verifier output, and local context.
 
 ## Stage 0 — language and code
 
-Train ordinary causal language/code competence. Protocol supervision can be
-`NOOP` with `NONE` arguments. The purpose is to establish syntax, code, and
-basic reasoning capacity without forcing every token sequence to perform an
-action.
+Train ordinary causal language/code competence from repository source and
+technical documentation windows. Structured supervision is `NOOP` / `NONE`.
 
 ## Stage 1 — native operations
 
-Introduce `OBSERVE`, `QUERY`, `CLAIM`, `EVIDENCE`, `PROPOSE`, `ACCEPT`,
-`REJECT`, `CHALLENGE`, `RETRACT`, and `DELEGATE` as classification targets at
-`<ACT>` positions. Train argument kind/span grounding at the same time.
+Introduce `OBSERVE`, `QUERY`, `CLAIM`, `EVIDENCE`, `PROPOSE`,
+`ACCEPT`, `REJECT`, `CHALLENGE`, `RETRACT`, `DELEGATE`, and
+`EXECUTE` at `<ACT>`. Train typed spans at the same time.
 
-## Stage 2 — attributable evidence
+## Stage 2 — Operator Retrieval
 
-Every claim/proposal episode carries canonical references. Train direct-parent
-pointers, parent count, and confidence. Generate negative examples with missing
-parents, irrelevant evidence, unsupported claims, and invalid ancestry.
+Vary the visible operator population. OR returns a bounded relevant set and the
+argument head points to the selected operator. Include distractors, unavailable
+capabilities, renamed operators with equivalent descriptions, and different
+operator counts so tool names cannot become a fixed workflow vocabulary.
 
-## Stage 3 — revision
+## Stage 3 — attributable evidence
 
-Oversample episodes in which early hypotheses are wrong. Reward productive
-`CHALLENGE` and `RETRACT` behavior rather than confidence persistence. Include
-multiple valid investigation paths to the same result.
+Train direct-parent pointers, parent count, and confidence. Include irrelevant
+or missing evidence and unsupported claims. BLAKE3 IDs are host-assigned and
+only pointed to by the model.
 
-## Stage 4 — delegation and populations
+## Stage 4 — verifier-grounded repair
 
-Supply varying `P = (A, G, X, M, F, Π, C, Φ, J)` contexts. Train the same
-physical model across multiple logical agents with different local observations,
-capabilities, neighborhoods, and budgets. A delegate receives only its bounded
-context, not the caller's hidden state.
+Use known-good repositories, controlled mutations, compiler/test failures,
+source/AST/docs queries, repair proposals, and post-repair verification.
+`oracle-bootstrap-v1` episodes are explicitly labeled supervised bootstrap
+data.
 
-## Stage 5 — executable coding environments
+## Stage 5 — revision and richer episodes
 
-Move from imitation to compiler/test feedback. Episodes should contain real
-queries, patch proposals, failed compiles, hidden-test failures, property-test
-evidence, revisions, and accepted solutions. Record every contribution in the
-Merkle-DAG.
+Oversample genuine failed proposals and evidence that forces `CHALLENGE`,
+`RETRACT`, or `REJECT`. Replace increasing amounts of oracle bootstrap data
+with policy-generated environment interactions scored by external verifiers.
 
-## Stage 6 — causal credit from the DAG
+## Stage 6 — delegation and populations
 
-Use successful and failed episode ancestry to train preference/value objectives:
-which observations became ancestors of accepted solutions, which challenges
-removed bad branches, which delegations reduced cost, and which actions were
-redundant. Preserve rejected/retracted branches instead of deleting them.
+Supply varying `P = (A, G, X, M, F, Π, C, Φ, J)` contexts. The same physical
+model may back multiple logical agents with different bounded observations,
+capabilities, neighborhoods, and budgets.
 
-## Stage 7 — local-k=7 micro-dynamics ablation
+## Stage 7 — causal credit from the DAG
 
-Only after the fixed-transformer ~500M baseline is strong and reproducible,
-introduce the parameter-agent hypothesis. Keep pretrained parameters as the
-initial condition and train a small shared local law controlling sparse gates,
-state, and dynamic `k=7` neighborhoods. Compare against the exact same model,
-data, protocol, and external benchmarks.
+Use successful and failed ancestry to estimate which observations, operator
+calls, challenges, proposals, and delegations actually contributed to accepted
+solutions.
 
-The first required result is not "beat a frontier model." It is a clean scaling
-curve showing whether protocol-native training and then local dynamics provide
-capability beyond an equal-parameter conventional baseline.
+## Stage 8 — local-k=7 micro-dynamics ablation
+
+Only after the fixed ~500M baseline is strong and reproducible, introduce the
+parameter-agent/local-k=7 hypothesis and compare against the exact same
+protocol, environments, tools, and benchmarks.

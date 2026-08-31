@@ -2,11 +2,11 @@
   "architecture": "MurmurationModel",
   "checkpoint": null,
   "format": "safetensors-or-accelerate-state",
-  "parameter_count": 503410717,
-  "protocol_version": 1,
+  "parameter_count": 503413791,
+  "protocol_version": 2,
   "status": "untrained",
   "tokenizer_vocab_size": 32768,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "weights": [],
-  "notes": "Identities are assigned by canonical host encoding after structured action decoding; the model does not predict BLAKE3 digests."
+  "notes": "The model points into retrieved operator descriptors and existing context. The host assigns canonical BLAKE3 identities after structured action decoding."
 }

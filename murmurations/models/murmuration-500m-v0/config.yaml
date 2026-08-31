@@ -1,4 +1,4 @@
-version: 0.1.0
+version: 0.2.0
 architecture: murmurations.training.model.MurmurationModel
 model:
   vocab_size: 32768
@@ -14,8 +14,8 @@ model:
 heads:
   language: tied_token_projection
   operation:
-    labels: [NOOP, OBSERVE, QUERY, CLAIM, EVIDENCE, PROPOSE, ACCEPT, REJECT, CHALLENGE, RETRACT, DELEGATE]
+    labels: [NOOP, OBSERVE, QUERY, CLAIM, EVIDENCE, PROPOSE, ACCEPT, REJECT, CHALLENGE, RETRACT, DELEGATE, EXECUTE]
   argument:
-    kinds: [NONE, TEXT, VARIABLE, INVARIANT, CLAIM, EVIDENCE, AGENT, CAPABILITY, ARTIFACT, ACTION, SYMBOL, SCALAR]
+    kinds: [NONE, TEXT, VARIABLE, INVARIANT, CLAIM, EVIDENCE, AGENT, CAPABILITY, ARTIFACT, ACTION, SYMBOL, SCALAR, OPERATOR]
     direct_parent_limit: 4
-    outputs: [kind, span_start, span_end, parent_pointers, parent_count, confidence]
+    outputs: [kind, span_start, span_end, operator_pointer, parent_pointers, parent_count, confidence]

@@ -9,6 +9,7 @@ import torch
 
 from murmurations.benchmarking.coding_repair import evaluate_coding_candidate
 from murmurations.benchmarking.model_io import load_model
+from murmurations.benchmarking.or_eval import evaluate_operator_retrieval
 from murmurations.benchmarking.protocol_eval import evaluate_protocol_heads
 from murmurations.benchmarking.replay_eval import evaluate_replay
 from murmurations.training.train import load_tokenizer
@@ -38,6 +39,9 @@ def main() -> None:
     replay = sub.add_parser("replay")
     replay.add_argument("--trace", required=True)
 
+    operator_retrieval = sub.add_parser("or")
+    operator_retrieval.add_argument("--episodes", required=True)
+
     coding = sub.add_parser("coding")
     coding.add_argument("--spec", required=True)
     coding.add_argument("--candidate-root", required=True)
@@ -56,6 +60,8 @@ def main() -> None:
         )
     elif args.command == "replay":
         result = evaluate_replay(args.trace)
+    elif args.command == "or":
+        result = evaluate_operator_retrieval(args.episodes)
     else:
         result = evaluate_coding_candidate(args.spec, args.candidate_root)
 

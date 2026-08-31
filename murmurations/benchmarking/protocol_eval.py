@@ -10,7 +10,6 @@ import torch
 from torch.utils.data import DataLoader
 
 from murmurations.training.data import ProtocolCollator, ProtocolDataset
-from murmurations.training.losses import compute_losses
 
 
 def _accuracy(logits: torch.Tensor, labels: torch.Tensor, ignore: int | None = None) -> tuple[int, int]:
@@ -40,6 +39,8 @@ def evaluate_protocol_heads(
     )
     totals = defaultdict(float)
     counts = defaultdict(int)
+    span_exact = 0
+    span_count = 0
     language_nll = 0.0
     language_tokens = 0
     confidence_abs_error = 0.0
@@ -60,6 +61,9 @@ def evaluate_protocol_heads(
             end_c, end_n = _accuracy(
                 outputs["argument_end_logits"], batch["argument_end_labels"], -100
             )
+            operator_c, operator_n = _accuracy(
+                outputs["operator_pointer_logits"], batch["operator_pointer_labels"], -100
+            )
             parent_c, parent_n = _accuracy(
                 outputs["parent_pointer_logits"], batch["parent_pointer_labels"], -100
             )
@@ -72,11 +76,27 @@ def evaluate_protocol_heads(
                 ("argument_kind", kind_c, kind_n),
                 ("argument_start", start_c, start_n),
                 ("argument_end", end_c, end_n),
+                ("operator_pointer", operator_c, operator_n),
                 ("parent_pointer", parent_c, parent_n),
                 ("parent_count", count_c, count_n),
             ):
                 totals[name] += correct
                 counts[name] += count
+
+            span_mask = (
+                (batch["argument_start_labels"] != -100)
+                & (batch["argument_end_labels"] != -100)
+            )
+            if torch.any(span_mask):
+                predicted_start = outputs["argument_start_logits"].argmax(dim=-1)
+                predicted_end = outputs["argument_end_logits"].argmax(dim=-1)
+                exact = (
+                    (predicted_start == batch["argument_start_labels"])
+                    & (predicted_end == batch["argument_end_labels"])
+                    & span_mask
+                )
+                span_exact += int(exact.sum().item())
+                span_count += int(span_mask.sum().item())
 
             labels = batch["language_labels"]
             valid = labels != -100
@@ -100,9 +120,7 @@ def evaluate_protocol_heads(
         f"{name}_accuracy": totals[name] / max(1, counts[name])
         for name in totals
     }
-    result["argument_span_exact_proxy"] = min(
-        result.get("argument_start_accuracy", 0.0), result.get("argument_end_accuracy", 0.0)
-    )
+    result["argument_span_exact"] = span_exact / max(1, span_count)
     result["confidence_mae"] = confidence_abs_error / max(1, confidence_count)
     if language_tokens:
         mean_nll = language_nll / language_tokens
