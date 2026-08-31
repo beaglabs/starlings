@@ -17,7 +17,7 @@ from murmurations.training.generate_trajectories import generate_trajectory_corp
 from murmurations.training.materialize import materialize_file
 from murmurations.training.materialize_code import materialize_repository_code
 from murmurations.training.probe_repositories import probe_repository_catalog
-from murmurations.training.zviz import ZVizCorpusRunner
+from murmurations.training.daytona import DaytonaCorpusRunner
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -87,8 +87,8 @@ def build_shard(
     output_dir.mkdir(parents=True, exist_ok=True)
     sandbox_config = dict(config.get("sandbox") or {})
     if not sandbox_config:
-        raise RuntimeError("serious corpus generation requires a ZViz sandbox config")
-    sandbox = ZVizCorpusRunner.from_config(sandbox_config)
+        raise RuntimeError("serious corpus generation requires a Daytona sandbox config")
+    sandbox = DaytonaCorpusRunner.from_config(sandbox_config)
     sandbox.validate_environment()
     catalog_path = _catalog_for_run(
         config["catalog"], output_dir, limit_repositories
@@ -125,7 +125,7 @@ def build_shard(
     )
 
     # Dynamic episodes use only repositories whose clean verifier passes inside
-    # the pinned ZViz corpus environment. Repository code is never executed on
+    # the pinned Daytona corpus snapshot. Repository code is never executed on
     # the corpus-generation host.
     probe = probe_repository_catalog(
         catalog_path,
