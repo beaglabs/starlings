@@ -57,15 +57,19 @@ def _cargo_primary_package(root: Path) -> str | None:
         return None
     workspace = payload.get("workspace") or {}
     members = workspace.get("members") or []
-    repo_name = root.name
     for member in members:
         if not isinstance(member, str) or "*" in member:
+            continue
+        leaf = Path(member).name.lower()
+        if leaf.startswith((
+            "bench", "example", "stress", "test-", "tests-", "fuzz", "tools",
+        )):
             continue
         member_manifest = root / member / "Cargo.toml"
         member_payload = _load_toml(member_manifest)
         package = member_payload.get("package") or {}
         name = package.get("name")
-        if name == repo_name:
+        if name:
             return str(name)
     return None
 
