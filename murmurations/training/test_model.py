@@ -72,6 +72,36 @@ class ModelTests(unittest.TestCase):
                 ).item()
             )
 
+    def test_pointer_projection_receives_gradient(self) -> None:
+        cfg = MurmurationConfig(
+            vocab_size=64,
+            d_model=32,
+            n_layers=1,
+            n_heads=4,
+            d_ff=64,
+            max_seq_len=16,
+            max_parents=4,
+            pointer_dim=16,
+        )
+        model = MurmurationModel(cfg)
+        tokens = torch.randint(0, cfg.vocab_size, (2, 8))
+        control = torch.tensor([6, 6])
+        output = model(tokens, control)
+
+        target = torch.tensor([2, 3])
+        loss = torch.nn.functional.cross_entropy(
+            output["operator_pointer_logits"], target
+        )
+        loss.backward()
+
+        for parameter in (
+            model.argument_head.pointer_key.weight,
+            model.argument_head.operator_query.weight,
+        ):
+            self.assertIsNotNone(parameter.grad)
+            self.assertTrue(torch.isfinite(parameter.grad).all().item())
+            self.assertGreater(float(parameter.grad.abs().sum().item()), 0.0)
+
     def test_default_architecture_parameter_count_is_stable(self) -> None:
         cfg = MurmurationConfig()
         embedding = cfg.vocab_size * cfg.d_model
