@@ -15,6 +15,7 @@ episodes_per_repo: 20
 generation_retries: 4
 timeout_seconds: 180
 max_mutation_attempts: 48
+probe_concurrency: 8
 
 code_chunk_chars: 6000
 max_files_per_repo: 1500
@@ -24,6 +25,7 @@ max_context_chars: 12000
 sandbox:
   runtime: daytona
   snapshot: murmurations-corpus-v1
+  target: us
   ttl_minutes: 45
   block_network_after_prepare: false
 
