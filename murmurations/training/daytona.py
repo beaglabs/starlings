@@ -144,12 +144,16 @@ class DaytonaCorpusRunner:
         repository: RepoRecord,
         *,
         plan_root: str | Path | None = None,
+        prepare_commands: Sequence[Sequence[str]] | None = None,
+        sync_local_changes: bool = True,
     ) -> "DaytonaWorkspace":
         return DaytonaWorkspace(
             self,
             local_root=local_root,
             repository=repository,
             plan_root=plan_root,
+            prepare_commands=prepare_commands,
+            sync_local_changes=sync_local_changes,
         )
 
 
@@ -165,6 +169,8 @@ class DaytonaWorkspace:
         local_root: str | Path,
         repository: RepoRecord,
         plan_root: str | Path | None,
+        prepare_commands: Sequence[Sequence[str]] | None,
+        sync_local_changes: bool,
     ) -> None:
         if not repository.url:
             raise ValueError(
@@ -178,6 +184,12 @@ class DaytonaWorkspace:
             if plan_root is not None
             else self.local_root
         )
+        self.prepare_commands = (
+            tuple(tuple(str(item) for item in command) for command in prepare_commands)
+            if prepare_commands is not None
+            else None
+        )
+        self.sync_local_changes = sync_local_changes
         self.sandbox = None
         self._local_hashes: dict[str, str] | None = None
 
@@ -234,7 +246,11 @@ class DaytonaWorkspace:
                     f"{(checkout.result or '')[-4000:]}"
                 )
 
-            prepare_commands = detect_prepare_commands(self.plan_root)
+            prepare_commands = (
+                self.prepare_commands
+                if self.prepare_commands is not None
+                else tuple(tuple(command) for command in detect_prepare_commands(self.plan_root))
+            )
             for index, argv in enumerate(prepare_commands, start=1):
                 portable = self._portable_argv(argv)
                 command = shlex.join(portable) + " 2>&1"
@@ -347,7 +363,8 @@ class DaytonaWorkspace:
     ) -> DaytonaExecution:
         if self.sandbox is None:
             raise RuntimeError("Daytona workspace is not active")
-        self._sync_local_changes()
+        if self.sync_local_changes:
+            self._sync_local_changes()
         portable = self._portable_argv(argv)
         if not portable:
             raise ValueError("cannot execute empty argv")
