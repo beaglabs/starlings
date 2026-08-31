@@ -7,6 +7,7 @@ import unittest
 
 from murmurations.training.corpus import validate_corpus_shard
 from murmurations.training.environments.mutations import mutation_fingerprint
+from murmurations.training.build_shard import _select_stratified
 from murmurations.training.generate_trajectories import _schedule
 from murmurations.training.environments.repositories import RepoCatalog, RepoRecord
 
@@ -27,6 +28,30 @@ class CorpusTests(unittest.TestCase):
         )
         self.assertEqual([item[0].name for item in scheduled], ["a", "a", "a", "b", "b", "b"])
         self.assertEqual([item[2] for item in scheduled], [0, 1, 2, 0, 1, 2])
+
+    def test_stratified_probe_spans_languages(self) -> None:
+        catalog = RepoCatalog(
+            [
+                RepoRecord("py-a", "fixture-a", "MIT", path=".", language="Python"),
+                RepoRecord("py-b", "fixture-b", "MIT", path=".", language="Python"),
+                RepoRecord("rust-a", "fixture-c", "MIT", path=".", language="Rust"),
+                RepoRecord("go-a", "fixture-d", "MIT", path=".", language="Go"),
+            ]
+        )
+        selected = _select_stratified(catalog, 3)
+        self.assertEqual(
+            {record.language for record in selected},
+            {"Go", "Python", "Rust"},
+        )
+
+    def test_remote_repository_requires_full_commit_sha(self) -> None:
+        with self.assertRaisesRegex(ValueError, "40-hex"):
+            RepoRecord(
+                "remote",
+                "main",
+                "MIT",
+                url="https://github.com/example/project.git",
+            )
 
     def test_mutation_fingerprint_changes_with_location(self) -> None:
         one = mutation_fingerprint("src/a.py", 3, "eq_to_ne", "a == b", "a != b")
