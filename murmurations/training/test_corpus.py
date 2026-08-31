@@ -72,8 +72,7 @@ class CorpusTests(unittest.TestCase):
                         "path": str(root),
                     }
                 )
-                + "
-",
+                + "\\n",
                 encoding="utf-8",
             )
             repo = RepoCatalog.from_jsonl(catalog).records[0]
@@ -94,8 +93,7 @@ class CorpusTests(unittest.TestCase):
                         "events": [],
                     }
                 )
-                + "
-",
+                + "\\n",
                 encoding="utf-8",
             )
 
@@ -113,8 +111,7 @@ class CorpusTests(unittest.TestCase):
                             },
                         }
                     )
-                    + "
-",
+                    + "\\n",
                     encoding="utf-8",
                 )
 
