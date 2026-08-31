@@ -42,11 +42,13 @@ class DaytonaCorpusRunner:
         ttl_minutes: int = 45,
         block_network_after_prepare: bool = False,
         client=None,
+        sandbox_params_factory=None,
     ) -> None:
         self.snapshot = snapshot
         self.ttl_minutes = ttl_minutes
         self.block_network_after_prepare = block_network_after_prepare
         self._client = client
+        self._sandbox_params_factory = sandbox_params_factory
         self._snapshot_info: dict[str, Any] | None = None
 
     @classmethod
@@ -145,14 +147,18 @@ class DaytonaWorkspace:
         self._local_hashes: dict[str, str] | None = None
 
     def __enter__(self) -> "DaytonaWorkspace":
-        try:
-            from daytona import CreateSandboxFromSnapshotParams
-        except ImportError as exc:
-            raise RuntimeError(
-                "Daytona SDK is required; install murmurations/requirements.txt"
-            ) from exc
+        if self.runner._sandbox_params_factory is None:
+            try:
+                from daytona import CreateSandboxFromSnapshotParams
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Daytona SDK is required; install murmurations/requirements.txt"
+                ) from exc
+            params_factory = CreateSandboxFromSnapshotParams
+        else:
+            params_factory = self.runner._sandbox_params_factory
 
-        params = CreateSandboxFromSnapshotParams(
+        params = params_factory(
             snapshot=self.runner.snapshot,
             ttl_minutes=self.runner.ttl_minutes,
             ephemeral=True,
@@ -168,36 +174,43 @@ class DaytonaWorkspace:
             },
         )
         self.sandbox = self.runner.client.create(params, timeout=120)
-        self.sandbox.git.clone(url=self.repository.url, path=self.remote_root)
-        checkout = self.sandbox.process.exec(
-            shlex.join(["git", "checkout", "--detach", self.repository.commit])
-            + " 2>&1",
-            cwd=self.remote_root,
-            timeout=120,
-        )
-        if int(checkout.exit_code) != 0:
-            raise RuntimeError(
-                f"remote checkout failed for {self.repository.name}: "
-                f"{(checkout.result or '')[-4000:]}"
-            )
-
-        for argv in detect_prepare_commands(self.plan_root):
-            portable = self._portable_argv(argv)
-            command = shlex.join(portable) + " 2>&1"
-            result = self.sandbox.process.exec(
-                command,
+        try:
+            self.sandbox.git.clone(url=self.repository.url, path=self.remote_root)
+            checkout = self.sandbox.process.exec(
+                shlex.join(["git", "checkout", "--detach", self.repository.commit])
+                + " 2>&1",
                 cwd=self.remote_root,
-                timeout=max(300, self.runner.ttl_minutes * 60 // 2),
+                timeout=120,
             )
-            if int(result.exit_code) != 0:
+            if int(checkout.exit_code) != 0:
                 raise RuntimeError(
-                    f"repository preparation failed: {portable!r}\n"
-                    f"{(result.result or '')[-4000:]}"
+                    f"remote checkout failed for {self.repository.name}: "
+                    f"{(checkout.result or '')[-4000:]}"
                 )
 
-        if self.runner.block_network_after_prepare:
-            self.sandbox.update_network_settings(network_block_all=True)
-        return self
+            for argv in detect_prepare_commands(self.plan_root):
+                portable = self._portable_argv(argv)
+                command = shlex.join(portable) + " 2>&1"
+                result = self.sandbox.process.exec(
+                    command,
+                    cwd=self.remote_root,
+                    timeout=max(300, self.runner.ttl_minutes * 60 // 2),
+                )
+                if int(result.exit_code) != 0:
+                    raise RuntimeError(
+                        f"repository preparation failed: {portable!r}\n"
+                        f"{(result.result or '')[-4000:]}"
+                    )
+
+            if self.runner.block_network_after_prepare:
+                self.sandbox.update_network_settings(network_block_all=True)
+            return self
+        except Exception:
+            try:
+                self.runner.client.delete(self.sandbox, timeout=60, wait=True)
+            finally:
+                self.sandbox = None
+            raise
 
     def __exit__(self, exc_type, exc, tb) -> bool:
         if self.sandbox is not None:
