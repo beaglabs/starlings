@@ -63,7 +63,7 @@ def generate_trajectory_corpus(
 ) -> dict[str, Any]:
     if sandbox_runner is None:
         raise RuntimeError(
-            "dynamic corpus generation requires the configured ZViz sandbox"
+            "dynamic corpus generation requires the configured Daytona sandbox"
         )
     catalog = RepoCatalog.from_jsonl(catalog_path)
     schedule = _schedule(
@@ -119,28 +119,33 @@ def generate_trajectory_corpus(
                         / f"episode-{local_index:06d}"
                     )
                     try:
-                        mutation = inject_verified_mutation(
-                            source,
+                        with sandbox_runner.workspace(
                             workspace,
-                            verifier,
-                            seed=attempt_seed,
-                            timeout_seconds=timeout_seconds,
-                            max_attempts=max_attempts,
-                            excluded_fingerprints=used[repo.name],
-                            verify_runner=sandbox_runner.verify,
-                        )
-                        registry = default_operator_registry(workspace)
-                        episode = make_oracle_bootstrap_episode(
                             repo,
-                            workspace,
-                            mutation,
-                            registry,
-                            timeout_seconds=timeout_seconds,
-                            episode_seed=attempt_seed,
-                            enrichment_operators=enrichment_operators,
-                            max_enrichment_calls=max_enrichment_calls,
-                            command_runner=sandbox_runner.run_operator,
-                        )
+                            plan_root=source,
+                        ) as remote:
+                            mutation = inject_verified_mutation(
+                                source,
+                                workspace,
+                                verifier,
+                                seed=attempt_seed,
+                                timeout_seconds=timeout_seconds,
+                                max_attempts=max_attempts,
+                                excluded_fingerprints=used[repo.name],
+                                verify_runner=remote.verify,
+                            )
+                            registry = default_operator_registry(workspace)
+                            episode = make_oracle_bootstrap_episode(
+                                repo,
+                                workspace,
+                                mutation,
+                                registry,
+                                timeout_seconds=timeout_seconds,
+                                episode_seed=attempt_seed,
+                                enrichment_operators=enrichment_operators,
+                                max_enrichment_calls=max_enrichment_calls,
+                                command_runner=remote.run_operator,
+                            )
                         record = episode.record()
                         record["mutation"]["fingerprint"] = canonical_id(
                             {
