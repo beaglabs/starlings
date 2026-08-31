@@ -148,6 +148,7 @@ def build_shard(
         report_path=paths["probe_report"],
         eligible_catalog_path=paths["eligible_catalog"],
         sandbox_runner=sandbox,
+        concurrency=int(config.get("probe_concurrency", 1)),
     )
     _log(
         f"probe complete eligible={probe['eligible']}/{probe['repositories']} "
