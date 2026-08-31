@@ -28,6 +28,9 @@ class Verification:
     passed: bool
     exit_code: int | None
     output: str
+    argv: tuple[str, ...] = ()
+    backend: str = "local"
+    sandbox_argv: tuple[str, ...] = ()
 
 
 def mutation_fingerprint(
@@ -106,11 +109,21 @@ def verify(root: str | Path, argv: Sequence[str], timeout_seconds: int) -> Verif
             env=env,
         )
     except FileNotFoundError:
-        return Verification(False, None, f"command not found: {argv[0]}")
+        return Verification(False, None, f"command not found: {argv[0]}", tuple(argv))
     except subprocess.TimeoutExpired as exc:
         output = exc.stdout if isinstance(exc.stdout, str) else ""
-        return Verification(False, None, (output or "")[-8000:] + "\n[TIMEOUT]")
-    return Verification(completed.returncode == 0, completed.returncode, completed.stdout[-8000:])
+        return Verification(
+            False,
+            None,
+            (output or "")[-8000:] + "\n[TIMEOUT]",
+            tuple(argv),
+        )
+    return Verification(
+        completed.returncode == 0,
+        completed.returncode,
+        completed.stdout[-8000:],
+        tuple(argv),
+    )
 
 
 def _candidate_mutations(root: Path) -> list[tuple[Path, int, str, str, str]]:
@@ -147,6 +160,7 @@ def inject_verified_mutation(
     timeout_seconds: int = 120,
     max_attempts: int = 64,
     excluded_fingerprints: set[str] | None = None,
+    verify_runner=None,
 ) -> Mutation:
     """Copy a clean repo and retain a unique mutation caught by its verifier."""
 
@@ -162,7 +176,8 @@ def inject_verified_mutation(
         ),
     )
 
-    clean = verify(workspace, verifier_argv, timeout_seconds)
+    run_verify = verify if verify_runner is None else verify_runner
+    clean = run_verify(workspace, verifier_argv, timeout_seconds)
     if not clean.passed:
         raise RuntimeError(
             "source repository verifier does not pass; cannot establish mutation ground truth"
@@ -192,7 +207,7 @@ def inject_verified_mutation(
             continue
         lines[index] = mutated_line
         path.write_text("".join(lines), encoding="utf-8")
-        broken = verify(workspace, verifier_argv, timeout_seconds)
+        broken = run_verify(workspace, verifier_argv, timeout_seconds)
         if not broken.passed:
             return Mutation(
                 relative_path=relative_path,
