@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 from pathlib import Path
 import shutil
@@ -146,6 +147,7 @@ def probe_repository_catalog(
 
     for record in catalog.records:
         key = (record.name, record.commit)
+        root: Path | None = None
         if key in completed:
             continue
         started = time.monotonic()
@@ -181,7 +183,22 @@ def probe_repository_catalog(
         row["seconds"] = round(time.monotonic() - started, 3)
         results.append(row)
         completed[key] = row
-        _append_checkpoint(checkpoint, row)
+        try:
+            _append_checkpoint(checkpoint, row)
+        except OSError as exc:
+            if (
+                exc.errno != errno.ENOSPC
+                or not prune_checkouts
+                or record.path is not None
+                or root is None
+            ):
+                raise
+            shutil.rmtree(root, ignore_errors=True)
+            root = None
+            _append_checkpoint(checkpoint, row)
+        if prune_checkouts and record.path is None and root is not None and root.exists():
+            shutil.rmtree(root, ignore_errors=True)
+            root = None
         report = _write_outputs(
             catalog=catalog,
             results=results,
@@ -193,13 +210,6 @@ def probe_repository_catalog(
             f"eligible={report['eligible']}",
             flush=True,
         )
-        if prune_checkouts and record.path is None:
-            try:
-                root = Path(root)
-            except UnboundLocalError:
-                root = None
-            if root is not None and root.exists():
-                shutil.rmtree(root, ignore_errors=True)
 
     report = _write_outputs(
         catalog=catalog,
