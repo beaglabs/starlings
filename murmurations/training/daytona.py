@@ -42,12 +42,14 @@ class DaytonaCorpusRunner:
         snapshot: str,
         ttl_minutes: int = 45,
         block_network_after_prepare: bool = False,
+        target: str | None = None,
         client=None,
         sandbox_params_factory=None,
     ) -> None:
         self.snapshot = snapshot
         self.ttl_minutes = ttl_minutes
         self.block_network_after_prepare = block_network_after_prepare
+        self.target = target
         self._client = client
         self._sandbox_params_factory = sandbox_params_factory
         self._snapshot_info: dict[str, Any] | None = None
@@ -69,18 +71,28 @@ class DaytonaCorpusRunner:
             block_network_after_prepare=bool(
                 config.get("block_network_after_prepare", False)
             ),
+            target=(str(config.get("target")).strip() if config.get("target") else None),
         )
 
     @property
     def client(self):
         if self._client is None:
             try:
-                from daytona import Daytona
+                from daytona import Daytona, DaytonaConfig
             except ImportError as exc:
                 raise RuntimeError(
                     "Daytona SDK is required; install murmurations/requirements.txt"
                 ) from exc
-            self._client = Daytona()
+            if self.target:
+                self._client = Daytona(
+                    DaytonaConfig(
+                        api_key=os.environ.get("DAYTONA_API_KEY"),
+                        api_url=os.environ.get("DAYTONA_API_URL"),
+                        target=self.target,
+                    )
+                )
+            else:
+                self._client = Daytona()
         return self._client
 
     def validate_environment(self) -> None:
@@ -110,8 +122,20 @@ class DaytonaCorpusRunner:
             "snapshot": self.snapshot,
             "ttl_minutes": self.ttl_minutes,
             "block_network_after_prepare": self.block_network_after_prepare,
+            "target": self.target,
             "snapshot_info": self._snapshot_info,
         }
+
+    def worker(self) -> "DaytonaCorpusRunner":
+        """Return an independent runner for concurrent sandbox lifecycle calls."""
+        if self._client is not None or self._sandbox_params_factory is not None:
+            return self
+        return DaytonaCorpusRunner(
+            snapshot=self.snapshot,
+            ttl_minutes=self.ttl_minutes,
+            block_network_after_prepare=self.block_network_after_prepare,
+            target=self.target,
+        )
 
     def workspace(
         self,
