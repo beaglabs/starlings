@@ -127,11 +127,6 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
     }
     return {
         "episodes": episodes,
-        "terminal_evidence": {
-            "operators": sorted(terminal_operator_names),
-            "events": terminal_operator_events,
-            "types_present": terminal_operator_types,
-        },
         "events": events,
         "repositories": dict(sorted(repositories.items())),
         "languages": dict(sorted(languages.items())),
@@ -224,6 +219,11 @@ def validate_corpus_shard(
         },
         "generation": generation_report,
         "episodes": episodes,
+        "terminal_evidence": {
+            "operators": sorted(terminal_operator_names),
+            "events": terminal_operator_events,
+            "types_present": terminal_operator_types,
+        },
         "rows": {
             "train": train,
             "eval": evaluation,
