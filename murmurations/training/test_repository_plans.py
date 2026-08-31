@@ -41,13 +41,19 @@ class RepositoryPlanTests(unittest.TestCase):
             self.assertEqual(
                 detect_test_command(root),
                 [
-                    "cmake",
-                    "--build",
+                    "ctest",
+                    "--build-and-test",
+                    ".",
                     ".murmurations-build",
-                    "--target",
-                    "test",
-                    "--parallel",
-                    "2",
+                    "--build-generator",
+                    "Ninja",
+                    "--build-noclean",
+                    "--build-options",
+                    "-DBUILD_TESTING=ON",
+                    "-DCMAKE_BUILD_TYPE=Debug",
+                    "--test-command",
+                    "ctest",
+                    "--output-on-failure",
                 ],
             )
             self.assertEqual(
