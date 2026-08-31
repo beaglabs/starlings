@@ -378,20 +378,20 @@ def execute_operator(
         return (
             OperatorResult(False, "no type/compiler check command detected")
             if command is None
-            else _run(root, command, timeout_seconds)
+            else _run(root, command, timeout_seconds, command_runner)
         )
     if name == "package.metadata":
         command = detect_package_metadata_command(root)
         return (
             OperatorResult(False, "no package metadata command detected")
             if command is None
-            else _run(root, command, timeout_seconds)
+            else _run(root, command, timeout_seconds, command_runner)
         )
     if name == "docs.lookup":
         command = detect_docs_lookup_command(root, argument)
         return (
             OperatorResult(False, "no local documentation command detected")
             if command is None
-            else _run(root, command, timeout_seconds)
+            else _run(root, command, timeout_seconds, command_runner)
         )
     raise KeyError(f"unknown training operator: {name}")
