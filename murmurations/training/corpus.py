@@ -98,6 +98,7 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
     operator_refs: Counter[str] = Counter()
     mutation_kinds: Counter[str] = Counter()
     fingerprints: Counter[str] = Counter()
+    terminal_argv_events = 0
 
     for episode in iter_jsonl(path):
         episodes += 1
@@ -118,6 +119,10 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
             operator = frame.get("operator_ref")
             if operator:
                 operator_refs[str(operator)] += 1
+            environment = event.get("environment") or {}
+            argv = environment.get("argv")
+            if isinstance(argv, list) and argv:
+                terminal_argv_events += 1
 
     duplicates = {
         fingerprint: count
@@ -135,6 +140,7 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
         "mutation_kinds": dict(sorted(mutation_kinds.items())),
         "unique_mutations": len(fingerprints),
         "duplicate_mutations": duplicates,
+        "terminal_argv_events": terminal_argv_events,
     }
 
 
@@ -206,6 +212,8 @@ def validate_corpus_shard(
         >= int(quality.get("min_terminal_operator_events", 0)),
         "terminal_operator_types": terminal_operator_types
         >= int(quality.get("min_terminal_operator_types", 0)),
+        "terminal_argv_events": int(episodes["terminal_argv_events"])
+        >= int(quality.get("min_terminal_argv_events", 0)),
     }
 
     return {
@@ -222,6 +230,7 @@ def validate_corpus_shard(
             "operators": sorted(terminal_operator_names),
             "events": terminal_operator_events,
             "types_present": terminal_operator_types,
+            "argv_events": int(episodes["terminal_argv_events"]),
         },
         "rows": {
             "train": train,
