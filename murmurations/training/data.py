@@ -12,13 +12,47 @@ from torch.utils.data import Dataset
 from murmurations.utils.protocol import ArgumentKind, Operation
 
 
-def _find_subsequence(haystack: Sequence[int], needle: Sequence[int]) -> tuple[int, int] | None:
-    if not needle:
-        return None
-    for start in range(len(haystack) - len(needle) + 1):
-        if list(haystack[start : start + len(needle)]) == list(needle):
-            return start, start + len(needle) - 1
-    return None
+def _char_span_to_token_span(
+    context: str,
+    offsets: Sequence[Sequence[int]],
+    value: Any,
+    label: str,
+) -> tuple[int, int]:
+    """Map an exact raw-context substring to token indices.
+
+    Byte-level BPE tokenization is context-sensitive at whitespace boundaries,
+    so independently encoding a pointer target and searching for its token IDs
+    is not reliable. Offset mappings from the full context are authoritative.
+    """
+
+    text = str(value)
+    char_start = context.find(text)
+    if char_start < 0:
+        raise ValueError(f"{label} not found in context: {value!r}")
+    char_end = char_start + len(text)
+
+    covered: list[int] = []
+    for index, pair in enumerate(offsets):
+        start, end = int(pair[0]), int(pair[1])
+        if end <= start:
+            continue
+        if end > char_start and start < char_end:
+            covered.append(index)
+
+    if not covered:
+        raise ValueError(
+            f"{label} has no tokenizer-offset coverage in context: {value!r}"
+        )
+
+    first = covered[0]
+    last = covered[-1]
+    first_start = int(offsets[first][0])
+    last_end = int(offsets[last][1])
+    if first_start > char_start or last_end < char_end:
+        raise ValueError(
+            f"{label} is only partially covered by tokenizer offsets: {value!r}"
+        )
+    return first, last
 
 
 class ProtocolDataset(Dataset[dict[str, Any]]):
@@ -47,20 +81,39 @@ class ProtocolDataset(Dataset[dict[str, Any]]):
     def __len__(self) -> int:
         return len(self.rows)
 
-    def _pointer_label(self, context_ids: Sequence[int], value: Any, label: str) -> int:
+    def _context_encoding(self, context: str) -> tuple[list[int], list[tuple[int, int]]]:
+        encoded = self.tokenizer(
+            context,
+            add_special_tokens=False,
+            return_offsets_mapping=True,
+        )
+        context_ids = list(encoded["input_ids"])
+        raw_offsets = encoded.get("offset_mapping")
+        if raw_offsets is None:
+            raise ValueError(
+                "ProtocolDataset requires a fast tokenizer with offset mappings"
+            )
+        offsets = [(int(start), int(end)) for start, end in raw_offsets]
+        if len(context_ids) != len(offsets):
+            raise ValueError("tokenizer returned mismatched input_ids/offset_mapping")
+        return context_ids, offsets
+
+    def _pointer_label(
+        self,
+        context: str,
+        offsets: Sequence[Sequence[int]],
+        value: Any,
+        label: str,
+    ) -> int:
         if value is None:
             return -100
-        encoded = self.tokenizer.encode(str(value), add_special_tokens=False)
-        found = _find_subsequence(context_ids, encoded)
-        if found is None:
-            raise ValueError(f"{label} not found in context: {value!r}")
-        return found[0]
+        return _char_span_to_token_span(context, offsets, value, label)[0]
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         row = self.rows[index]
         context = str(row["context"])
         language_target = str(row.get("language_target", ""))
-        context_ids = self.tokenizer.encode(context, add_special_tokens=False)
+        context_ids, context_offsets = self._context_encoding(context)
         act_ids = self.tokenizer.encode("<ACT>", add_special_tokens=False)
         if len(act_ids) != 1:
             raise ValueError("<ACT> must be a single special token")
@@ -87,14 +140,20 @@ class ProtocolDataset(Dataset[dict[str, Any]]):
         argument_text = argument.get("text")
         start_label = end_label = -100
         if argument_text is not None:
-            encoded = self.tokenizer.encode(str(argument_text), add_special_tokens=False)
-            found = _find_subsequence(context_ids, encoded)
-            if found is None:
-                raise ValueError(f"argument text not found in context: {argument_text!r}")
-            start_label, end_label = found
+            start_label, end_label = _char_span_to_token_span(
+                context,
+                context_offsets,
+                argument_text,
+                "argument text",
+            )
 
         operator_ref = argument.get("operator", row.get("operator"))
-        operator_pointer_label = self._pointer_label(context_ids, operator_ref, "operator reference")
+        operator_pointer_label = self._pointer_label(
+            context,
+            context_offsets,
+            operator_ref,
+            "operator reference",
+        )
 
         parents = list(argument.get("parents", []))
         if len(parents) > 4:
@@ -102,7 +161,10 @@ class ProtocolDataset(Dataset[dict[str, Any]]):
         parent_labels = [-100] * 4
         for parent_index, parent in enumerate(parents):
             parent_labels[parent_index] = self._pointer_label(
-                context_ids, parent, "parent reference"
+                context,
+                context_offsets,
+                parent,
+                "parent reference",
             )
 
         confidence = int(argument.get("confidence_permille", 1000))
