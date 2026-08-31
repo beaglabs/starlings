@@ -63,9 +63,11 @@ python3 -m murmurations.training.prepare_daytona --replace
 ```
 
 Eligibility probing is checkpointed per repository and shard-000 runs up to
-eight Daytona probe sandboxes concurrently in the US target region. Re-running
-the same probe resumes compatible snapshot/plan checkpoints instead of repeating
-completed repositories.
+eight Daytona probe sandboxes concurrently in the US target region. Probe
+planning and repository checkout happen entirely inside Daytona; the host only
+reads the catalog and writes checkpoint/report files. Re-running the same probe
+resumes compatible snapshot/plan checkpoints instead of repeating completed
+repositories.
 
 Then run the small stratified probe/build:
 
