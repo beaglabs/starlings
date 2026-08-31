@@ -31,6 +31,8 @@ class Verification:
     argv: tuple[str, ...] = ()
     backend: str = "local"
     sandbox_argv: tuple[str, ...] = ()
+    sandbox_id: str | None = None
+    sandbox_snapshot: str | None = None
 
 
 def mutation_fingerprint(
