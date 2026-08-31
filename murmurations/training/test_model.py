@@ -82,16 +82,14 @@ class ModelTests(unittest.TestCase):
         )
         backbone = embedding + cfg.n_layers * per_layer + cfg.d_model
         operation = cfg.d_model * len(Operation) + len(Operation)
+        pointer_dim = min(cfg.pointer_dim, cfg.d_model)
         argument = (
             cfg.d_model * len(ArgumentKind) + len(ArgumentKind)
             + cfg.d_model + 1
             + cfg.d_model * (cfg.max_parents + 1) + (cfg.max_parents + 1)
-            + cfg.d_model
-            + cfg.d_model
-            + cfg.d_model
-            + cfg.max_parents * cfg.d_model
+            + (4 + cfg.max_parents) * cfg.d_model * pointer_dim
         )
-        self.assertEqual(backbone + operation + argument, 503_413_791)
+        self.assertEqual(backbone + operation + argument, 504_455_199)
 
 
 if __name__ == "__main__":
