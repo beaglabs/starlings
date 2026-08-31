@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import random
 import shutil
@@ -55,7 +56,7 @@ def _purge_python_bytecode(root: Path) -> None:
     testing, especially on macOS.
     """
 
-    for cache_dir in root.rglob("__pycache__"):
+    for cache_dir in list(root.rglob("__pycache__")):
         if cache_dir.is_dir():
             shutil.rmtree(cache_dir, ignore_errors=True)
     for pyc in root.rglob("*.pyc"):
