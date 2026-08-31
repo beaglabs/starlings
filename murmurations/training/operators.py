@@ -39,7 +39,8 @@ def detect_test_command(root: str | Path) -> list[str] | None:
         return ["go", "test", "./..."]
     if (root / "pyproject.toml").exists() or (root / "pytest.ini").exists():
         return [sys.executable, "-m", "pytest", "-q"]
-    if (root / "tests").is_dir():
+    tests_dir = root / "tests"
+    if tests_dir.is_dir() and any(tests_dir.rglob("test*.py")):
         return [sys.executable, "-m", "unittest", "discover", "-s", "tests"]
     if (root / "gradlew").exists():
         return ["./gradlew", "test", "--no-daemon"]
