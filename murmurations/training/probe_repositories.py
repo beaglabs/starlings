@@ -18,6 +18,9 @@ from murmurations.training.environments.repositories import RepoCatalog, RepoRec
 from murmurations.training.operators import detect_test_command
 
 
+PROBE_PLAN_VERSION = 2
+
+
 def _record_dict(record: RepoRecord) -> dict[str, Any]:
     return {
         "name": record.name,
@@ -39,6 +42,8 @@ def _checkpoint_path(report_path: str | Path | None) -> Path | None:
 def _load_checkpoint(
     checkpoint: Path | None,
     catalog: RepoCatalog,
+    *,
+    probe_signature: str,
 ) -> dict[tuple[str, str], dict[str, Any]]:
     if checkpoint is None or not checkpoint.exists():
         return {}
@@ -52,6 +57,8 @@ def _load_checkpoint(
             try:
                 row = json.loads(line)
             except json.JSONDecodeError:
+                continue
+            if str(row.get("probe_signature") or "") != probe_signature:
                 continue
             key = (str(row.get("repository") or ""), str(row.get("commit") or ""))
             if key in allowed:
@@ -128,8 +135,16 @@ def probe_repository_catalog(
     prune_checkouts: bool = False,
 ) -> dict[str, Any]:
     catalog = RepoCatalog.from_jsonl(catalog_path)
+    provenance = sandbox_runner.provenance() if sandbox_runner is not None else {}
+    snapshot_info = dict(provenance.get("snapshot_info") or {})
+    snapshot_identity = snapshot_info.get("id") or provenance.get("snapshot") or "unknown"
+    probe_signature = f"v{PROBE_PLAN_VERSION}:{snapshot_identity}"
     checkpoint = _checkpoint_path(report_path)
-    completed = _load_checkpoint(checkpoint, catalog)
+    completed = _load_checkpoint(
+        checkpoint,
+        catalog,
+        probe_signature=probe_signature,
+    )
     results: list[dict[str, Any]] = [
         completed[(record.name, record.commit)]
         for record in catalog.records
@@ -152,6 +167,7 @@ def probe_repository_catalog(
             continue
         started = time.monotonic()
         row: dict[str, Any] = {
+            "probe_signature": probe_signature,
             "repository": record.name,
             "language": record.language,
             "license": record.license,
