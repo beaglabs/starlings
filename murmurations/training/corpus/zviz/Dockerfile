@@ -2,6 +2,7 @@ FROM ubuntu:26.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG ZIG_VERSION=0.16.0
+ARG ZIG_ARCH=x86_64
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -25,9 +26,9 @@ RUN apt-get update \
         python3-venv \
         rustc \
         xz-utils \
-    && curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" \
+    && curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-${ZIG_ARCH}-linux-${ZIG_VERSION}.tar.xz" \
         | tar -xJ -C /opt \
-    && ln -s "/opt/zig-x86_64-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig \
+    && ln -s "/opt/zig-${ZIG_ARCH}-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /tmp/work
