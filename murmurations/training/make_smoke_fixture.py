@@ -8,6 +8,9 @@ from pathlib import Path
 import shutil
 import sys
 
+from tokenizers import Tokenizer
+import yaml
+
 from murmurations.training.environments.episodes import make_oracle_bootstrap_episode
 from murmurations.training.environments.mutations import inject_verified_mutation
 from murmurations.training.environments.repositories import RepoRecord
@@ -48,6 +51,41 @@ def _make_repo(root: Path) -> None:
         "        self.assertFalse(bounded(5, 4))\n",
         encoding="utf-8",
     )
+
+
+def _preflight_lengths(
+    rows_by_split: dict[str, list[dict]],
+    tokenizer_path: str | Path,
+    max_seq_len: int,
+) -> dict[str, int]:
+    tokenizer = Tokenizer.from_file(str(Path(tokenizer_path) / "tokenizer.json"))
+    act = tokenizer.encode("<ACT>", add_special_tokens=False).ids
+    if len(act) != 1:
+        raise ValueError("<ACT> must remain a single tokenizer token")
+
+    maxima: dict[str, int] = {}
+    for split, rows in rows_by_split.items():
+        maximum = 0
+        for index, row in enumerate(rows):
+            length = (
+                len(tokenizer.encode(str(row["context"]), add_special_tokens=False).ids)
+                + 1
+                + len(
+                    tokenizer.encode(
+                        str(row.get("language_target", "")),
+                        add_special_tokens=False,
+                    ).ids
+                )
+                + 1
+            )
+            maximum = max(maximum, length)
+            if length > max_seq_len:
+                raise ValueError(
+                    f"smoke {split} row {index} encodes to {length} tokens, "
+                    f"exceeding max_seq_len={max_seq_len}"
+                )
+        maxima[split] = maximum
+    return maxima
 
 
 def main() -> None:
@@ -118,6 +156,17 @@ def main() -> None:
         args.tokenizer_output,
         args.vocab_size,
     )
+
+    smoke_cfg = yaml.safe_load(
+        Path("murmurations/training/configs/smoke.yaml").read_text(encoding="utf-8")
+    )
+    max_seq_len = int(smoke_cfg["model"]["max_seq_len"])
+    max_lengths = _preflight_lengths(
+        split_rows,
+        args.tokenizer_output,
+        max_seq_len,
+    )
+
     print(
         json.dumps(
             {
@@ -126,6 +175,8 @@ def main() -> None:
                 "eval": str(eval_path),
                 "tokenizer": str(Path(args.tokenizer_output)),
                 "tokenizer_size": tokenizer_size,
+                "max_seq_len": max_seq_len,
+                "max_encoded_lengths": max_lengths,
             },
             indent=2,
             sort_keys=True,
