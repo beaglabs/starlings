@@ -127,6 +127,11 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
     }
     return {
         "episodes": episodes,
+        "terminal_evidence": {
+            "operators": sorted(terminal_operator_names),
+            "events": terminal_operator_events,
+            "types_present": terminal_operator_types,
+        },
         "events": events,
         "repositories": dict(sorted(repositories.items())),
         "languages": dict(sorted(languages.items())),
@@ -173,6 +178,16 @@ def validate_corpus_shard(
         "trajectory_eval": file_digest(trajectory_eval_path),
     }
 
+    terminal_operator_names = {"type.check", "package.metadata", "docs.lookup"}
+    terminal_operator_events = sum(
+        int(episodes["operator_refs"].get(name, 0))
+        for name in terminal_operator_names
+    )
+    terminal_operator_types = sum(
+        1 for name in terminal_operator_names
+        if int(episodes["operator_refs"].get(name, 0)) > 0
+    )
+
     gates = {
         "catalog_repositories": len(catalog.records)
         >= int(quality.get("min_catalog_repositories", 1)),
@@ -193,6 +208,10 @@ def validate_corpus_shard(
         "no_split_leakage": not leakage,
         "no_duplicate_mutations": not episodes["duplicate_mutations"],
         "no_duplicate_code_content": not code_stats["duplicate_content_hashes"],
+        "terminal_operator_events": terminal_operator_events
+        >= int(quality.get("min_terminal_operator_events", 0)),
+        "terminal_operator_types": terminal_operator_types
+        >= int(quality.get("min_terminal_operator_types", 0)),
     }
 
     return {
