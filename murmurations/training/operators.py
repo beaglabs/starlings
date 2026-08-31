@@ -315,7 +315,14 @@ def _python_ast(root: Path, argument: str) -> OperatorResult:
     return OperatorResult(True, "\n".join(rows), metadata={"symbols": len(rows)})
 
 
-def _run(root: Path, argv: Sequence[str], timeout_seconds: int) -> OperatorResult:
+def _run(
+    root: Path,
+    argv: Sequence[str],
+    timeout_seconds: int,
+    command_runner=None,
+) -> OperatorResult:
+    if command_runner is not None:
+        return command_runner(root, argv, timeout_seconds)
     try:
         completed = subprocess.run(
             list(argv),
@@ -350,6 +357,7 @@ def execute_operator(
     root: str | Path,
     *,
     timeout_seconds: int = 120,
+    command_runner=None,
 ) -> OperatorResult:
     root = Path(root).resolve()
     if name == "repo.search":
@@ -363,7 +371,7 @@ def execute_operator(
         return (
             OperatorResult(False, "no test command detected")
             if command is None
-            else _run(root, command, timeout_seconds)
+            else _run(root, command, timeout_seconds, command_runner)
         )
     if name in {"type.check", "repo.check"}:
         command = detect_check_command(root)
