@@ -51,6 +51,7 @@ class DaytonaCorpusRunner:
         self.block_network_after_prepare = block_network_after_prepare
         self.target = target
         self._client = client
+        self._client_injected = client is not None
         self._sandbox_params_factory = sandbox_params_factory
         self._snapshot_info: dict[str, Any] | None = None
 
@@ -128,7 +129,7 @@ class DaytonaCorpusRunner:
 
     def worker(self) -> "DaytonaCorpusRunner":
         """Return an independent runner for concurrent sandbox lifecycle calls."""
-        if self._client is not None or self._sandbox_params_factory is not None:
+        if self._client_injected or self._sandbox_params_factory is not None:
             return self
         return DaytonaCorpusRunner(
             snapshot=self.snapshot,
