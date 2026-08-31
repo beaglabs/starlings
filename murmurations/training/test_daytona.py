@@ -133,6 +133,17 @@ class DaytonaCorpusRunnerTests(unittest.TestCase):
             )
             self.assertEqual(client.deleted, [("sandbox-123", 60, True)])
 
+    def test_config_preserves_target_region(self) -> None:
+        runner = DaytonaCorpusRunner.from_config(
+            {
+                "runtime": "daytona",
+                "snapshot": "murmurations-corpus-v1",
+                "target": "us",
+            }
+        )
+        self.assertEqual(runner.target, "us")
+        self.assertEqual(runner.provenance()["target"], "us")
+
     def test_config_requires_daytona_runtime(self) -> None:
         with self.assertRaisesRegex(ValueError, "daytona"):
             DaytonaCorpusRunner.from_config(
