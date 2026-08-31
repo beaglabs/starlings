@@ -29,7 +29,7 @@ supported clean verifier are excluded from dynamic generation and recorded in
 the probe report. The shard is accepted only if the QA gates in
 `shard-000.yaml` pass, including terminal-evidence coverage.
 
-Run a small local probe first:
+Run a small remote dynamic probe from the local corpus builder first:
 
 ```sh
 python3 -m murmurations.training.build_shard \
@@ -72,21 +72,29 @@ and the QA report requires both terminal-operator diversity and concrete argv
 evidence before the full shard passes.
 
 
-## ZViz execution boundary
+## Daytona execution boundary
 
-The serious corpus does not execute repository commands on the host. Repository
-eligibility probes, verifier runs, and terminal-backed operators execute through
-the pinned ZViz corpus environment configured in `shard-000.yaml`. Static
-source/document window materialization remains host-side because it only reads
-pinned repository text.
+Static source/document materialization remains local and read-only. Every
+repository command used for eligibility, mutation verification, terminal-backed
+evidence, or repaired verification runs remotely in Daytona.
 
-Prepare the Linux corpus environment once:
+Prepare the pinned snapshot once:
 
 ```sh
-bash murmurations/training/corpus/zviz/prepare.sh
+python3 -m pip install -r murmurations/requirements.txt
+export DAYTONA_API_KEY=...
+export DAYTONA_API_URL=https://app.daytona.io/api
+python3 -m murmurations.training.prepare_daytona --replace
 ```
 
-The bundle is a single read-only OCI rootfs. Each repository workspace is
-bind-mounted read-write at `/tmp/work`; exact logical argv is preserved in the
-trajectory evidence. Corpus generation fails closed when ZViz, its rootfs, or a
-workload exit code is unavailable.
+The snapshot is built remotely from `corpus/daytona/Dockerfile` and includes
+the corpus toolchains for Python, Rust, Go, Node, Java, Zig, and C/C++. Each
+probe or repair attempt gets one ephemeral sandbox. The remote sandbox clones
+the pinned commit, runs deterministic dependency preparation, and then remains
+the execution target through clean verification, mutation evidence, semantic
+terminal operators, repair, and final verification.
+
+The model sees the stable semantic operator plus exact logical argv, exit code,
+and output. Daytona API details are provenance only and are not a learned tool
+interface. Shard QA requires every terminal-bearing episode event to be
+attributed to Daytona.
