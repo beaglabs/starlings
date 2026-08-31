@@ -48,3 +48,25 @@ python3 -m murmurations.training.build_shard \
 Outputs include static code train/eval JSONL, episode JSONL, materialized
 trajectory train/eval JSONL, generation failures, SHA-256 file digests, and a
 hard-gated QA report.
+
+
+## Terminal evidence
+
+Shard-000 deliberately trains terminal-backed evidence retrieval at two levels:
+
+1. **Semantic capability selection** through Operator Retrieval:
+   `type.check`, `package.metadata`, and `docs.lookup`.
+2. **Concrete implementation evidence** through the exact argv executed by the
+   adapter, rendered into later model state as `ARGV[event-id]: [...]`.
+
+Examples include `cargo check --quiet`, `go list -m -json`, `go doc`,
+Python `pydoc`, local TypeScript `tsc --noEmit`, and repository-native
+Gradle/Maven/Zig compiler checks when available.
+
+The model is therefore not required to memorize one command as the definition
+of a capability. It learns the stable semantic operator and also observes which
+local terminal command implemented that operator for the current repository.
+
+The recipe requests at most two terminal enrichment calls per repair episode
+and the QA report requires both terminal-operator diversity and concrete argv
+evidence before the full shard passes.
