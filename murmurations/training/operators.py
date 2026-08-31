@@ -92,9 +92,9 @@ def detect_prepare_commands(root: str | Path) -> list[list[str]]:
             commands.append(["npm", "install", "--no-audit", "--no-fund"])
 
     if (root / "requirements.txt").exists():
-        commands.append(["python3", "-m", "pip", "install", "-r", "requirements.txt"])
+        commands.append(["python3", "-m", "pip", "install", "--break-system-packages", "-r", "requirements.txt"])
     if (root / "pyproject.toml").exists():
-        commands.append(["python3", "-m", "pip", "install", "-e", "."])
+        commands.append(["python3", "-m", "pip", "install", "--break-system-packages", "-e", "."])
 
     if (root / "gradlew").exists():
         commands.append(["./gradlew", "dependencies", "--no-daemon"])
