@@ -20,10 +20,14 @@ Language composition:
 - Zig: 5
 - Java: 6
 
-The build recipe requests 20 unique verifier-caught mutations per repository
-(1,200 episodes maximum). Repositories that cannot run a supported verifier in
-the local environment are recorded in `episode-failures.jsonl`; the shard is
-accepted only if the QA gates in `shard-000.yaml` pass.
+The build recipe requests 20 unique verifier-caught mutations per eligible
+repository (1,200 episodes maximum before eligibility filtering). Each episode
+can retrieve up to two terminal-backed evidence operators from
+`type.check`, `package.metadata`, and `docs.lookup`; the subset and order
+are seeded per episode rather than fixed. Repositories that cannot run a
+supported clean verifier are excluded from dynamic generation and recorded in
+the probe report. The shard is accepted only if the QA gates in
+`shard-000.yaml` pass, including terminal-evidence coverage.
 
 Run a small local probe first:
 
