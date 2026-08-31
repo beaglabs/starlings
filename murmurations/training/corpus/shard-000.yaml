@@ -20,6 +20,15 @@ code_chunk_chars: 6000
 max_files_per_repo: 1500
 max_context_chars: 12000
 
+# Dynamic execution is never host-native for the serious shard.
+sandbox:
+  runtime: zviz
+  binary: .cache/murmurations/zviz/zviz
+  bundle: .cache/murmurations/zviz/corpus-v1
+  state_dir: .cache/murmurations/zviz/state
+  profile: ci-runner
+  source_commit: 470e9cfa03bbe84c1bf1320748363168f9bd3cd6
+
 terminal_evidence:
   enabled: true
   max_calls_per_episode: 2
