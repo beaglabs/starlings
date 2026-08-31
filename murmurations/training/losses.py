@@ -9,11 +9,24 @@ from torch import Tensor
 import torch.nn.functional as F
 
 
+def _differentiable_zero(logits: Tensor) -> Tensor:
+    """Return a gradient-connected zero without reducing masked sentinel values.
+
+    Pointer heads mask invalid positions with torch.finfo(dtype).min. Summing a
+    large masked tensor can overflow to -inf, and -inf * 0 becomes NaN. A single
+    finite tensor element is sufficient to keep a zero connected to autograd.
+    """
+
+    if logits.numel() == 0:
+        return torch.zeros((), dtype=logits.dtype, device=logits.device)
+    return logits.reshape(-1)[0] * 0.0
+
+
 def _safe_cross_entropy(logits: Tensor, labels: Tensor) -> Tensor:
     flat_labels = labels.reshape(-1)
     valid = flat_labels != -100
     if not torch.any(valid):
-        return logits.sum() * 0.0
+        return _differentiable_zero(logits)
     flat_logits = logits.reshape(-1, logits.shape[-1])
     return F.cross_entropy(flat_logits[valid], flat_labels[valid])
 
@@ -52,9 +65,9 @@ def compute_losses(
             batch["confidence_targets"][confidence_mask],
         )
     else:
-        losses["confidence"] = outputs["confidence"].sum() * 0.0
+        losses["confidence"] = _differentiable_zero(outputs["confidence"])
 
-    total = outputs["language_logits"].sum() * 0.0
+    total = _differentiable_zero(outputs["language_logits"])
     for name, loss in losses.items():
         total = total + float(weights.get(name, 1.0)) * loss
     losses["total"] = total
