@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ZVIZ_COMMIT="470e9cfa03bbe84c1bf1320748363168f9bd3cd6"
-ZIG_VERSION="0.16.0"
+ZIG_VERSION="0.15.0"
 ROOT=".cache/murmurations/zviz"
 SOURCE="$ROOT/source"
 BUNDLE="$ROOT/corpus-v1"
