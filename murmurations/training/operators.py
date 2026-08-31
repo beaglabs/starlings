@@ -39,6 +39,8 @@ def detect_test_command(root: str | Path) -> list[str] | None:
         return ["go", "test", "./..."]
     if (root / "pyproject.toml").exists() or (root / "pytest.ini").exists():
         return [sys.executable, "-m", "pytest", "-q"]
+    if (root / "tests").is_dir():
+        return [sys.executable, "-m", "unittest", "discover", "-s", "tests"]
     package = root / "package.json"
     if package.exists():
         try:
