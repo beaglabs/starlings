@@ -4,7 +4,9 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from murmurations.training.environments.episodes import EpisodeBuilder
 from murmurations.training.operator_retrieval import OperatorDescriptor, OperatorRegistry
+from murmurations.utils.protocol import ArgumentKind, Operation
 from murmurations.training.operators import default_operator_registry, execute_operator
 
 
@@ -40,6 +42,29 @@ class OperatorRetrievalTests(unittest.TestCase):
             registry.retrieve("tests", available=("repo",))[0].descriptor.name,
             "repo.tests",
         )
+
+    def test_episode_builder_rejects_oracle_operator_not_retrieved(self) -> None:
+        registry = OperatorRegistry(
+            [
+                OperatorDescriptor(
+                    "repo.tests",
+                    "Run repository tests",
+                    "subprocess",
+                    tags=("test",),
+                    requires=("repo",),
+                )
+            ]
+        )
+        builder = EpisodeBuilder(registry)
+        with self.assertRaisesRegex(ValueError, "operator retrieval miss"):
+            builder.add(
+                Operation.EXECUTE,
+                ArgumentKind.ACTION,
+                "run repository tests",
+                grounding="run repository tests",
+                retrieval_query="banana unrelated capability",
+                operator_ref="repo.tests",
+            )
 
     def test_python_ast_and_search_adapters_execute(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
