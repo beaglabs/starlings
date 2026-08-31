@@ -202,6 +202,8 @@ def build_shard(
             quality["min_terminal_operator_events"] = 1
         if "min_terminal_operator_types" in quality:
             quality["min_terminal_operator_types"] = 1
+        if "min_terminal_argv_events" in quality:
+            quality["min_terminal_argv_events"] = 1
 
     qa = validate_corpus_shard(
         catalog_path=catalog_path,
