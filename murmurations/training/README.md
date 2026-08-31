@@ -129,10 +129,10 @@ accelerate launch -m murmurations.training.train \
   --config murmurations/training/configs/murmuration-500m-v0.yaml
 ```
 
-The model is **503,413,791 trainable parameters** with a 32,768-token
+The model is **504,455,199 trainable parameters** with a 32,768-token
 vocabulary: width 1,024, 28 blocks, 16 attention heads, 4,096-wide SwiGLU,
 RoPE/RMSNorm, tied language projection, operation classification, and structured
-argument/operator/parent grounding.
+argument/operator/parent grounding through a 128-dimensional learned bilinear pointer space.
 
 The loss combines language CE, operation CE, argument kind/span CE,
 operator-pointer CE, parent-pointer/count CE, and confidence calibration.
