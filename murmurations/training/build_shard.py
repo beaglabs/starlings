@@ -17,6 +17,7 @@ from murmurations.training.generate_trajectories import generate_trajectory_corp
 from murmurations.training.materialize import materialize_file
 from murmurations.training.materialize_code import materialize_repository_code
 from murmurations.training.probe_repositories import probe_repository_catalog
+from murmurations.training.zviz import ZVizCorpusRunner
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -84,6 +85,11 @@ def build_shard(
     config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
     output_dir = Path(config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
+    sandbox_config = dict(config.get("sandbox") or {})
+    if not sandbox_config:
+        raise RuntimeError("serious corpus generation requires a ZViz sandbox config")
+    sandbox = ZVizCorpusRunner.from_config(sandbox_config)
+    sandbox.validate_environment()
     catalog_path = _catalog_for_run(
         config["catalog"], output_dir, limit_repositories
     )
@@ -126,6 +132,7 @@ def build_shard(
         timeout_seconds=timeout_seconds,
         report_path=paths["probe_report"],
         eligible_catalog_path=paths["eligible_catalog"],
+        sandbox_runner=sandbox,
     )
     if int(probe["eligible"]) == 0:
         raise RuntimeError("no repositories passed the clean-verifier eligibility probe")
@@ -155,6 +162,7 @@ def build_shard(
         failures_path=paths["failures"],
         enrichment_operators=enrichment_operators,
         max_enrichment_calls=max_enrichment_calls,
+        sandbox_runner=sandbox,
     )
     generation["eligible_repositories"] = int(probe["eligible"])
     generation["catalog_repositories"] = int(probe["repositories"])
@@ -221,6 +229,7 @@ def build_shard(
         "version": 1,
         "name": config.get("name", output_dir.name),
         "config": config,
+        "sandbox": sandbox.provenance(),
         "catalog": str(catalog_path),
         "eligible_catalog": str(paths["eligible_catalog"]),
         "code": code,
