@@ -91,8 +91,11 @@ The snapshot is built remotely from `corpus/daytona/Dockerfile` and includes
 the corpus toolchains for Python, Rust, Go, Node, Java, Zig, and C/C++. The
 eligibility probe uses the configured bounded concurrency (8 for shard-000),
 with one independent Daytona client/sandbox lifecycle per worker and durable
-checkpointing after each completed repository. Shard-000 targets Daytona's US
-region. Each probe or repair attempt gets one ephemeral sandbox. The remote sandbox clones
+checkpointing after each completed repository. Eligibility planning is executed
+inside the Daytona sandbox using the same portable repository-plan module as
+full generation, so the host does not clone or cache repositories during a
+probe. Shard-000 targets Daytona's US region. Each probe or repair attempt gets
+one ephemeral sandbox. The remote sandbox clones
 the pinned commit, runs deterministic dependency preparation, and then remains
 the execution target through clean verification, mutation evidence, semantic
 terminal operators, repair, and final verification.
