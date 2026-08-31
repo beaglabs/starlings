@@ -11,12 +11,14 @@ import sys
 from tokenizers import Tokenizer
 import yaml
 
+from murmurations.training.data import ProtocolDataset
 from murmurations.training.environments.episodes import make_oracle_bootstrap_episode
 from murmurations.training.environments.mutations import inject_verified_mutation
 from murmurations.training.environments.repositories import RepoRecord
 from murmurations.training.materialize import materialize_episode
 from murmurations.training.operators import default_operator_registry
 from murmurations.training.tokenizer import train_tokenizer
+from murmurations.training.train import load_tokenizer
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -167,6 +169,17 @@ def main() -> None:
         max_seq_len,
     )
 
+    # Exercise the exact tokenizer/dataset path used by training so pointer
+    # grounding, parent references, operator references, and length limits all
+    # fail here rather than during accelerate launch.
+    hf_tokenizer = load_tokenizer(str(args.tokenizer_output))
+    validated_rows: dict[str, int] = {}
+    for split, data_path in (("train", train_path), ("eval", eval_path)):
+        dataset = ProtocolDataset(data_path, hf_tokenizer, max_seq_len)
+        for index in range(len(dataset)):
+            dataset[index]
+        validated_rows[split] = len(dataset)
+
     print(
         json.dumps(
             {
@@ -177,6 +190,7 @@ def main() -> None:
                 "tokenizer_size": tokenizer_size,
                 "max_seq_len": max_seq_len,
                 "max_encoded_lengths": max_lengths,
+                "validated_rows": validated_rows,
             },
             indent=2,
             sort_keys=True,
