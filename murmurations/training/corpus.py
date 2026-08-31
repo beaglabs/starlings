@@ -46,6 +46,7 @@ def _row_stats(paths: list[str | Path]) -> dict[str, Any]:
     repository_ids: set[str] = set()
     languages: Counter[str] = Counter()
     licenses: Counter[str] = Counter()
+    content_hashes: Counter[str] = Counter()
 
     for path in paths:
         for row in iter_jsonl(path):
@@ -67,7 +68,13 @@ def _row_stats(paths: list[str | Path]) -> dict[str, Any]:
             license_name = provenance.get("license")
             if license_name:
                 licenses[str(license_name)] += 1
+            content_hash = provenance.get("content_sha256")
+            if content_hash:
+                content_hashes[str(content_hash)] += 1
 
+    duplicate_content = {
+        value: count for value, count in content_hashes.items() if count > 1
+    }
     return {
         "rows": rows,
         "operations": dict(sorted(operations.items())),
@@ -77,6 +84,8 @@ def _row_stats(paths: list[str | Path]) -> dict[str, Any]:
         "repository_identities": sorted(repository_ids),
         "languages": dict(sorted(languages.items())),
         "licenses": dict(sorted(licenses.items())),
+        "unique_content_hashes": len(content_hashes),
+        "duplicate_content_hashes": duplicate_content,
     }
 
 
@@ -183,6 +192,7 @@ def validate_corpus_shard(
         >= int(quality.get("min_trajectory_rows", 1)),
         "no_split_leakage": not leakage,
         "no_duplicate_mutations": not episodes["duplicate_mutations"],
+        "no_duplicate_code_content": not code_stats["duplicate_content_hashes"],
     }
 
     return {

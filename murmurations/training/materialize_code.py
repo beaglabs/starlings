@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Iterable
@@ -25,6 +26,19 @@ def _files(root: Path) -> Iterable[Path]:
         if any(part in _SKIP for part in path.relative_to(root).parts):
             continue
         yield path
+
+
+def _usable_text(text: str) -> bool:
+    if "\x00" in text:
+        return False
+    lines = text.splitlines()
+    if not lines:
+        return False
+    if max((len(line) for line in lines), default=0) > 5000:
+        return False
+    if len(text) > 2000 and (len(text) / max(1, len(lines))) > 500:
+        return False
+    return True
 
 
 def _windows(text: str, chunk_chars: int) -> Iterable[tuple[str, str]]:
@@ -52,6 +66,9 @@ def materialize_repository_code(
     counts = {"train": 0, "eval": 0}
     repo_counts: dict[str, int] = {}
     failures: list[dict[str, str]] = []
+    seen_windows: set[str] = set()
+    deduplicated = 0
+    skipped_unusable = 0
 
     train_path = Path(train_output)
     eval_path = Path(eval_output)
@@ -79,8 +96,18 @@ def materialize_repository_code(
                     text = path.read_text(encoding="utf-8")
                 except (OSError, UnicodeDecodeError):
                     continue
+                if not _usable_text(text):
+                    skipped_unusable += 1
+                    continue
                 rel = path.relative_to(root)
                 for prefix, continuation in _windows(text, chunk_chars):
+                    content_hash = hashlib.sha256(
+                        (prefix + continuation).encode("utf-8")
+                    ).hexdigest()
+                    if content_hash in seen_windows:
+                        deduplicated += 1
+                        continue
+                    seen_windows.add(content_hash)
                     row = {
                         "context": (
                             f"REPOSITORY: {record.name} commit={record.commit} "
@@ -105,6 +132,7 @@ FILE: {rel}
                             "license": record.license,
                             "commit": record.commit,
                             "path": str(rel),
+                            "content_sha256": content_hash,
                         },
                     }
                     handle.write(json.dumps(row, sort_keys=True) + "
@@ -117,6 +145,9 @@ FILE: {rel}
         "train_rows": counts["train"],
         "eval_rows": counts["eval"],
         "repositories": dict(sorted(repo_counts.items())),
+        "unique_windows": len(seen_windows),
+        "deduplicated_windows": deduplicated,
+        "skipped_unusable_files": skipped_unusable,
         "failures": failures,
     }
 

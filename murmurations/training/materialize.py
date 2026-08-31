@@ -124,8 +124,13 @@ def materialize_episode(
                     "confidence_permille": frame.get("confidence_permille", 1000),
                 },
                 "provenance": {
+                    "source_type": "trajectory",
                     "episode_producer": episode["producer"],
                     "repository_identity": episode["repository"]["identity"],
+                    "repository": episode["repository"]["name"],
+                    "language": episode["repository"].get("language"),
+                    "license": episode["repository"]["license"],
+                    "commit": episode["repository"]["commit"],
                     "event_id": event["id"],
                 },
             }
