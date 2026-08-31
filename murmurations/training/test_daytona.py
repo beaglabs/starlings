@@ -20,6 +20,12 @@ class _Process:
 
     def exec(self, command: str, *, cwd=None, timeout=None):
         self.commands.append((command, cwd, timeout))
+        if "murmurations_repository_plan.py" in command:
+            return _Response(
+                result='{"check_command":["python3","-m","compileall","-q","."],'
+                '"prepare_commands":[],'
+                '"test_command":["python3","-m","pytest","-q"]}'
+            )
         return _Response()
 
 
@@ -168,6 +174,42 @@ class DaytonaCorpusRunnerTests(unittest.TestCase):
 
             self.assertTrue(result.passed)
             self.assertEqual(client.sandbox.fs.uploads, [])
+
+    def test_remote_probe_plans_without_local_checkout(self) -> None:
+        repo = RepoRecord(
+            "fixture",
+            "a" * 40,
+            "MIT",
+            url="https://github.com/example/fixture.git",
+            language="Python",
+        )
+        client = _Client()
+        runner = DaytonaCorpusRunner(
+            snapshot="murmurations-corpus-v1",
+            client=client,
+            sandbox_params_factory=_params_factory,
+        )
+        runner.validate_environment()
+
+        with runner.workspace(
+            None,
+            repo,
+            sync_local_changes=False,
+            remote_plan=True,
+        ) as remote:
+            self.assertEqual(
+                remote.planned_test_command,
+                ("python3", "-m", "pytest", "-q"),
+            )
+            result = remote.verify(None, remote.planned_test_command, 30)
+
+        self.assertTrue(result.passed)
+        self.assertTrue(
+            any(
+                remote_path == "workspace/murmurations_repository_plan.py"
+                for _, remote_path in client.sandbox.fs.uploads
+            )
+        )
 
     def test_config_preserves_target_region(self) -> None:
         runner = DaytonaCorpusRunner.from_config(
