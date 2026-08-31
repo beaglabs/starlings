@@ -70,3 +70,23 @@ local terminal command implemented that operator for the current repository.
 The recipe requests at most two terminal enrichment calls per repair episode
 and the QA report requires both terminal-operator diversity and concrete argv
 evidence before the full shard passes.
+
+
+## ZViz execution boundary
+
+The serious corpus does not execute repository commands on the host. Repository
+eligibility probes, verifier runs, and terminal-backed operators execute through
+the pinned ZViz corpus environment configured in `shard-000.yaml`. Static
+source/document window materialization remains host-side because it only reads
+pinned repository text.
+
+Prepare the Linux corpus environment once:
+
+```sh
+bash murmurations/training/corpus/zviz/prepare.sh
+```
+
+The bundle is a single read-only OCI rootfs. Each repository workspace is
+bind-mounted read-write at `/tmp/work`; exact logical argv is preserved in the
+trajectory evidence. Corpus generation fails closed when ZViz, its rootfs, or a
+workload exit code is unavailable.
