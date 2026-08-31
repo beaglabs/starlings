@@ -217,11 +217,11 @@ def validate_corpus_shard(
         >= int(quality.get("min_terminal_operator_types", 0)),
         "terminal_argv_events": int(episodes["terminal_argv_events"])
         >= int(quality.get("min_terminal_argv_events", 0)),
-        "terminal_execution_is_zviz": (
-            not bool(quality.get("require_zviz_terminal_execution", False))
+        "terminal_execution_is_daytona": (
+            not bool(quality.get("require_daytona_terminal_execution", False))
             or (
                 int(episodes["terminal_argv_events"]) > 0
-                and int(episodes["sandbox_backends"].get("zviz", 0))
+                and int(episodes["sandbox_backends"].get("daytona", 0))
                 == int(episodes["terminal_argv_events"])
             )
         ),
