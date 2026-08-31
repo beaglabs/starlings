@@ -133,6 +133,42 @@ class DaytonaCorpusRunnerTests(unittest.TestCase):
             )
             self.assertEqual(client.deleted, [("sandbox-123", 60, True)])
 
+    def test_clean_probe_can_run_after_local_checkout_is_pruned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            repo = RepoRecord(
+                "fixture",
+                "a" * 40,
+                "MIT",
+                url="https://github.com/example/fixture.git",
+                language="Python",
+            )
+            client = _Client()
+            runner = DaytonaCorpusRunner(
+                snapshot="murmurations-corpus-v1",
+                client=client,
+                sandbox_params_factory=_params_factory,
+            )
+            runner.validate_environment()
+
+            with runner.workspace(
+                root,
+                repo,
+                plan_root=root,
+                prepare_commands=[],
+                sync_local_changes=False,
+            ) as remote:
+                root.rmdir()
+                result = remote.verify(
+                    root,
+                    [".murmurations-venv/bin/python3", "-m", "pytest", "-q"],
+                    30,
+                )
+
+            self.assertTrue(result.passed)
+            self.assertEqual(client.sandbox.fs.uploads, [])
+
     def test_config_preserves_target_region(self) -> None:
         runner = DaytonaCorpusRunner.from_config(
             {
