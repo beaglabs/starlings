@@ -132,7 +132,10 @@ def build_shard(
         max_files_per_repo=int(config.get("max_files_per_repo", 2000)),
     )
 
-    _log(f"static materialization complete rows={code.get('rows', 'unknown')}")
+    _log(
+        f"static materialization complete rows="
+        f"{int(code.get('train_rows', 0)) + int(code.get('eval_rows', 0))}"
+    )
 
     # Dynamic episodes use only repositories whose clean verifier passes inside
     # the pinned Daytona corpus snapshot. Repository code is never executed on
