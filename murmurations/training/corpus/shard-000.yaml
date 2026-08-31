@@ -21,6 +21,7 @@ max_context_chars: 12000
 
 quality:
   min_catalog_repositories: 50
+  min_eligible_repositories: 20
   min_generation_success_rate: 0.50
   min_dynamic_repositories: 20
   min_unique_mutations: 500

@@ -169,6 +169,10 @@ def validate_corpus_shard(
         >= int(quality.get("min_catalog_repositories", 1)),
         "generation_success_rate": float(generation_report.get("success_rate", 0.0))
         >= float(quality.get("min_generation_success_rate", 0.0)),
+        "eligible_repositories": int(
+            generation_report.get("eligible_repositories", len(episodes["repositories"]))
+        )
+        >= int(quality.get("min_eligible_repositories", 1)),
         "dynamic_repositories": len(episodes["repositories"])
         >= int(quality.get("min_dynamic_repositories", 1)),
         "unique_mutations": int(episodes["unique_mutations"])

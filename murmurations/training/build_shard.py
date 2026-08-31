@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict, deque
 import json
 import math
 from pathlib import Path
@@ -11,16 +12,51 @@ from typing import Any
 import yaml
 
 from murmurations.training.corpus import validate_corpus_shard
-from murmurations.training.environments.repositories import RepoCatalog
+from murmurations.training.environments.repositories import RepoCatalog, RepoRecord
 from murmurations.training.generate_trajectories import generate_trajectory_corpus
 from murmurations.training.materialize import materialize_file
 from murmurations.training.materialize_code import materialize_repository_code
+from murmurations.training.probe_repositories import probe_repository_catalog
 
 
 def _write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "
 ", encoding="utf-8")
+
+
+def _record_dict(record: RepoRecord) -> dict[str, Any]:
+    return {
+        "name": record.name,
+        "commit": record.commit,
+        "license": record.license,
+        "language": record.language,
+        "url": record.url,
+        "path": record.path,
+    }
+
+
+def _select_stratified(catalog: RepoCatalog, limit: int) -> list[RepoRecord]:
+    if limit <= 0:
+        raise ValueError("limit_repositories must be positive")
+    if limit >= len(catalog.records):
+        return list(catalog.records)
+
+    groups: dict[str, deque[RepoRecord]] = defaultdict(deque)
+    for record in catalog.records:
+        groups[record.language or "unknown"].append(record)
+
+    selected: list[RepoRecord] = []
+    languages = sorted(groups)
+    while len(selected) < limit:
+        progressed = False
+        for language in languages:
+            if groups[language] and len(selected) < limit:
+                selected.append(groups[language].popleft())
+                progressed = True
+        if not progressed:
+            break
+    return selected
 
 
 def _catalog_for_run(
@@ -32,21 +68,11 @@ def _catalog_for_run(
     if limit_repositories is None:
         return source
     catalog = RepoCatalog.from_jsonl(source)
-    if limit_repositories <= 0:
-        raise ValueError("limit_repositories must be positive")
-    selected = catalog.records[:limit_repositories]
+    selected = _select_stratified(catalog, limit_repositories)
     path = output_dir / "catalog-subset.jsonl"
     with path.open("w", encoding="utf-8") as handle:
         for record in selected:
-            row = {
-                "name": record.name,
-                "commit": record.commit,
-                "license": record.license,
-                "language": record.language,
-                "url": record.url,
-                "path": record.path,
-            }
-            handle.write(json.dumps(row, sort_keys=True) + "
+            handle.write(json.dumps(_record_dict(record), sort_keys=True) + "
 ")
     return path
 
@@ -67,8 +93,11 @@ def build_shard(
     cache_dir = config.get("cache_dir", ".cache/murmurations/repos")
     work_dir = config.get("work_dir", ".cache/murmurations/work")
     eval_fraction = float(config.get("eval_fraction", 0.1))
+    timeout_seconds = int(config.get("timeout_seconds", 120))
 
     paths = {
+        "eligible_catalog": output_dir / "eligible-repos.jsonl",
+        "probe_report": output_dir / "repo-probe.json",
         "episodes": output_dir / "episodes.jsonl",
         "failures": output_dir / "episode-failures.jsonl",
         "code_train": output_dir / "code-train.jsonl",
@@ -80,6 +109,7 @@ def build_shard(
         "manifest": output_dir / "manifest.json",
     }
 
+    # Static code/document windows use every pinned permissive repository.
     code = materialize_repository_code(
         catalog_path,
         paths["code_train"],
@@ -90,23 +120,37 @@ def build_shard(
         max_files_per_repo=int(config.get("max_files_per_repo", 2000)),
     )
 
+    # Dynamic episodes use only repositories whose clean verifier passes in the
+    # current local environment. No dependency-install scripts are run here.
+    probe = probe_repository_catalog(
+        catalog_path,
+        cache_dir=cache_dir,
+        timeout_seconds=timeout_seconds,
+        report_path=paths["probe_report"],
+        eligible_catalog_path=paths["eligible_catalog"],
+    )
+    if int(probe["eligible"]) == 0:
+        raise RuntimeError("no repositories passed the clean-verifier eligibility probe")
+
     requested_per_repo = (
         episodes_per_repo
         if episodes_per_repo is not None
         else int(config.get("episodes_per_repo", 20))
     )
     generation = generate_trajectory_corpus(
-        catalog_path,
+        paths["eligible_catalog"],
         paths["episodes"],
         cache_dir=cache_dir,
         work_dir=work_dir,
         episodes_per_repo=requested_per_repo,
         seed=int(config.get("seed", 17)),
-        timeout_seconds=int(config.get("timeout_seconds", 120)),
+        timeout_seconds=timeout_seconds,
         max_attempts=int(config.get("max_mutation_attempts", 64)),
         generation_retries=int(config.get("generation_retries", 4)),
         failures_path=paths["failures"],
     )
+    generation["eligible_repositories"] = int(probe["eligible"])
+    generation["catalog_repositories"] = int(probe["repositories"])
     _write_json(paths["generation_report"], generation)
 
     trajectory = materialize_file(
@@ -120,17 +164,22 @@ def build_shard(
     quality = dict(config.get("quality") or {})
     if limit_repositories is not None:
         probe_success = float(quality.get("min_generation_success_rate", 0.0))
+        eligible_for_probe = max(1, int(probe["eligible"]))
         expected_successes = max(
             1,
-            math.ceil(limit_repositories * requested_per_repo * probe_success),
+            math.ceil(eligible_for_probe * requested_per_repo * probe_success),
         )
         expected_dynamic_repos = max(
             1,
-            math.ceil(limit_repositories * probe_success),
+            math.ceil(eligible_for_probe * probe_success),
         )
         quality["min_catalog_repositories"] = min(
             int(quality.get("min_catalog_repositories", 1)),
             limit_repositories,
+        )
+        quality["min_eligible_repositories"] = min(
+            int(quality.get("min_eligible_repositories", 1)),
+            eligible_for_probe,
         )
         quality["min_dynamic_repositories"] = min(
             int(quality.get("min_dynamic_repositories", 1)),
@@ -160,7 +209,9 @@ def build_shard(
         "name": config.get("name", output_dir.name),
         "config": config,
         "catalog": str(catalog_path),
+        "eligible_catalog": str(paths["eligible_catalog"]),
         "code": code,
+        "probe": probe,
         "generation": generation,
         "trajectory": trajectory,
         "qa": qa,
@@ -189,6 +240,7 @@ def main() -> None:
                 "name": manifest["name"],
                 "passed": manifest["qa"]["passed"],
                 "catalog_repositories": manifest["qa"]["catalog"]["repositories"],
+                "eligible_repositories": manifest["probe"]["eligible"],
                 "episodes": manifest["qa"]["episodes"]["episodes"],
                 "code_rows": manifest["qa"]["rows"]["code"]["rows"],
                 "trajectory_rows": manifest["qa"]["rows"]["trajectory"]["rows"],
