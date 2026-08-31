@@ -1,0 +1,7 @@
+torch>=2.4
+accelerate>=1.2
+transformers>=4.46
+tokenizers>=0.20
+PyYAML>=6.0
+blake3>=1.0
+safetensors>=0.4

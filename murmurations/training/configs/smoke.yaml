@@ -1,0 +1,43 @@
+model:
+  vocab_size: 32768
+  d_model: 128
+  n_layers: 2
+  n_heads: 4
+  d_ff: 384
+  max_seq_len: 256
+  rope_base: 10000.0
+  rms_eps: 0.000001
+  dropout: 0.0
+  max_parents: 4
+
+tokenizer:
+  path: murmurations/models/murmuration-500m-v0/tokenizer
+
+training:
+  train_data: data/murmurations/smoke-train.jsonl
+  eval_data: data/murmurations/smoke-eval.jsonl
+  output_dir: murmurations/training/runs/smoke
+  seed: 17
+  mixed_precision: "no"
+  micro_batch_size: 2
+  eval_batch_size: 2
+  gradient_accumulation_steps: 1
+  num_workers: 0
+  learning_rate: 0.001
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  max_steps: 20
+  warmup_steps: 2
+  log_every: 1
+  eval_every: 5
+  save_every: 10
+
+loss_weights:
+  language: 1.0
+  operation: 1.0
+  argument_kind: 0.5
+  argument_start: 0.5
+  argument_end: 0.5
+  parent_pointer: 0.5
+  parent_count: 0.25
+  confidence: 0.1

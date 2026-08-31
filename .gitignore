@@ -3,5 +3,9 @@ zig-out/
 *.o
 /trials/*
 !/trials/README.md
-models/
+/models/
+murmurations/training/runs/
+murmurations/benchmarking/results/
+murmurations/models/**/weights/*
+murmurations/models/**/tokenizer/*
 .DS_Store
