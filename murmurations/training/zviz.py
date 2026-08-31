@@ -101,12 +101,23 @@ class ZVizCorpusRunner:
         ).encode("utf-8")
         return "murmurations-" + hashlib.sha256(payload).hexdigest()[:20]
 
+    @staticmethod
+    def _portable_argv(argv: Sequence[str]) -> tuple[str, ...]:
+        values = tuple(str(item) for item in argv)
+        if not values:
+            return values
+        executable = Path(values[0])
+        if executable.is_absolute() and executable.name.startswith("python"):
+            return ("python3",) + values[1:]
+        return values
+
     def render_oci_config(
         self,
         workspace: str | Path,
         argv: Sequence[str],
     ) -> dict[str, Any]:
         workspace = Path(workspace).expanduser().resolve()
+        argv = self._portable_argv(argv)
         return {
             "ociVersion": "1.0.2",
             "process": {
@@ -170,6 +181,7 @@ class ZVizCorpusRunner:
         timeout_seconds: int,
     ) -> ZVizExecution:
         workspace_path = Path(workspace).expanduser().resolve()
+        argv = self._portable_argv(argv)
         config = self.render_oci_config(workspace_path, argv)
         config_bytes = (
             json.dumps(config, indent=2, sort_keys=True) + "\n"
@@ -237,20 +249,23 @@ class ZVizCorpusRunner:
                         config_sha256,
                     )
                 finally:
-                    subprocess.run(
-                        [
-                            self.binary,
-                            "--root",
-                            str(self.state_dir),
-                            "delete",
-                            container_id,
-                        ],
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        timeout=10,
-                        check=False,
-                    )
+                    try:
+                        subprocess.run(
+                            [
+                                self.binary,
+                                "--root",
+                                str(self.state_dir),
+                                "delete",
+                                container_id,
+                            ],
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            timeout=10,
+                            check=False,
+                        )
+                    except (OSError, subprocess.TimeoutExpired):
+                    pass
 
                 workload_code = self._workload_exit_code(raw_output)
                 output = self._clean_output(raw_output)
