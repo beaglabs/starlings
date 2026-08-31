@@ -45,7 +45,7 @@ def materialize_repository_code(
     *,
     cache_dir: str | Path = ".cache/murmurations/repos",
     eval_fraction: float = 0.1,
-    chunk_chars: int = 9000,
+    chunk_chars: int = 6000,
     max_files_per_repo: int = 2000,
 ) -> dict[str, int]:
     catalog = RepoCatalog.from_jsonl(catalog_path)
@@ -102,7 +102,7 @@ def main() -> None:
     parser.add_argument("--eval-output", required=True)
     parser.add_argument("--cache-dir", default=".cache/murmurations/repos")
     parser.add_argument("--eval-fraction", type=float, default=0.1)
-    parser.add_argument("--chunk-chars", type=int, default=9000)
+    parser.add_argument("--chunk-chars", type=int, default=6000)
     parser.add_argument("--max-files-per-repo", type=int, default=2000)
     args = parser.parse_args()
     result = materialize_repository_code(
