@@ -23,17 +23,33 @@ jobs:
       - name: Python external-operator conformance
         run: python3 -m unittest discover -s python -p 'test_*.py'
 
-  murmurations-core:
+  murmurations-compile:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install lightweight Murmurations test dependencies
-        run: python3 -m pip install --disable-pip-version-check blake3 PyYAML
-      - name: Compile Murmurations Python
-        run: python3 -m compileall -q murmurations
-      - name: Murmurations protocol, OR, and data-pipeline tests
-        run: |
-          python3 -m unittest             murmurations.utils.test_protocol             murmurations.training.test_operator_retrieval             murmurations.training.test_data_pipeline             murmurations.training.test_pretrain_materialization
+      - run: python3 -m compileall -q murmurations
+
+  murmurations-protocol-or:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install --disable-pip-version-check blake3 PyYAML
+      - run: |
+          python3 -m unittest             murmurations.utils.test_protocol             murmurations.training.test_operator_retrieval
+
+  murmurations-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install --disable-pip-version-check blake3 PyYAML
+      - run: |
+          python3 -m unittest             murmurations.training.test_data_pipeline             murmurations.training.test_pretrain_materialization
