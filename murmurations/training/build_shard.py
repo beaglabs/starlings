@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
-import shutil
 from typing import Any
 
 import yaml
@@ -119,20 +119,29 @@ def build_shard(
 
     quality = dict(config.get("quality") or {})
     if limit_repositories is not None:
+        probe_success = float(quality.get("min_generation_success_rate", 0.0))
+        expected_successes = max(
+            1,
+            math.ceil(limit_repositories * requested_per_repo * probe_success),
+        )
+        expected_dynamic_repos = max(
+            1,
+            math.ceil(limit_repositories * probe_success),
+        )
         quality["min_catalog_repositories"] = min(
             int(quality.get("min_catalog_repositories", 1)),
             limit_repositories,
         )
         quality["min_dynamic_repositories"] = min(
             int(quality.get("min_dynamic_repositories", 1)),
-            limit_repositories,
+            expected_dynamic_repos,
         )
         quality["min_unique_mutations"] = min(
             int(quality.get("min_unique_mutations", 1)),
-            limit_repositories * requested_per_repo,
+            expected_successes,
         )
         quality["min_code_rows"] = 1
-        quality["min_trajectory_rows"] = 1
+        quality["min_trajectory_rows"] = max(1, expected_successes)
 
     qa = validate_corpus_shard(
         catalog_path=catalog_path,

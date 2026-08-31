@@ -13,6 +13,7 @@ from murmurations.training.environments.episodes import make_oracle_bootstrap_ep
 from murmurations.training.environments.mutations import inject_verified_mutation
 from murmurations.training.environments.repositories import RepoCatalog, RepoRecord, checkout_repository
 from murmurations.training.operators import default_operator_registry, detect_test_command
+from murmurations.utils.canonical import canonical_id
 
 
 def _safe(value: str) -> str:
@@ -129,7 +130,12 @@ def generate_trajectory_corpus(
                             timeout_seconds=timeout_seconds,
                         )
                         record = episode.record()
-                        record["mutation"]["fingerprint"] = mutation.fingerprint
+                        record["mutation"]["fingerprint"] = canonical_id(
+                            {
+                                "repository_identity": repo.identity,
+                                "mutation": mutation.fingerprint,
+                            }
+                        )
                         record["generation"] = {
                             "seed": attempt_seed,
                             "repo_episode_index": local_index,
