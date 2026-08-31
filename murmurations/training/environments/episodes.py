@@ -80,9 +80,14 @@ class EpisodeBuilder:
         hits = self.registry.retrieve(retrieval_query, top_k=7, available=("repo",))
         candidates = [hit.descriptor.name for hit in hits]
         if operator_ref is not None and operator_ref not in candidates:
-            descriptor = self.registry.get(operator_ref)
-            candidates = [operator_ref] + [name for name in candidates if name != operator_ref]
-            candidates = candidates[:7]
+            # Do not manufacture successful retrieval supervision. If the
+            # bootstrap oracle expects an operator that OR did not actually
+            # expose, the episode is invalid for operator-pointer training.
+            self.registry.get(operator_ref)  # fail clearly if descriptor is unknown
+            raise ValueError(
+                f"operator retrieval miss for {operator_ref!r} "
+                f"with query {retrieval_query!r}; candidates={candidates}"
+            )
         frame = ActionFrame(
             operation,
             kind,
