@@ -144,15 +144,13 @@ class ProbeCheckpointTests(unittest.TestCase):
             root = Path(tmp)
             rows = []
             for index in range(4):
-                repo_dir = root / f"repo-{index}"
-                repo_dir.mkdir()
                 rows.append(
                     {
                         "name": f"example/repo-{index}",
                         "commit": f"{index + 1:040x}",
                         "license": "MIT",
                         "language": "Python",
-                        "path": str(repo_dir),
+                        "url": f"https://github.com/example/repo-{index}.git",
                     }
                 )
             catalog = root / "repos.jsonl"
