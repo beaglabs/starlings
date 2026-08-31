@@ -29,6 +29,17 @@ class OperatorResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+def _pyproject_uses_pytest(root: Path) -> bool:
+    path = root / "pyproject.toml"
+    if not path.exists():
+        return False
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "[tool.pytest.ini_options]" in text
+
+
 def detect_test_command(root: str | Path) -> list[str] | None:
     root = Path(root)
     if (root / "build.zig").exists():
@@ -37,7 +48,7 @@ def detect_test_command(root: str | Path) -> list[str] | None:
         return ["cargo", "test", "--quiet"]
     if (root / "go.mod").exists():
         return ["go", "test", "./..."]
-    if (root / "pyproject.toml").exists() or (root / "pytest.ini").exists():
+    if (root / "pytest.ini").exists() or _pyproject_uses_pytest(root):
         return [sys.executable, "-m", "pytest", "-q"]
     tests_dir = root / "tests"
     if tests_dir.is_dir() and any(tests_dir.rglob("test*.py")):
@@ -66,7 +77,7 @@ def detect_check_command(root: str | Path) -> list[str] | None:
     if (root / "Cargo.toml").exists():
         return ["cargo", "check", "--quiet"]
     if (root / "go.mod").exists():
-        return ["go", "test", "./..."]
+        return ["go", "test", "-run", "^$", "./..."]
     if (root / "pyproject.toml").exists() or any(root.glob("*.py")):
         return [sys.executable, "-m", "compileall", "-q", "."]
     if (root / "gradlew").exists():
@@ -75,6 +86,77 @@ def detect_check_command(root: str | Path) -> list[str] | None:
         return ["./mvnw", "test", "-q", "-DskipTests"]
     if (root / "pom.xml").exists():
         return ["mvn", "test", "-q", "-DskipTests"]
+    package = root / "package.json"
+    if package.exists() and (root / "node_modules" / ".bin" / "tsc").exists():
+        return [str(root / "node_modules" / ".bin" / "tsc"), "--noEmit"]
+    return None
+
+
+def detect_package_metadata_command(root: str | Path) -> list[str] | None:
+    root = Path(root)
+    if (root / "Cargo.toml").exists():
+        return ["cargo", "metadata", "--format-version", "1", "--no-deps"]
+    if (root / "go.mod").exists():
+        return ["go", "list", "-m", "-json"]
+    if (root / "package.json").exists():
+        return [
+            "npm",
+            "pkg",
+            "get",
+            "name",
+            "version",
+            "type",
+            "dependencies",
+            "devDependencies",
+        ]
+    if (root / "pyproject.toml").exists():
+        script = (
+            "import json,tomllib,pathlib;"
+            "d=tomllib.loads(pathlib.Path('pyproject.toml').read_text());"
+            "p=d.get('project',{});"
+            "print(json.dumps({k:p.get(k) for k in "
+            "('name','version','requires-python','dependencies','optional-dependencies') "
+            "if k in p},sort_keys=True))"
+        )
+        return [sys.executable, "-c", script]
+    if (root / "pom.xml").exists():
+        script = (
+            "import json,xml.etree.ElementTree as E,pathlib;"
+            "r=E.parse('pom.xml').getroot();"
+            "ns=r.tag.split('}')[0].strip('{') if '}' in r.tag else '';"
+            "q=(lambda n:r.find(('{'+ns+'}' if ns else '')+n));"
+            "v=(lambda n:(q(n).text.strip() if q(n) is not None and q(n).text else None));"
+            "print(json.dumps({'groupId':v('groupId'),'artifactId':v('artifactId'),"
+            "'version':v('version')},sort_keys=True))"
+        )
+        return [sys.executable, "-c", script]
+    if (root / "build.zig.zon").exists():
+        script = (
+            "import json,pathlib,re;"
+            "s=pathlib.Path('build.zig.zon').read_text();"
+            "g=lambda k:(re.search(r'\\.'+k+r'\\s*=\\s*([^,\\n]+)',s).group(1).strip() "
+            "if re.search(r'\\.'+k+r'\\s*=\\s*([^,\\n]+)',s) else None);"
+            "print(json.dumps({'name':g('name'),'version':g('version')},sort_keys=True))"
+        )
+        return [sys.executable, "-c", script]
+    return None
+
+
+def _docs_backend(root: Path) -> str | None:
+    if (root / "go.mod").exists():
+        return "go"
+    if (root / "pyproject.toml").exists() or any(root.glob("*.py")):
+        return "python"
+    return None
+
+
+def detect_docs_lookup_command(root: str | Path, query: str) -> list[str] | None:
+    root = Path(root)
+    backend = _docs_backend(root)
+    if backend == "go":
+        return ["go", "doc", query]
+    if backend == "python":
+        return [sys.executable, "-m", "pydoc", query]
     return None
 
 
@@ -112,13 +194,40 @@ def default_operator_registry(root: str | Path) -> OperatorRegistry:
     if detect_check_command(root):
         operators.append(
             OperatorDescriptor(
-                name="repo.check",
-                description="Run the repository compiler or fast static build check.",
+                name="type.check",
+                description="Run the local compiler or type checker and return semantic diagnostics.",
                 kind="subprocess",
-                tags=("compiler", "build", "check"),
+                tags=("type", "types", "compiler", "diagnostics", "check"),
                 requires=("repo",),
-                provides=("check.result",),
+                provides=("type.diagnostics",),
                 cost_millis=500,
+                metadata={"backend": "terminal_argv"},
+            )
+        )
+    if detect_package_metadata_command(root):
+        operators.append(
+            OperatorDescriptor(
+                name="package.metadata",
+                description="Inspect local package identity, version, dependencies, and manifest metadata.",
+                kind="subprocess",
+                tags=("package", "dependency", "dependencies", "metadata", "manifest"),
+                requires=("repo",),
+                provides=("package.metadata",),
+                cost_millis=25,
+                metadata={"backend": "terminal_argv"},
+            )
+        )
+    if _docs_backend(root):
+        operators.append(
+            OperatorDescriptor(
+                name="docs.lookup",
+                description="Look up local language or package documentation for a module, package, or symbol.",
+                kind="subprocess",
+                tags=("docs", "documentation", "api", "symbol", "package"),
+                requires=("repo",),
+                provides=("docs.lookup",),
+                cost_millis=50,
+                metadata={"backend": "terminal_argv"},
             )
         )
     if detect_test_command(root):
@@ -131,6 +240,7 @@ def default_operator_registry(root: str | Path) -> OperatorRegistry:
                 requires=("repo",),
                 provides=("test.result",),
                 cost_millis=1000,
+                metadata={"backend": "terminal_argv"},
             )
         )
     return OperatorRegistry(operators)
@@ -154,7 +264,10 @@ def _search(root: Path, query: str, *, docs_only: bool, limit: int = 40) -> Oper
             docsish = (
                 path.suffix.lower() in {".md", ".txt", ".toml", ".yaml", ".yml"}
                 or "docs" in {part.lower() for part in rel.parts}
-                or path.name.lower() in {"package.json", "pyproject.toml", "cargo.toml", "build.zig.zon"}
+                or path.name.lower() in {
+                    "package.json", "pyproject.toml", "cargo.toml",
+                    "build.zig.zon", "pom.xml", "go.mod"
+                }
             )
             if not docsish:
                 continue
@@ -166,8 +279,10 @@ def _search(root: Path, query: str, *, docs_only: bool, limit: int = 40) -> Oper
             if pattern.search(line):
                 matches.append(f"{rel}:{line_no}:{line.strip()[:300]}")
                 if len(matches) >= limit:
-                    return OperatorResult(True, "\n".join(matches), metadata={"matches": len(matches)})
-    return OperatorResult(True, "\n".join(matches), metadata={"matches": len(matches)})
+                    return OperatorResult(True, "
+".join(matches), metadata={"matches": len(matches)})
+    return OperatorResult(True, "
+".join(matches), metadata={"matches": len(matches)})
 
 
 def _python_ast(root: Path, argument: str) -> OperatorResult:
@@ -199,7 +314,8 @@ def _python_ast(root: Path, argument: str) -> OperatorResult:
         line = getattr(node, "lineno", 0)
         rows.append(f"{kind}:{name}:{line}")
     rows = sorted(set(rows))[:200]
-    return OperatorResult(True, "\n".join(rows), metadata={"symbols": len(rows)})
+    return OperatorResult(True, "
+".join(rows), metadata={"symbols": len(rows)})
 
 
 def _run(root: Path, argv: Sequence[str], timeout_seconds: int) -> OperatorResult:
@@ -215,10 +331,14 @@ def _run(root: Path, argv: Sequence[str], timeout_seconds: int) -> OperatorResul
             check=False,
         )
     except FileNotFoundError:
-        return OperatorResult(False, f"command not found: {argv[0]}")
+        return OperatorResult(False, f"command not found: {argv[0]}", metadata={"argv": list(argv)})
     except subprocess.TimeoutExpired as exc:
         output = (exc.stdout or "") if isinstance(exc.stdout, str) else ""
-        return OperatorResult(False, output[-8000:], metadata={"timeout": True})
+        return OperatorResult(
+            False,
+            output[-8000:],
+            metadata={"timeout": True, "argv": list(argv)},
+        )
     return OperatorResult(
         completed.returncode == 0,
         completed.stdout[-8000:],
@@ -248,10 +368,24 @@ def execute_operator(
             if command is None
             else _run(root, command, timeout_seconds)
         )
-    if name == "repo.check":
+    if name in {"type.check", "repo.check"}:
         command = detect_check_command(root)
         return (
-            OperatorResult(False, "no check command detected")
+            OperatorResult(False, "no type/compiler check command detected")
+            if command is None
+            else _run(root, command, timeout_seconds)
+        )
+    if name == "package.metadata":
+        command = detect_package_metadata_command(root)
+        return (
+            OperatorResult(False, "no package metadata command detected")
+            if command is None
+            else _run(root, command, timeout_seconds)
+        )
+    if name == "docs.lookup":
+        command = detect_docs_lookup_command(root, argument)
+        return (
+            OperatorResult(False, "no local documentation command detected")
             if command is None
             else _run(root, command, timeout_seconds)
         )
