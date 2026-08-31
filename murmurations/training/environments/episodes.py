@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import random
 import re
 from typing import Any
 
@@ -111,9 +112,56 @@ class EpisodeBuilder:
         return node.id
 
 
+_LOW_INFORMATION_TOKENS = {
+    "return", "const", "var", "let", "pub", "fn", "def", "class", "struct",
+    "impl", "func", "package", "import", "from", "true", "false", "none",
+    "null", "this", "self", "else", "elif", "while", "for", "match",
+}
+
+
 def _search_term(mutation: Mutation) -> str:
     tokens = re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", mutation.original_line)
-    return tokens[0] if tokens else Path(mutation.relative_path).stem
+    for token in tokens:
+        if token.lower() not in _LOW_INFORMATION_TOKENS:
+            return token
+    return Path(mutation.relative_path).stem
+
+
+def _enrichment_request(name: str, term: str) -> tuple[str, ArgumentKind, str]:
+    if name == "type.check":
+        return (
+            "inspect compiler type diagnostics for the repository",
+            ArgumentKind.ACTION,
+            "run local compiler type check",
+        )
+    if name == "package.metadata":
+        return (
+            "inspect local package dependency metadata",
+            ArgumentKind.ACTION,
+            "inspect local package metadata",
+        )
+    if name == "docs.lookup":
+        return (
+            f"lookup local documentation for {term}",
+            ArgumentKind.SYMBOL,
+            term,
+        )
+    raise ValueError(f"unsupported enrichment operator: {name}")
+
+
+def _selected_enrichment_operators(
+    registry: OperatorRegistry,
+    configured: tuple[str, ...],
+    *,
+    max_calls: int,
+    seed: int,
+) -> list[str]:
+    if max_calls <= 0 or not configured:
+        return []
+    available = {descriptor.name for descriptor in registry.descriptors()}
+    selected = [name for name in configured if name in available]
+    random.Random(seed).shuffle(selected)
+    return selected[:max_calls]
 
 
 def make_oracle_bootstrap_episode(
@@ -123,6 +171,9 @@ def make_oracle_bootstrap_episode(
     registry: OperatorRegistry,
     *,
     timeout_seconds: int = 120,
+    episode_seed: int = 17,
+    enrichment_operators: tuple[str, ...] = (),
+    max_enrichment_calls: int = 0,
 ) -> Episode:
     """Create an explicitly labeled bootstrap demonstration from known mutation truth."""
 
@@ -178,6 +229,60 @@ def make_oracle_bootstrap_episode(
     )
 
     term = _search_term(mutation)
+    evidence_parent = evidence
+    for operator_name in _selected_enrichment_operators(
+        registry,
+        enrichment_operators,
+        max_calls=max_enrichment_calls,
+        seed=episode_seed,
+    ):
+        retrieval_query, argument_kind, execution_argument = _enrichment_request(
+            operator_name, term
+        )
+        query_event = builder.add(
+            Operation.QUERY,
+            ArgumentKind.CAPABILITY,
+            retrieval_query,
+            grounding=retrieval_query,
+            retrieval_query=retrieval_query,
+            operator_ref=operator_name,
+            parents=(evidence_parent,),
+        )
+        result = execute_operator(
+            operator_name,
+            execution_argument,
+            root,
+            timeout_seconds=timeout_seconds,
+        )
+        execute_event = builder.add(
+            Operation.EXECUTE,
+            argument_kind,
+            execution_argument,
+            grounding=execution_argument,
+            retrieval_query=retrieval_query,
+            operator_ref=operator_name,
+            parents=(query_event,),
+            environment={
+                "ok": result.ok,
+                "exit_code": result.exit_code,
+                "output": result.text[-8000:],
+                "argv": result.metadata.get("argv"),
+            },
+        )
+        result_text = (
+            result.text
+            or f"{operator_name} completed with ok={result.ok} exit_code={result.exit_code}"
+        )[-4000:]
+        evidence_parent = builder.add(
+            Operation.EVIDENCE,
+            ArgumentKind.TEXT,
+            result_text,
+            grounding=result_text,
+            retrieval_query=f"record evidence from {operator_name}",
+            parents=(execute_event,),
+            confidence_permille=1000,
+        )
+
     inspect_query = f"search source for {term}"
     query_source = builder.add(
         Operation.QUERY,
@@ -186,7 +291,7 @@ def make_oracle_bootstrap_episode(
         grounding=inspect_query,
         retrieval_query=inspect_query,
         operator_ref="repo.search",
-        parents=(evidence,),
+        parents=(evidence_parent,),
     )
     search_result = execute_operator("repo.search", term, root, timeout_seconds=timeout_seconds)
     execute_search = builder.add(
