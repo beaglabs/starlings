@@ -124,8 +124,9 @@ def build_shard(
         max_files_per_repo=int(config.get("max_files_per_repo", 2000)),
     )
 
-    # Dynamic episodes use only repositories whose clean verifier passes in the
-    # current local environment. No dependency-install scripts are run here.
+    # Dynamic episodes use only repositories whose clean verifier passes inside
+    # the pinned ZViz corpus environment. Repository code is never executed on
+    # the corpus-generation host.
     probe = probe_repository_catalog(
         catalog_path,
         cache_dir=cache_dir,
