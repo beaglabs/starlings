@@ -8,6 +8,10 @@ from pathlib import Path
 import time
 from typing import Any
 
+import yaml
+
+from murmurations.training.daytona import DaytonaCorpusRunner
+
 from murmurations.training.environments.repositories import RepoCatalog, RepoRecord, checkout_repository
 from murmurations.training.operators import detect_test_command
 
@@ -111,18 +115,23 @@ def probe_repository_catalog(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
     parser.add_argument("--catalog", required=True)
     parser.add_argument("--cache-dir", default=".cache/murmurations/repos")
     parser.add_argument("--timeout-seconds", type=int, default=180)
     parser.add_argument("--report", required=True)
     parser.add_argument("--eligible-catalog", required=True)
     args = parser.parse_args()
+    config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
+    sandbox = DaytonaCorpusRunner.from_config(dict(config.get("sandbox") or {}))
+    sandbox.validate_environment()
     report = probe_repository_catalog(
         args.catalog,
         cache_dir=args.cache_dir,
         timeout_seconds=args.timeout_seconds,
         report_path=args.report,
         eligible_catalog_path=args.eligible_catalog,
+        sandbox_runner=sandbox,
     )
     print(
         json.dumps(
