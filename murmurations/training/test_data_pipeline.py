@@ -90,6 +90,10 @@ class DataPipelineTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (root / "src" / "__init__.py").write_text("", encoding="utf-8")
+            (root / "pyproject.toml").write_text(
+                "[project]\nname = \"fixture\"\nversion = \"1.0.0\"\n",
+                encoding="utf-8",
+            )
 
             verifier = ["python3", "-m", "unittest", "discover", "-s", "tests"]
             workspace = Path(tmp) / "work"
@@ -121,11 +125,25 @@ class DataPipelineTests(unittest.TestCase):
 
             # make_oracle_bootstrap_episode uses execute_operator, whose detector
             # recognizes the tests/ fallback added by the training adapter.
-            episode = make_oracle_bootstrap_episode(repo, workspace, mutation, registry)
+            episode = make_oracle_bootstrap_episode(
+                repo,
+                workspace,
+                mutation,
+                registry,
+                episode_seed=17,
+                enrichment_operators=("package.metadata",),
+                max_enrichment_calls=1,
+            )
             rows = materialize_episode(episode.record())
             execute_rows = [row for row in rows if row["operation"] == "EXECUTE"]
             self.assertTrue(execute_rows)
             self.assertTrue(any(row["argument"]["operator"] == "repo.tests" for row in execute_rows))
+            self.assertTrue(
+                any(
+                    row["argument"]["operator"] == "package.metadata"
+                    for row in execute_rows
+                )
+            )
             for row in execute_rows:
                 operator = row["argument"]["operator"]
                 if operator is not None:
