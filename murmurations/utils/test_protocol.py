@@ -45,6 +45,16 @@ class ProtocolTests(unittest.TestCase):
         dag.verify()
         self.assertEqual(dag.ancestors(challenge.id), {claim.id, evidence.id})
 
+    def test_execute_frame_carries_retrieved_operator_reference(self) -> None:
+        frame = ActionFrame(
+            Operation.EXECUTE,
+            ArgumentKind.SYMBOL,
+            "src/root.zig",
+            operator_ref="repo.tests",
+        )
+        self.assertEqual(frame.record()["version"], 2)
+        self.assertEqual(frame.record()["operator_ref"], "repo.tests")
+
     def test_population_accepts_greek_aliases(self) -> None:
         population = PopulationContext.from_mapping(
             {"A": [], "G": {}, "X": {}, "M": {}, "F": {}, "Π": {}, "C": {}, "Φ": {}, "J": {}}

@@ -29,12 +29,12 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(output["argument_kind_logits"].shape, (2, len(ArgumentKind)))
         self.assertEqual(output["argument_start_logits"].shape, (2, 8))
         self.assertEqual(output["argument_end_logits"].shape, (2, 8))
+        self.assertEqual(output["operator_pointer_logits"].shape, (2, 8))
         self.assertEqual(output["parent_pointer_logits"].shape, (2, 4, 8))
         self.assertEqual(output["parent_count_logits"].shape, (2, 5))
         self.assertEqual(output["confidence"].shape, (2,))
 
     def test_default_architecture_parameter_count_is_stable(self) -> None:
-        # Formula test avoids allocating a 503M-parameter model in unit tests.
         cfg = MurmurationConfig()
         embedding = cfg.vocab_size * cfg.d_model
         per_layer = (
@@ -50,9 +50,10 @@ class ModelTests(unittest.TestCase):
             + cfg.d_model * (cfg.max_parents + 1) + (cfg.max_parents + 1)
             + cfg.d_model
             + cfg.d_model
+            + cfg.d_model
             + cfg.max_parents * cfg.d_model
         )
-        self.assertEqual(backbone + operation + argument, 503_410_717)
+        self.assertEqual(backbone + operation + argument, 503_413_791)
 
 
 if __name__ == "__main__":

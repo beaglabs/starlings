@@ -24,8 +24,9 @@ def _find_subsequence(haystack: Sequence[int], needle: Sequence[int]) -> tuple[i
 class ProtocolDataset(Dataset[dict[str, Any]]):
     """Trajectory JSONL with language + structured action supervision.
 
-    Argument and parent labels are pointer-supervised against exact strings in
-    the context. The model never predicts BLAKE3 identities directly.
+    Argument, operator, and parent labels are pointers into exact strings already
+    present in context. The model never emits BLAKE3 identities or arbitrary
+    tool names from the vocabulary when a retrieved operator is available.
     """
 
     def __init__(self, path: str | Path, tokenizer: Any, max_seq_len: int) -> None:
@@ -42,6 +43,15 @@ class ProtocolDataset(Dataset[dict[str, Any]]):
 
     def __len__(self) -> int:
         return len(self.rows)
+
+    def _pointer_label(self, context_ids: Sequence[int], value: Any, label: str) -> int:
+        if value is None:
+            return -100
+        encoded = self.tokenizer.encode(str(value), add_special_tokens=False)
+        found = _find_subsequence(context_ids, encoded)
+        if found is None:
+            raise ValueError(f"{label} not found in context: {value!r}")
+        return found[0]
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         row = self.rows[index]
@@ -80,16 +90,17 @@ class ProtocolDataset(Dataset[dict[str, Any]]):
                 raise ValueError(f"argument text not found in context: {argument_text!r}")
             start_label, end_label = found
 
+        operator_ref = argument.get("operator", row.get("operator"))
+        operator_pointer_label = self._pointer_label(context_ids, operator_ref, "operator reference")
+
         parents = list(argument.get("parents", []))
         if len(parents) > 4:
             raise ValueError("at most four direct parents are supported")
         parent_labels = [-100] * 4
         for parent_index, parent in enumerate(parents):
-            encoded = self.tokenizer.encode(str(parent), add_special_tokens=False)
-            found = _find_subsequence(context_ids, encoded)
-            if found is None:
-                raise ValueError(f"parent reference not found in context: {parent!r}")
-            parent_labels[parent_index] = found[0]
+            parent_labels[parent_index] = self._pointer_label(
+                context_ids, parent, "parent reference"
+            )
 
         confidence = int(argument.get("confidence_permille", 1000))
         if not 0 <= confidence <= 1000:
@@ -103,10 +114,11 @@ class ProtocolDataset(Dataset[dict[str, Any]]):
             "argument_kind_label": int(kind),
             "argument_start_label": start_label,
             "argument_end_label": end_label,
+            "operator_pointer_label": operator_pointer_label,
             "parent_pointer_labels": parent_labels,
             "parent_count_label": len(parents),
             "confidence_target": confidence / 1000.0,
-            "confidence_mask": kind is not ArgumentKind.NONE,
+            "confidence_mask": kind is not ArgumentKind.NONE or operator_ref is not None,
         }
 
 
@@ -131,6 +143,7 @@ class ProtocolCollator:
             "argument_kind_labels": torch.tensor([row["argument_kind_label"] for row in rows], dtype=torch.long),
             "argument_start_labels": torch.tensor([row["argument_start_label"] for row in rows], dtype=torch.long),
             "argument_end_labels": torch.tensor([row["argument_end_label"] for row in rows], dtype=torch.long),
+            "operator_pointer_labels": torch.tensor([row["operator_pointer_label"] for row in rows], dtype=torch.long),
             "parent_pointer_labels": torch.tensor([row["parent_pointer_labels"] for row in rows], dtype=torch.long),
             "parent_count_labels": torch.tensor([row["parent_count_label"] for row in rows], dtype=torch.long),
             "confidence_targets": torch.tensor([row["confidence_target"] for row in rows], dtype=torch.float32),

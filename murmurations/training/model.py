@@ -120,11 +120,7 @@ class Block(nn.Module):
 
 
 class ArgumentHead(nn.Module):
-    """Structured argument grounding over the current context.
-
-    Spans and parent references are pointers into context. BLAKE3 IDs are
-    assigned only after the host materializes a canonical action frame.
-    """
+    """Ground operation arguments and retrieved operator references into context."""
 
     def __init__(self, cfg: MurmurationConfig) -> None:
         super().__init__()
@@ -135,6 +131,7 @@ class ArgumentHead(nn.Module):
         self.parent_count = nn.Linear(width, cfg.max_parents + 1)
         self.start_gate = nn.Parameter(torch.ones(width))
         self.end_gate = nn.Parameter(torch.ones(width))
+        self.operator_gate = nn.Parameter(torch.ones(width))
         self.parent_gates = nn.Parameter(torch.ones(cfg.max_parents, width))
         self.scale = width**-0.5
 
@@ -146,24 +143,27 @@ class ArgumentHead(nn.Module):
     ) -> dict[str, Tensor]:
         start_query = control * self.start_gate
         end_query = control * self.end_gate
+        operator_query = control * self.operator_gate
         span_start = torch.einsum("bd,btd->bt", start_query, hidden) * self.scale
         span_end = torch.einsum("bd,btd->bt", end_query, hidden) * self.scale
+        operator_pointer = torch.einsum("bd,btd->bt", operator_query, hidden) * self.scale
 
         parent_query = control[:, None, :] * self.parent_gates[None, :, :]
         parent_pointer = torch.einsum("bpd,btd->bpt", parent_query, hidden) * self.scale
 
         positions = torch.arange(hidden.shape[1], device=hidden.device)[None, :]
         invalid = positions > control_positions[:, None]
-        span_start = span_start.masked_fill(invalid, torch.finfo(span_start.dtype).min)
-        span_end = span_end.masked_fill(invalid, torch.finfo(span_end.dtype).min)
-        parent_pointer = parent_pointer.masked_fill(
-            invalid[:, None, :], torch.finfo(parent_pointer.dtype).min
-        )
+        minimum = torch.finfo(span_start.dtype).min
+        span_start = span_start.masked_fill(invalid, minimum)
+        span_end = span_end.masked_fill(invalid, minimum)
+        operator_pointer = operator_pointer.masked_fill(invalid, minimum)
+        parent_pointer = parent_pointer.masked_fill(invalid[:, None, :], minimum)
 
         return {
             "argument_kind_logits": self.kind(control),
             "argument_start_logits": span_start,
             "argument_end_logits": span_end,
+            "operator_pointer_logits": operator_pointer,
             "parent_pointer_logits": parent_pointer,
             "parent_count_logits": self.parent_count(control),
             "confidence": torch.sigmoid(self.confidence(control)).squeeze(-1),
@@ -201,7 +201,6 @@ class MurmurationModel(nn.Module):
         batch_index = torch.arange(input_ids.shape[0], device=input_ids.device)
         control = hidden[batch_index, control_positions]
 
-        # Tied language head: no second vocabulary-sized parameter matrix.
         language_logits = F.linear(hidden, self.token_embedding.weight)
         outputs = {
             "language_logits": language_logits,

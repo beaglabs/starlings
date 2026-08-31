@@ -35,6 +35,9 @@ def compute_losses(
     losses["argument_end"] = _safe_cross_entropy(
         outputs["argument_end_logits"], batch["argument_end_labels"]
     )
+    losses["operator_pointer"] = _safe_cross_entropy(
+        outputs["operator_pointer_logits"], batch["operator_pointer_labels"]
+    )
     losses["parent_pointer"] = _safe_cross_entropy(
         outputs["parent_pointer_logits"], batch["parent_pointer_labels"]
     )

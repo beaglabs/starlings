@@ -21,6 +21,7 @@ class Operation(IntEnum):
     CHALLENGE = 8
     RETRACT = 9
     DELEGATE = 10
+    EXECUTE = 11
 
 
 class ArgumentKind(IntEnum):
@@ -36,6 +37,7 @@ class ArgumentKind(IntEnum):
     ACTION = 9
     SYMBOL = 10
     SCALAR = 11
+    OPERATOR = 12
 
 
 def _validate_parent(value: str) -> None:
@@ -49,6 +51,7 @@ class ActionFrame:
     operation: Operation
     argument_kind: ArgumentKind = ArgumentKind.NONE
     argument: str | None = None
+    operator_ref: str | None = None
     parents: tuple[str, ...] = ()
     confidence_permille: int = 1000
     actor: str | None = None
@@ -63,13 +66,16 @@ class ActionFrame:
             _validate_parent(parent)
         if self.argument_kind is ArgumentKind.NONE and self.argument is not None:
             raise ValueError("NONE argument kind cannot carry an argument")
+        if self.operator_ref is not None and not self.operator_ref.strip():
+            raise ValueError("operator_ref cannot be empty")
 
     def record(self) -> dict[str, Any]:
         return {
-            "version": 1,
+            "version": 2,
             "operation": self.operation.name,
             "argument_kind": self.argument_kind.name,
             "argument": self.argument,
+            "operator_ref": self.operator_ref,
             "parents": list(self.parents),
             "confidence_permille": self.confidence_permille,
             "actor": self.actor,
@@ -93,9 +99,11 @@ CONTROL_TOKENS: Sequence[str] = (
     "<CHALLENGE>",
     "<RETRACT>",
     "<DELEGATE>",
+    "<EXECUTE>",
     "<REF>",
     "<B3>",
     "<POPULATION>",
     "<STATE>",
     "<CAPABILITY>",
+    "<OPERATOR>",
 )
