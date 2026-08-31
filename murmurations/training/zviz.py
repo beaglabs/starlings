@@ -265,7 +265,7 @@ class ZVizCorpusRunner:
                             check=False,
                         )
                     except (OSError, subprocess.TimeoutExpired):
-                    pass
+                        pass
 
                 workload_code = self._workload_exit_code(raw_output)
                 output = self._clean_output(raw_output)
