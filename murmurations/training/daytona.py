@@ -205,8 +205,9 @@ class DaytonaWorkspace:
         except Exception:
             try:
                 self.runner.client.delete(self.sandbox, timeout=60, wait=True)
-            finally:
-                self.sandbox = None
+            except Exception:
+                pass
+            self.sandbox = None
             raise
 
     def __exit__(self, exc_type, exc, tb) -> bool:
