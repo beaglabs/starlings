@@ -1,7 +1,7 @@
 FROM ubuntu:26.04
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG ZIG_VERSION=0.16.0
+ARG ZIG_VERSION=0.15.0
 ARG ZIG_ARCH=x86_64
 
 RUN apt-get update \
