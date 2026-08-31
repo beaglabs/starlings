@@ -25,6 +25,7 @@ class MurmurationConfig:
     rms_eps: float = 1e-6
     dropout: float = 0.0
     max_parents: int = 4
+    pointer_dim: int = 128
 
     def asdict(self) -> dict[str, Any]:
         return asdict(self)
@@ -129,11 +130,22 @@ class ArgumentHead(nn.Module):
         self.kind = nn.Linear(width, len(ArgumentKind))
         self.confidence = nn.Linear(width, 1)
         self.parent_count = nn.Linear(width, cfg.max_parents + 1)
-        self.start_gate = nn.Parameter(torch.ones(width))
-        self.end_gate = nn.Parameter(torch.ones(width))
-        self.operator_gate = nn.Parameter(torch.ones(width))
-        self.parent_gates = nn.Parameter(torch.ones(cfg.max_parents, width))
-        self.scale = width**-0.5
+
+        # A small learned bilinear pointer space is much more expressive than
+        # elementwise gating while remaining cheap relative to the backbone.
+        # Context keys are shared; each pointer family learns its own query.
+        pointer_dim = min(cfg.pointer_dim, width)
+        if pointer_dim <= 0:
+            raise ValueError("pointer_dim must be positive")
+        self.pointer_dim = pointer_dim
+        self.pointer_key = nn.Linear(width, pointer_dim, bias=False)
+        self.start_query = nn.Linear(width, pointer_dim, bias=False)
+        self.end_query = nn.Linear(width, pointer_dim, bias=False)
+        self.operator_query = nn.Linear(width, pointer_dim, bias=False)
+        self.parent_query = nn.Linear(
+            width, cfg.max_parents * pointer_dim, bias=False
+        )
+        self.scale = pointer_dim**-0.5
 
     def forward(
         self,
@@ -141,15 +153,27 @@ class ArgumentHead(nn.Module):
         control: Tensor,
         control_positions: Tensor,
     ) -> dict[str, Tensor]:
-        start_query = control * self.start_gate
-        end_query = control * self.end_gate
-        operator_query = control * self.operator_gate
-        span_start = torch.einsum("bd,btd->bt", start_query, hidden) * self.scale
-        span_end = torch.einsum("bd,btd->bt", end_query, hidden) * self.scale
-        operator_pointer = torch.einsum("bd,btd->bt", operator_query, hidden) * self.scale
+        pointer_keys = self.pointer_key(hidden)
+        start_query = self.start_query(control)
+        end_query = self.end_query(control)
+        operator_query = self.operator_query(control)
 
-        parent_query = control[:, None, :] * self.parent_gates[None, :, :]
-        parent_pointer = torch.einsum("bpd,btd->bpt", parent_query, hidden) * self.scale
+        span_start = (
+            torch.einsum("bd,btd->bt", start_query, pointer_keys) * self.scale
+        )
+        span_end = (
+            torch.einsum("bd,btd->bt", end_query, pointer_keys) * self.scale
+        )
+        operator_pointer = (
+            torch.einsum("bd,btd->bt", operator_query, pointer_keys) * self.scale
+        )
+
+        parent_query = self.parent_query(control).view(
+            control.shape[0], self.max_parents, self.pointer_dim
+        )
+        parent_pointer = (
+            torch.einsum("bpd,btd->bpt", parent_query, pointer_keys) * self.scale
+        )
 
         positions = torch.arange(hidden.shape[1], device=hidden.device)[None, :]
         # Pointer targets must come from context strictly before <ACT>.
