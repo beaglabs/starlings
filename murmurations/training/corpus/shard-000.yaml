@@ -20,14 +20,12 @@ code_chunk_chars: 6000
 max_files_per_repo: 1500
 max_context_chars: 12000
 
-# Dynamic execution is never host-native for the serious shard.
+# Static materialization is local; all dynamic repository execution is remote.
 sandbox:
-  runtime: zviz
-  binary: .cache/murmurations/zviz/zviz
-  bundle: .cache/murmurations/zviz/corpus-v1
-  state_dir: .cache/murmurations/zviz/state
-  profile: ci-runner
-  source_commit: 470e9cfa03bbe84c1bf1320748363168f9bd3cd6
+  runtime: daytona
+  snapshot: murmurations-corpus-v1
+  ttl_minutes: 45
+  block_network_after_prepare: false
 
 terminal_evidence:
   enabled: true
@@ -48,4 +46,4 @@ quality:
   min_terminal_operator_events: 200
   min_terminal_operator_types: 2
   min_terminal_argv_events: 200
-  require_zviz_terminal_execution: true
+  require_daytona_terminal_execution: true
