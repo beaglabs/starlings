@@ -189,9 +189,17 @@ def detect_prepare_commands(root: str | Path) -> list[list[str]]:
     if (root / "gradlew").exists():
         commands.append(["./gradlew", "dependencies", "--no-daemon"])
     elif (root / "mvnw").exists():
-        commands.append(["./mvnw", "-q", "-DskipTests", "dependency:go-offline"])
+        command = ["./mvnw", "-q", "-DskipTests", "dependency:go-offline"]
+        primary = _maven_primary_module(root)
+        if primary:
+            command.extend(["--projects", primary, "--also-make"])
+        commands.append(command)
     elif (root / "pom.xml").exists():
-        commands.append(["mvn", "-q", "-DskipTests", "dependency:go-offline"])
+        command = ["mvn", "-q", "-DskipTests", "dependency:go-offline"]
+        primary = _maven_primary_module(root)
+        if primary:
+            command.extend(["--projects", primary, "--also-make"])
+        commands.append(command)
 
     return commands
 
