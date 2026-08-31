@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import errno
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 from pathlib import Path
 import shutil
@@ -75,6 +75,75 @@ def _append_checkpoint(checkpoint: Path | None, row: dict[str, Any]) -> None:
         handle.flush()
 
 
+def _ordered_results(
+    catalog: RepoCatalog,
+    completed: dict[tuple[str, str], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        completed[(record.name, record.commit)]
+        for record in catalog.records
+        if (record.name, record.commit) in completed
+    ]
+
+
+def _probe_one(
+    record: RepoRecord,
+    *,
+    cache_dir: str | Path,
+    timeout_seconds: int,
+    probe_signature: str,
+    sandbox_runner,
+    prune_checkouts: bool,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    root: Path | None = None
+    row: dict[str, Any] = {
+        "probe_signature": probe_signature,
+        "repository": record.name,
+        "language": record.language,
+        "license": record.license,
+        "commit": record.commit,
+    }
+    try:
+        root = checkout_repository(record, cache_dir)
+        command = detect_test_command(root)
+        if command is None:
+            raise RuntimeError("no supported repository test command detected")
+        worker_runner = (
+            sandbox_runner.worker()
+            if hasattr(sandbox_runner, "worker")
+            else sandbox_runner
+        )
+        with worker_runner.workspace(root, record, plan_root=root) as remote:
+            result = remote.verify(root, command, timeout_seconds)
+        row.update(
+            {
+                "command": command,
+                "passed": result.passed,
+                "exit_code": result.exit_code,
+                "output_tail": result.output[-2000:],
+                "backend": result.backend,
+                "sandbox_argv": list(result.sandbox_argv),
+                "sandbox_id": result.sandbox_id,
+                "sandbox_snapshot": result.sandbox_snapshot,
+            }
+        )
+        if not result.passed:
+            row["error"] = "clean verifier failed"
+    except Exception as exc:
+        row.update({"passed": False, "error": str(exc)})
+    finally:
+        row["seconds"] = round(time.monotonic() - started, 3)
+        if (
+            prune_checkouts
+            and record.path is None
+            and root is not None
+            and root.exists()
+        ):
+            shutil.rmtree(root, ignore_errors=True)
+    return row
+
+
 def _write_outputs(
     *,
     catalog: RepoCatalog,
@@ -133,6 +202,7 @@ def probe_repository_catalog(
     eligible_catalog_path: str | Path | None = None,
     sandbox_runner=None,
     prune_checkouts: bool = False,
+    concurrency: int = 1,
 ) -> dict[str, Any]:
     catalog = RepoCatalog.from_jsonl(catalog_path)
     provenance = sandbox_runner.provenance() if sandbox_runner is not None else {}
@@ -145,14 +215,10 @@ def probe_repository_catalog(
         catalog,
         probe_signature=probe_signature,
     )
-    results: list[dict[str, Any]] = [
-        completed[(record.name, record.commit)]
-        for record in catalog.records
-        if (record.name, record.commit) in completed
-    ]
-
     if sandbox_runner is None:
         raise RuntimeError("repository eligibility probing requires Daytona")
+    if concurrency <= 0:
+        raise ValueError("probe concurrency must be positive")
 
     if completed:
         print(
@@ -160,73 +226,49 @@ def probe_repository_catalog(
             flush=True,
         )
 
-    for record in catalog.records:
-        key = (record.name, record.commit)
-        root: Path | None = None
-        if key in completed:
-            continue
-        started = time.monotonic()
-        row: dict[str, Any] = {
-            "probe_signature": probe_signature,
-            "repository": record.name,
-            "language": record.language,
-            "license": record.license,
-            "commit": record.commit,
-        }
-        try:
-            root = checkout_repository(record, cache_dir)
-            command = detect_test_command(root)
-            if command is None:
-                raise RuntimeError("no supported repository test command detected")
-            with sandbox_runner.workspace(root, record, plan_root=root) as remote:
-                result = remote.verify(root, command, timeout_seconds)
-            row.update(
-                {
-                    "command": command,
-                    "passed": result.passed,
-                    "exit_code": result.exit_code,
-                    "output_tail": result.output[-2000:],
-                    "backend": result.backend,
-                    "sandbox_argv": list(result.sandbox_argv),
-                    "sandbox_id": result.sandbox_id,
-                    "sandbox_snapshot": result.sandbox_snapshot,
-                }
-            )
-            if not result.passed:
-                row["error"] = "clean verifier failed"
-        except Exception as exc:
-            row.update({"passed": False, "error": str(exc)})
-        row["seconds"] = round(time.monotonic() - started, 3)
-        results.append(row)
-        completed[key] = row
-        try:
-            _append_checkpoint(checkpoint, row)
-        except OSError as exc:
-            if (
-                exc.errno != errno.ENOSPC
-                or not prune_checkouts
-                or record.path is not None
-                or root is None
-            ):
-                raise
-            shutil.rmtree(root, ignore_errors=True)
-            root = None
-            _append_checkpoint(checkpoint, row)
-        if prune_checkouts and record.path is None and root is not None and root.exists():
-            shutil.rmtree(root, ignore_errors=True)
-            root = None
-        report = _write_outputs(
-            catalog=catalog,
-            results=results,
-            report_path=report_path,
-            eligible_catalog_path=eligible_catalog_path,
-        )
+    pending = [
+        record
+        for record in catalog.records
+        if (record.name, record.commit) not in completed
+    ]
+    if pending:
         print(
-            f"[probe] checkpoint completed={len(results)}/{len(catalog.records)} "
-            f"eligible={report['eligible']}",
+            f"[probe] launching pending={len(pending)} concurrency={concurrency}",
             flush=True,
         )
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            futures = {
+                executor.submit(
+                    _probe_one,
+                    record,
+                    cache_dir=cache_dir,
+                    timeout_seconds=timeout_seconds,
+                    probe_signature=probe_signature,
+                    sandbox_runner=sandbox_runner,
+                    prune_checkouts=prune_checkouts,
+                ): record
+                for record in pending
+            }
+            for future in as_completed(futures):
+                record = futures[future]
+                row = future.result()
+                key = (record.name, record.commit)
+                completed[key] = row
+                _append_checkpoint(checkpoint, row)
+                results = _ordered_results(catalog, completed)
+                report = _write_outputs(
+                    catalog=catalog,
+                    results=results,
+                    report_path=report_path,
+                    eligible_catalog_path=eligible_catalog_path,
+                )
+                print(
+                    f"[probe] checkpoint completed={len(results)}/{len(catalog.records)} "
+                    f"eligible={report['eligible']}",
+                    flush=True,
+                )
 
+    results = _ordered_results(catalog, completed)
     report = _write_outputs(
         catalog=catalog,
         results=results,
@@ -244,10 +286,16 @@ def main() -> None:
     parser.add_argument("--timeout-seconds", type=int, default=180)
     parser.add_argument("--report", required=True)
     parser.add_argument("--eligible-catalog", required=True)
+    parser.add_argument("--concurrency", type=int, default=None)
     args = parser.parse_args()
     config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
     sandbox = DaytonaCorpusRunner.from_config(dict(config.get("sandbox") or {}))
     sandbox.validate_environment()
+    concurrency = (
+        args.concurrency
+        if args.concurrency is not None
+        else int(config.get("probe_concurrency", 1))
+    )
     report = probe_repository_catalog(
         args.catalog,
         cache_dir=args.cache_dir,
@@ -256,6 +304,7 @@ def main() -> None:
         eligible_catalog_path=args.eligible_catalog,
         sandbox_runner=sandbox,
         prune_checkouts=True,
+        concurrency=concurrency,
     )
     print(
         json.dumps(
