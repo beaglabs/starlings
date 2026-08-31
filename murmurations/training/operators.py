@@ -41,6 +41,12 @@ def detect_test_command(root: str | Path) -> list[str] | None:
         return [sys.executable, "-m", "pytest", "-q"]
     if (root / "tests").is_dir():
         return [sys.executable, "-m", "unittest", "discover", "-s", "tests"]
+    if (root / "gradlew").exists():
+        return ["./gradlew", "test", "--no-daemon"]
+    if (root / "mvnw").exists():
+        return ["./mvnw", "test", "-q"]
+    if (root / "pom.xml").exists():
+        return ["mvn", "test", "-q"]
     package = root / "package.json"
     if package.exists():
         try:
@@ -48,7 +54,7 @@ def detect_test_command(root: str | Path) -> list[str] | None:
         except (OSError, json.JSONDecodeError):
             payload = {}
         if "test" in payload.get("scripts", {}):
-            return ["npm", "test", "--", "--runInBand"]
+            return ["npm", "test", "--silent"]
     return None
 
 
@@ -62,6 +68,12 @@ def detect_check_command(root: str | Path) -> list[str] | None:
         return ["go", "test", "./..."]
     if (root / "pyproject.toml").exists() or any(root.glob("*.py")):
         return [sys.executable, "-m", "compileall", "-q", "."]
+    if (root / "gradlew").exists():
+        return ["./gradlew", "classes", "--no-daemon"]
+    if (root / "mvnw").exists():
+        return ["./mvnw", "test", "-q", "-DskipTests"]
+    if (root / "pom.xml").exists():
+        return ["mvn", "test", "-q", "-DskipTests"]
     return None
 
 

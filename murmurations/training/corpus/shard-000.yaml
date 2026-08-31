@@ -7,11 +7,13 @@ work_dir: .cache/murmurations/shard-000-work
 seed: 17001
 eval_fraction: 0.10
 
-# 60 repositories x 200 requested unique mutations = 12,000 target episodes.
-episodes_per_repo: 200
-generation_retries: 6
+# First serious shard: 60 repos x 20 requested unique mutations.
+# A successful episode materializes to ~11 protocol decision rows, so the
+# target is roughly 13k trajectory rows plus the static code/document stream.
+episodes_per_repo: 20
+generation_retries: 4
 timeout_seconds: 180
-max_mutation_attempts: 128
+max_mutation_attempts: 48
 
 code_chunk_chars: 6000
 max_files_per_repo: 1500
@@ -21,6 +23,6 @@ quality:
   min_catalog_repositories: 50
   min_generation_success_rate: 0.50
   min_dynamic_repositories: 20
-  min_unique_mutations: 5000
+  min_unique_mutations: 500
   min_code_rows: 10000
-  min_trajectory_rows: 50000
+  min_trajectory_rows: 10000

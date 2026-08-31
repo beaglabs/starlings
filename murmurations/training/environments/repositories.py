@@ -41,6 +41,8 @@ class RepoRecord:
             raise ValueError("repository name and pinned commit are required")
         if self.path is None and self.url is None:
             raise ValueError("repository must provide path or url")
+        if self.url is not None and re.fullmatch(r"[0-9a-fA-F]{40}", self.commit) is None:
+            raise ValueError("remote repository commits must be pinned 40-hex SHAs")
         if self.license not in PERMISSIVE_LICENSES:
             raise ValueError(f"license is not in the permissive allowlist: {self.license}")
 
