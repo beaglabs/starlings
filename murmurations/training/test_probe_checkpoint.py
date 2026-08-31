@@ -39,9 +39,11 @@ class ProbeCheckpointTests(unittest.TestCase):
                     "repository": "example/repo",
                     "commit": "b" * 40,
                     "passed": True,
+                    "probe_signature": "v2:snapshot",
+                    "probe_signature": "v2:snapshot",
                 },
             )
-            loaded = _load_checkpoint(checkpoint, catalog)
+            loaded = _load_checkpoint(checkpoint, catalog, probe_signature="v2:snapshot")
             self.assertIn(("example/repo", "b" * 40), loaded)
 
     def test_checkpoint_ignores_stale_commit(self) -> None:
@@ -72,7 +74,10 @@ class ProbeCheckpointTests(unittest.TestCase):
                     "passed": True,
                 },
             )
-            self.assertEqual(_load_checkpoint(checkpoint, catalog), {})
+            self.assertEqual(
+                _load_checkpoint(checkpoint, catalog, probe_signature="v2:snapshot"),
+                {},
+            )
 
 
 if __name__ == "__main__":
