@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 import os
 from pathlib import Path
 import shlex
@@ -140,12 +141,13 @@ class DaytonaCorpusRunner:
 
     def workspace(
         self,
-        local_root: str | Path,
+        local_root: str | Path | None,
         repository: RepoRecord,
         *,
         plan_root: str | Path | None = None,
         prepare_commands: Sequence[Sequence[str]] | None = None,
         sync_local_changes: bool = True,
+        remote_plan: bool = False,
     ) -> "DaytonaWorkspace":
         return DaytonaWorkspace(
             self,
@@ -154,6 +156,7 @@ class DaytonaCorpusRunner:
             plan_root=plan_root,
             prepare_commands=prepare_commands,
             sync_local_changes=sync_local_changes,
+            remote_plan=remote_plan,
         )
 
 
@@ -166,18 +169,23 @@ class DaytonaWorkspace:
         self,
         runner: DaytonaCorpusRunner,
         *,
-        local_root: str | Path,
+        local_root: str | Path | None,
         repository: RepoRecord,
         plan_root: str | Path | None,
         prepare_commands: Sequence[Sequence[str]] | None,
         sync_local_changes: bool,
+        remote_plan: bool,
     ) -> None:
         if not repository.url:
             raise ValueError(
                 "Daytona serious corpus execution requires a remote repository URL"
             )
         self.runner = runner
-        self.local_root = Path(local_root).expanduser().resolve()
+        self.local_root = (
+            Path(local_root).expanduser().resolve()
+            if local_root is not None
+            else None
+        )
         self.repository = repository
         self.plan_root = (
             Path(plan_root).expanduser().resolve()
@@ -190,6 +198,8 @@ class DaytonaWorkspace:
             else None
         )
         self.sync_local_changes = sync_local_changes
+        self.remote_plan = remote_plan
+        self.planned_test_command: tuple[str, ...] | None = None
         self.sandbox = None
         self._local_hashes: dict[str, str] | None = None
 
@@ -246,11 +256,48 @@ class DaytonaWorkspace:
                     f"{(checkout.result or '')[-4000:]}"
                 )
 
-            prepare_commands = (
-                self.prepare_commands
-                if self.prepare_commands is not None
-                else tuple(tuple(command) for command in detect_prepare_commands(self.plan_root))
-            )
+            if self.remote_plan:
+                planner_local = Path(__file__).with_name("repository_plan.py")
+                planner_remote = "workspace/murmurations_repository_plan.py"
+                self.sandbox.fs.upload_file(str(planner_local), planner_remote)
+                self.runner._log(
+                    f"plan repo={self.repository.name} sandbox={self.sandbox.id}"
+                )
+                planned = self.sandbox.process.exec(
+                    "python3 ../murmurations_repository_plan.py --root . 2>&1",
+                    cwd=self.remote_root,
+                    timeout=30,
+                )
+                if int(planned.exit_code) != 0:
+                    raise RuntimeError(
+                        f"remote repository planning failed: {(planned.result or '')[-4000:]}"
+                    )
+                try:
+                    payload = json.loads((planned.result or "").strip().splitlines()[-1])
+                except (IndexError, json.JSONDecodeError) as exc:
+                    raise RuntimeError(
+                        f"invalid remote repository plan: {(planned.result or '')[-4000:]}"
+                    ) from exc
+                raw_test = payload.get("test_command")
+                self.planned_test_command = (
+                    tuple(str(item) for item in raw_test)
+                    if isinstance(raw_test, list) and raw_test
+                    else None
+                )
+                if self.planned_test_command is None:
+                    raise RuntimeError("no supported repository test command detected")
+                raw_prepare = payload.get("prepare_commands") or []
+                prepare_commands = tuple(
+                    tuple(str(item) for item in command)
+                    for command in raw_prepare
+                    if isinstance(command, list)
+                )
+            else:
+                prepare_commands = (
+                    self.prepare_commands
+                    if self.prepare_commands is not None
+                    else tuple(tuple(command) for command in detect_prepare_commands(self.plan_root))
+                )
             for index, argv in enumerate(prepare_commands, start=1):
                 portable = self._portable_argv(argv)
                 command = shlex.join(portable) + " 2>&1"
@@ -314,7 +361,7 @@ class DaytonaWorkspace:
         return values
 
     def _hash_local_sources(self) -> dict[str, str]:
-        if not self.local_root.is_dir():
+        if self.local_root is None or not self.local_root.is_dir():
             raise RuntimeError(f"local corpus workspace not found: {self.local_root}")
         hashes: dict[str, str] = {}
         for path in self.local_root.rglob("*"):
