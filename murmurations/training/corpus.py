@@ -32,8 +32,7 @@ def file_digest(path: str | Path) -> dict[str, Any]:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
             size += len(block)
-            rows += block.count(b"
-")
+            rows += block.count(b"\\n")
     return {"sha256": digest.hexdigest(), "bytes": size, "lines": rows}
 
 
