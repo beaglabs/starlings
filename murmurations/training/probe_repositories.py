@@ -6,6 +6,7 @@ import argparse
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import json
 from pathlib import Path
+import shutil
 import time
 from typing import Any
 
@@ -17,6 +18,7 @@ from murmurations.training.environments.repositories import RepoCatalog, RepoRec
 
 
 PROBE_PLAN_VERSION = 2
+MIN_HOST_FREE_BYTES = 64 * 1024 * 1024
 
 
 def _record_dict(record: RepoRecord) -> dict[str, Any]:
@@ -28,6 +30,19 @@ def _record_dict(record: RepoRecord) -> dict[str, Any]:
         "url": record.url,
         "path": record.path,
     }
+
+
+def _require_host_checkpoint_space(path: Path | None) -> None:
+    root = path.parent if path is not None else Path.cwd()
+    if not root.exists():
+        root = Path.cwd()
+    free = shutil.disk_usage(root).free
+    if free < MIN_HOST_FREE_BYTES:
+        raise RuntimeError(
+            "insufficient host disk space for durable probe checkpoints: "
+            f"free={free} bytes, required>={MIN_HOST_FREE_BYTES}; "
+            "free disk space before launching Daytona probes"
+        )
 
 
 def _checkpoint_path(report_path: str | Path | None) -> Path | None:
@@ -212,6 +227,7 @@ def probe_repository_catalog(
     snapshot_identity = snapshot_info.get("id") or provenance.get("snapshot") or "unknown"
     probe_signature = f"v{PROBE_PLAN_VERSION}:{snapshot_identity}"
     checkpoint = _checkpoint_path(report_path)
+    _require_host_checkpoint_space(checkpoint)
     completed = _load_checkpoint(
         checkpoint,
         catalog,
