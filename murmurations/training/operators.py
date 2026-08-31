@@ -503,9 +503,16 @@ def _run(
 ) -> OperatorResult:
     if command_runner is not None:
         return command_runner(root, argv, timeout_seconds)
+    local_argv = list(argv)
+    if (
+        local_argv
+        and local_argv[0] == ".murmurations-venv/bin/python3"
+        and not (root / local_argv[0]).exists()
+    ):
+        local_argv[0] = sys.executable
     try:
         completed = subprocess.run(
-            list(argv),
+            local_argv,
             cwd=root,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
