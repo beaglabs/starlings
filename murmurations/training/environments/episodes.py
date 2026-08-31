@@ -272,6 +272,8 @@ def make_oracle_bootstrap_episode(
                 "exit_code": result.exit_code,
                 "output": result.text[-8000:],
                 "argv": result.metadata.get("argv"),
+                "sandbox_backend": result.metadata.get("sandbox_backend"),
+                "sandbox_argv": result.metadata.get("sandbox_argv"),
             },
         )
         result_text = (
