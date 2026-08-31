@@ -174,18 +174,7 @@ class RepositoryPlanTests(unittest.TestCase):
                 detect_test_command(root),
                 ["mvn", "test", "-q", "--projects", "core", "--also-make"],
             )
-            self.assertIn(
-                [
-                    "mvn",
-                    "-q",
-                    "-DskipTests",
-                    "dependency:go-offline",
-                    "--projects",
-                    "core",
-                    "--also-make",
-                ],
-                detect_prepare_commands(root),
-            )
+            self.assertEqual(detect_prepare_commands(root), [])
 
     def test_python_plural_tests_group_is_selected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
