@@ -6,7 +6,6 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
 
 from murmurations.training.environments.mutations import Verification
 from murmurations.training.environments.repositories import RepoCatalog
@@ -108,11 +107,15 @@ class ProbeCheckpointTests(unittest.TestCase):
                 plan_root=None,
                 prepare_commands=None,
                 sync_local_changes=True,
+                remote_plan=False,
             ):
                 runner = self
 
                 class Workspace:
+                    planned_test_command = ("python3", "-m", "pytest", "-q")
+
                     def __enter__(self):
+                        self.planned_test_command = self.__class__.planned_test_command
                         with runner.lock:
                             runner.active += 1
                             runner.max_active = max(runner.max_active, runner.active)
@@ -158,17 +161,13 @@ class ProbeCheckpointTests(unittest.TestCase):
                 encoding="utf-8",
             )
             runner = Runner()
-            with patch(
-                "murmurations.training.probe_repositories.detect_test_command",
-                return_value=["python3", "-m", "pytest", "-q"],
-            ):
-                report = probe_repository_catalog(
-                    catalog,
-                    report_path=root / "probe.json",
-                    eligible_catalog_path=root / "eligible.jsonl",
-                    sandbox_runner=runner,
-                    concurrency=2,
-                )
+            report = probe_repository_catalog(
+                catalog,
+                report_path=root / "probe.json",
+                eligible_catalog_path=root / "eligible.jsonl",
+                sandbox_runner=runner,
+                concurrency=2,
+            )
 
             self.assertEqual(report["completed"], 4)
             self.assertEqual(report["eligible"], 4)
