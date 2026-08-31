@@ -87,7 +87,7 @@ def probe_repository_catalog(
         target = Path(report_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
-            json.dumps(report, indent=2, sort_keys=True) + "\\n",
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
 
@@ -96,7 +96,7 @@ def probe_repository_catalog(
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("w", encoding="utf-8") as handle:
             for record in eligible:
-                handle.write(json.dumps(_record_dict(record), sort_keys=True) + "\\n")
+                handle.write(json.dumps(_record_dict(record), sort_keys=True) + "\n")
 
     return report
 

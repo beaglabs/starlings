@@ -279,8 +279,8 @@ def _search(root: Path, query: str, *, docs_only: bool, limit: int = 40) -> Oper
             if pattern.search(line):
                 matches.append(f"{rel}:{line_no}:{line.strip()[:300]}")
                 if len(matches) >= limit:
-                    return OperatorResult(True, "\\n".join(matches), metadata={"matches": len(matches)})
-    return OperatorResult(True, "\\n".join(matches), metadata={"matches": len(matches)})
+                    return OperatorResult(True, "\n".join(matches), metadata={"matches": len(matches)})
+    return OperatorResult(True, "\n".join(matches), metadata={"matches": len(matches)})
 
 
 def _python_ast(root: Path, argument: str) -> OperatorResult:
@@ -312,7 +312,7 @@ def _python_ast(root: Path, argument: str) -> OperatorResult:
         line = getattr(node, "lineno", 0)
         rows.append(f"{kind}:{name}:{line}")
     rows = sorted(set(rows))[:200]
-    return OperatorResult(True, "\\n".join(rows), metadata={"symbols": len(rows)})
+    return OperatorResult(True, "\n".join(rows), metadata={"symbols": len(rows)})
 
 
 def _run(root: Path, argv: Sequence[str], timeout_seconds: int) -> OperatorResult:

@@ -146,7 +146,7 @@ def generate_trajectory_corpus(
                             "repo_episode_index": local_index,
                             "global_episode_index": global_index,
                         }
-                        handle.write(json.dumps(record, sort_keys=True) + "\\n")
+                        handle.write(json.dumps(record, sort_keys=True) + "\n")
                         used[repo.name].add(mutation.fingerprint)
                         written += 1
                         repo_stats[repo.name]["written"] += 1
@@ -168,7 +168,7 @@ def generate_trajectory_corpus(
 
     with failures_output.open("w", encoding="utf-8") as handle:
         for failure in failures:
-            handle.write(json.dumps(failure, sort_keys=True) + "\\n")
+            handle.write(json.dumps(failure, sort_keys=True) + "\n")
 
     requested = len(schedule)
     return {

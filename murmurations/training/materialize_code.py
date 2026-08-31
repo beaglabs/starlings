@@ -111,7 +111,7 @@ def materialize_repository_code(
                     row = {
                         "context": (
                             f"REPOSITORY: {record.name} commit={record.commit} "
-                            f"license={record.license}\\nFILE: {rel}\\n{prefix}"
+                            f"license={record.license}\nFILE: {rel}\n{prefix}"
                         ),
                         "language_target": continuation,
                         "operation": "NOOP",
@@ -133,7 +133,7 @@ def materialize_repository_code(
                             "content_sha256": content_hash,
                         },
                     }
-                    handle.write(json.dumps(row, sort_keys=True) + "\\n")
+                    handle.write(json.dumps(row, sort_keys=True) + "\n")
                     counts[split] += 1
                     produced += 1
             repo_counts[record.name] = produced
