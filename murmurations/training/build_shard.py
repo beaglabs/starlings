@@ -149,6 +149,9 @@ def build_shard(
         eligible_catalog_path=paths["eligible_catalog"],
         sandbox_runner=sandbox,
         concurrency=int(config.get("probe_concurrency", 1)),
+        local_checkout_concurrency=int(
+            config.get("probe_local_checkout_concurrency", 1)
+        ),
     )
     _log(
         f"probe complete eligible={probe['eligible']}/{probe['repositories']} "
