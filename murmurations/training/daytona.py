@@ -7,6 +7,7 @@ import hashlib
 import os
 from pathlib import Path
 import shlex
+import time
 from typing import Any, Sequence
 
 from murmurations.training.environments.repositories import RepoRecord
@@ -51,6 +52,10 @@ class DaytonaCorpusRunner:
         self._sandbox_params_factory = sandbox_params_factory
         self._snapshot_info: dict[str, Any] | None = None
 
+    @staticmethod
+    def _log(message: str) -> None:
+        print(f"[daytona] {message}", flush=True)
+
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "DaytonaCorpusRunner":
         if str(config.get("runtime", "")) != "daytona":
@@ -84,6 +89,7 @@ class DaytonaCorpusRunner:
                 raise RuntimeError("DAYTONA_API_KEY is required for serious corpus generation")
             if not os.environ.get("DAYTONA_API_URL"):
                 raise RuntimeError("DAYTONA_API_URL is required for serious corpus generation")
+        self._log(f"validate snapshot={self.snapshot}")
         snapshot = self.client.snapshot.get(self.snapshot)
         self._snapshot_info = {
             "id": getattr(snapshot, "id", None),
@@ -93,6 +99,10 @@ class DaytonaCorpusRunner:
             "memory_gib": getattr(snapshot, "mem", None),
             "disk_gib": getattr(snapshot, "disk", None),
         }
+        self._log(
+            f"snapshot ready name={self._snapshot_info['name']} "
+            f"state={self._snapshot_info['state']}"
+        )
 
     def provenance(self) -> dict[str, Any]:
         return {
@@ -170,9 +180,23 @@ class DaytonaWorkspace:
                 "TZ": "UTC",
             },
         )
+        self.runner._log(
+            f"create repo={self.repository.name} snapshot={self.runner.snapshot}"
+        )
+        started = time.monotonic()
         self.sandbox = self.runner.client.create(params, timeout=120)
+        self.runner._log(
+            f"created repo={self.repository.name} sandbox={self.sandbox.id} "
+            f"seconds={time.monotonic() - started:.1f}"
+        )
         try:
+            self.runner._log(
+                f"clone repo={self.repository.name} url={self.repository.url}"
+            )
             self.sandbox.git.clone(url=self.repository.url, path=self.remote_root)
+            self.runner._log(
+                f"checkout repo={self.repository.name} commit={self.repository.commit}"
+            )
             checkout = self.sandbox.process.exec(
                 shlex.join(["git", "checkout", "--detach", self.repository.commit])
                 + " 2>&1",
@@ -185,13 +209,23 @@ class DaytonaWorkspace:
                     f"{(checkout.result or '')[-4000:]}"
                 )
 
-            for argv in detect_prepare_commands(self.plan_root):
+            prepare_commands = detect_prepare_commands(self.plan_root)
+            for index, argv in enumerate(prepare_commands, start=1):
                 portable = self._portable_argv(argv)
                 command = shlex.join(portable) + " 2>&1"
+                self.runner._log(
+                    f"prepare repo={self.repository.name} sandbox={self.sandbox.id} "
+                    f"step={index}/{len(prepare_commands)} argv={shlex.join(portable)}"
+                )
+                started = time.monotonic()
                 result = self.sandbox.process.exec(
                     command,
                     cwd=self.remote_root,
                     timeout=max(300, self.runner.ttl_minutes * 60 // 2),
+                )
+                self.runner._log(
+                    f"prepare done repo={self.repository.name} step={index}/{len(prepare_commands)} "
+                    f"exit={result.exit_code} seconds={time.monotonic() - started:.1f}"
                 )
                 if int(result.exit_code) != 0:
                     raise RuntimeError(
@@ -200,7 +234,13 @@ class DaytonaWorkspace:
                     )
 
             if self.runner.block_network_after_prepare:
+                self.runner._log(
+                    f"block network repo={self.repository.name} sandbox={self.sandbox.id}"
+                )
                 self.sandbox.update_network_settings(network_block_all=True)
+            self.runner._log(
+                f"workspace ready repo={self.repository.name} sandbox={self.sandbox.id}"
+            )
             return self
         except Exception:
             try:
@@ -213,6 +253,9 @@ class DaytonaWorkspace:
     def __exit__(self, exc_type, exc, tb) -> bool:
         if self.sandbox is not None:
             try:
+                self.runner._log(
+                    f"delete repo={self.repository.name} sandbox={self.sandbox.id}"
+                )
                 self.runner.client.delete(self.sandbox, timeout=60, wait=True)
             except Exception:
                 if exc_type is None:
@@ -284,10 +327,19 @@ class DaytonaWorkspace:
         if not portable:
             raise ValueError("cannot execute empty argv")
         command = shlex.join(portable) + " 2>&1"
+        self.runner._log(
+            f"exec repo={self.repository.name} sandbox={self.sandbox.id} "
+            f"timeout={timeout_seconds}s argv={shlex.join(portable)}"
+        )
+        started = time.monotonic()
         response = self.sandbox.process.exec(
             command,
             cwd=self.remote_root,
             timeout=timeout_seconds,
+        )
+        self.runner._log(
+            f"exec done repo={self.repository.name} sandbox={self.sandbox.id} "
+            f"exit={response.exit_code} seconds={time.monotonic() - started:.1f}"
         )
         output = (response.result or "")[-8000:]
         exit_code = int(response.exit_code)
