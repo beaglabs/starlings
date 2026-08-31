@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import json
 from pathlib import Path
 import shutil
@@ -195,16 +195,27 @@ def _write_outputs(
         target = Path(report_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp = target.with_name(target.name + ".tmp")
-        tmp.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        tmp.replace(target)
+        try:
+            tmp.write_text(
+                json.dumps(report, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            tmp.replace(target)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
     if eligible_catalog_path is not None:
         target = Path(eligible_catalog_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp = target.with_name(target.name + ".tmp")
-        with tmp.open("w", encoding="utf-8") as handle:
-            for record in eligible_records:
-                handle.write(json.dumps(_record_dict(record), sort_keys=True) + "\n")
-        tmp.replace(target)
+        try:
+            with tmp.open("w", encoding="utf-8") as handle:
+                for record in eligible_records:
+                    handle.write(json.dumps(_record_dict(record), sort_keys=True) + "\n")
+            tmp.replace(target)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
     return report
 
 
@@ -255,33 +266,50 @@ def probe_repository_catalog(
             flush=True,
         )
         checkout_gate = threading.BoundedSemaphore(local_checkout_concurrency)
-        with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            futures = {
-                executor.submit(
-                    _probe_one,
-                    record,
-                    cache_dir=cache_dir,
-                    timeout_seconds=timeout_seconds,
-                    probe_signature=probe_signature,
-                    sandbox_runner=sandbox_runner,
-                    prune_checkouts=prune_checkouts,
-                    checkout_gate=checkout_gate,
-                ): record
-                for record in pending
-            }
-            for future in as_completed(futures):
-                record = futures[future]
-                row = future.result()
-                key = (record.name, record.commit)
-                completed[key] = row
-                _append_checkpoint(checkpoint, row)
-                results = _ordered_results(catalog, completed)
-                eligible_count = sum(1 for item in results if item.get("passed"))
-                print(
-                    f"[probe] checkpoint completed={len(results)}/{len(catalog.records)} "
-                    f"eligible={eligible_count}",
-                    flush=True,
-                )
+        executor = ThreadPoolExecutor(max_workers=concurrency)
+        pending_iter = iter(pending)
+        futures: dict[Any, RepoRecord] = {}
+
+        def submit_one() -> bool:
+            try:
+                record = next(pending_iter)
+            except StopIteration:
+                return False
+            future = executor.submit(
+                _probe_one,
+                record,
+                cache_dir=cache_dir,
+                timeout_seconds=timeout_seconds,
+                probe_signature=probe_signature,
+                sandbox_runner=sandbox_runner,
+                prune_checkouts=prune_checkouts,
+                checkout_gate=checkout_gate,
+            )
+            futures[future] = record
+            return True
+
+        for _ in range(min(concurrency, len(pending))):
+            submit_one()
+
+        try:
+            while futures:
+                done, _ = wait(futures, return_when=FIRST_COMPLETED)
+                for future in done:
+                    record = futures.pop(future)
+                    row = future.result()
+                    key = (record.name, record.commit)
+                    completed[key] = row
+                    _append_checkpoint(checkpoint, row)
+                    results = _ordered_results(catalog, completed)
+                    eligible_count = sum(1 for item in results if item.get("passed"))
+                    print(
+                        f"[probe] checkpoint completed={len(results)}/{len(catalog.records)} "
+                        f"eligible={eligible_count}",
+                        flush=True,
+                    )
+                    submit_one()
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
 
     results = _ordered_results(catalog, completed)
     report = _write_outputs(
