@@ -25,6 +25,7 @@ RUN apt-get update \
         python3-venv \
         rustc \
         xz-utils \
+    && python3 -m pip install --break-system-packages --no-cache-dir "pip>=25.1,<27" \
     && arch="$(dpkg --print-architecture)" \
     && case "$arch" in \
          amd64) zig_arch="x86_64" ;; \
