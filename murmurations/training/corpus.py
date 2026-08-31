@@ -99,6 +99,7 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
     mutation_kinds: Counter[str] = Counter()
     fingerprints: Counter[str] = Counter()
     terminal_argv_events = 0
+    sandbox_backends: Counter[str] = Counter()
 
     for episode in iter_jsonl(path):
         episodes += 1
@@ -123,6 +124,7 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
             argv = environment.get("argv")
             if isinstance(argv, list) and argv:
                 terminal_argv_events += 1
+                sandbox_backends[str(environment.get("sandbox_backend") or "unknown")] += 1
 
     duplicates = {
         fingerprint: count
@@ -141,6 +143,7 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
         "unique_mutations": len(fingerprints),
         "duplicate_mutations": duplicates,
         "terminal_argv_events": terminal_argv_events,
+        "sandbox_backends": dict(sorted(sandbox_backends.items())),
     }
 
 
@@ -214,6 +217,14 @@ def validate_corpus_shard(
         >= int(quality.get("min_terminal_operator_types", 0)),
         "terminal_argv_events": int(episodes["terminal_argv_events"])
         >= int(quality.get("min_terminal_argv_events", 0)),
+        "terminal_execution_is_zviz": (
+            not bool(quality.get("require_zviz_terminal_execution", False))
+            or (
+                int(episodes["terminal_argv_events"]) > 0
+                and int(episodes["sandbox_backends"].get("zviz", 0))
+                == int(episodes["terminal_argv_events"])
+            )
+        ),
     }
 
     return {
@@ -231,6 +242,7 @@ def validate_corpus_shard(
             "events": terminal_operator_events,
             "types_present": terminal_operator_types,
             "argv_events": int(episodes["terminal_argv_events"]),
+            "sandbox_backends": episodes["sandbox_backends"],
         },
         "rows": {
             "train": train,
