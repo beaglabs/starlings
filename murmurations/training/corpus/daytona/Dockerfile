@@ -26,6 +26,7 @@ RUN apt-get update \
         rustc \
         xz-utils \
     && python3 -m pip install --break-system-packages --no-cache-dir "pip>=25.1,<27" \
+    && npm install -g pnpm@10.34.5 \
     && arch="$(dpkg --print-architecture)" \
     && case "$arch" in \
          amd64) zig_arch="x86_64" ;; \
