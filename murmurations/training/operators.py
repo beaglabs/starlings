@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tomllib
 from typing import Any, Sequence
 
 from murmurations.training.operator_retrieval import OperatorDescriptor, OperatorRegistry
@@ -40,11 +41,82 @@ def _pyproject_uses_pytest(root: Path) -> bool:
     return "[tool.pytest.ini_options]" in text
 
 
+def _load_toml(path: Path) -> dict[str, Any]:
+    try:
+        return tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return {}
+
+
+def _cargo_primary_package(root: Path) -> str | None:
+    manifest = root / "Cargo.toml"
+    if not manifest.exists():
+        return None
+    payload = _load_toml(manifest)
+    if payload.get("package"):
+        return None
+    workspace = payload.get("workspace") or {}
+    members = workspace.get("members") or []
+    repo_name = root.name
+    for member in members:
+        if not isinstance(member, str) or "*" in member:
+            continue
+        member_manifest = root / member / "Cargo.toml"
+        member_payload = _load_toml(member_manifest)
+        package = member_payload.get("package") or {}
+        name = package.get("name")
+        if name == repo_name:
+            return str(name)
+    return None
+
+
+def _maven_primary_module(root: Path) -> str | None:
+    pom = root / "pom.xml"
+    if not pom.exists():
+        return None
+    try:
+        import xml.etree.ElementTree as ET
+        tree = ET.parse(pom)
+    except (OSError, ET.ParseError):
+        return None
+    element = tree.getroot()
+    namespace = element.tag.split("}")[0].strip("{") if "}" in element.tag else ""
+    prefix = f"{{{namespace}}}" if namespace else ""
+    modules = element.find(f"{prefix}modules")
+    if modules is None:
+        return None
+    candidates: list[str] = []
+    for child in modules.findall(f"{prefix}module"):
+        value = (child.text or "").strip()
+        if not value:
+            continue
+        leaf = Path(value).name.lower()
+        if leaf.startswith(("test-", "tests-", "benchmark", "benchmarks", "example", "examples")):
+            continue
+        if (root / value / "pom.xml").exists():
+            candidates.append(value)
+    return candidates[0] if candidates else None
+
+
+def _has_python_test_dependency_group(root: Path) -> bool:
+    path = root / "pyproject.toml"
+    if not path.exists():
+        return False
+    payload = _load_toml(path)
+    groups = payload.get("dependency-groups") or {}
+    return isinstance(groups, dict) and "test" in groups
+
+
 def detect_test_command(root: str | Path) -> list[str] | None:
     root = Path(root)
     if (root / "build.zig").exists():
         return ["zig", "build", "test"]
+    if (root / "CMakeLists.txt").exists():
+        return ["cmake", "--build", ".murmurations-build", "--target", "test", "--parallel", "2"]
     if (root / "Cargo.toml").exists():
+        primary = _cargo_primary_package(root)
+        if primary:
+            return ["cargo", "test", "-p", primary, "--quiet"]
         return ["cargo", "test", "--quiet"]
     if (root / "go.mod").exists():
         return ["go", "test", "./..."]
@@ -58,6 +130,9 @@ def detect_test_command(root: str | Path) -> list[str] | None:
     if (root / "mvnw").exists():
         return ["./mvnw", "test", "-q"]
     if (root / "pom.xml").exists():
+        primary = _maven_primary_module(root)
+        if primary:
+            return ["mvn", "test", "-q", "--projects", primary, "--also-make"]
         return ["mvn", "test", "-q"]
     package = root / "package.json"
     if package.exists():
@@ -74,6 +149,12 @@ def detect_prepare_commands(root: str | Path) -> list[list[str]]:
     """Return deterministic dependency-preparation commands for a pinned repo."""
     root = Path(root)
     commands: list[list[str]] = []
+
+    if (root / "CMakeLists.txt").exists():
+        commands.append([
+            "cmake", "-S", ".", "-B", ".murmurations-build", "-G", "Ninja",
+            "-DBUILD_TESTING=ON", "-DCMAKE_BUILD_TYPE=Debug",
+        ])
 
     if (root / "Cargo.toml").exists():
         command = ["cargo", "fetch"]
@@ -95,6 +176,11 @@ def detect_prepare_commands(root: str | Path) -> list[list[str]]:
         commands.append(["python3", "-m", "pip", "install", "--break-system-packages", "-r", "requirements.txt"])
     if (root / "pyproject.toml").exists():
         commands.append(["python3", "-m", "pip", "install", "--break-system-packages", "-e", "."])
+        if _has_python_test_dependency_group(root):
+            commands.append([
+                "python3", "-m", "pip", "install", "--break-system-packages",
+                "--group", "test",
+            ])
 
     if (root / "gradlew").exists():
         commands.append(["./gradlew", "dependencies", "--no-daemon"])
@@ -110,6 +196,8 @@ def detect_check_command(root: str | Path) -> list[str] | None:
     root = Path(root)
     if (root / "build.zig").exists():
         return ["zig", "build"]
+    if (root / "CMakeLists.txt").exists():
+        return ["cmake", "--build", ".murmurations-build", "--parallel", "2"]
     if (root / "Cargo.toml").exists():
         return ["cargo", "check", "--quiet"]
     if (root / "go.mod").exists():
