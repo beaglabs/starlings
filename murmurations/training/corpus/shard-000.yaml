@@ -8,8 +8,9 @@ seed: 17001
 eval_fraction: 0.10
 
 # First serious shard: 60 repos x 20 requested unique mutations.
-# A successful episode materializes to ~11 protocol decision rows, so the
-# target is roughly 13k trajectory rows plus the static code/document stream.
+# A successful episode materializes to ~11-17 protocol decision rows depending
+# on terminal evidence availability. The shard gate requires >=10k trajectory
+# rows plus the static code/document stream.
 episodes_per_repo: 20
 generation_retries: 4
 timeout_seconds: 180
