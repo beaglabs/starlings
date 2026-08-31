@@ -31,6 +31,7 @@ def probe_repository_catalog(
     timeout_seconds: int = 180,
     report_path: str | Path | None = None,
     eligible_catalog_path: str | Path | None = None,
+    sandbox_runner=None,
 ) -> dict[str, Any]:
     catalog = RepoCatalog.from_jsonl(catalog_path)
     results: list[dict[str, Any]] = []
@@ -49,13 +50,19 @@ def probe_repository_catalog(
             command = detect_test_command(root)
             if command is None:
                 raise RuntimeError("no supported repository test command detected")
-            result = verify(root, command, timeout_seconds)
+            result = (
+                verify(root, command, timeout_seconds)
+                if sandbox_runner is None
+                else sandbox_runner.verify(root, command, timeout_seconds)
+            )
             row.update(
                 {
                     "command": command,
                     "passed": result.passed,
                     "exit_code": result.exit_code,
                     "output_tail": result.output[-2000:],
+                    "backend": result.backend,
+                    "sandbox_argv": list(result.sandbox_argv),
                 }
             )
             if result.passed:
