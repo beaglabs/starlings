@@ -218,6 +218,8 @@ def make_oracle_bootstrap_episode(
             "argv": list(mutation.broken_verification.argv),
             "sandbox_backend": mutation.broken_verification.backend,
             "sandbox_argv": list(mutation.broken_verification.sandbox_argv),
+            "sandbox_id": mutation.broken_verification.sandbox_id,
+            "sandbox_snapshot": mutation.broken_verification.sandbox_snapshot,
         },
     )
 
@@ -274,6 +276,8 @@ def make_oracle_bootstrap_episode(
                 "argv": result.metadata.get("argv"),
                 "sandbox_backend": result.metadata.get("sandbox_backend"),
                 "sandbox_argv": result.metadata.get("sandbox_argv"),
+                "sandbox_id": result.metadata.get("sandbox_id"),
+                "sandbox_snapshot": result.metadata.get("sandbox_snapshot"),
             },
         )
         result_text = (
@@ -361,6 +365,8 @@ def make_oracle_bootstrap_episode(
             "argv": repaired.metadata.get("argv"),
             "sandbox_backend": repaired.metadata.get("sandbox_backend"),
             "sandbox_argv": repaired.metadata.get("sandbox_argv"),
+            "sandbox_id": repaired.metadata.get("sandbox_id"),
+            "sandbox_snapshot": repaired.metadata.get("sandbox_snapshot"),
         },
     )
 
