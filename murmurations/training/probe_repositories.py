@@ -8,7 +8,6 @@ from pathlib import Path
 import time
 from typing import Any
 
-from murmurations.training.environments.mutations import verify
 from murmurations.training.environments.repositories import RepoCatalog, RepoRecord, checkout_repository
 from murmurations.training.operators import detect_test_command
 
@@ -37,6 +36,9 @@ def probe_repository_catalog(
     results: list[dict[str, Any]] = []
     eligible: list[RepoRecord] = []
 
+    if sandbox_runner is None:
+        raise RuntimeError("repository eligibility probing requires Daytona")
+
     for record in catalog.records:
         started = time.monotonic()
         row: dict[str, Any] = {
@@ -50,11 +52,8 @@ def probe_repository_catalog(
             command = detect_test_command(root)
             if command is None:
                 raise RuntimeError("no supported repository test command detected")
-            result = (
-                verify(root, command, timeout_seconds)
-                if sandbox_runner is None
-                else sandbox_runner.verify(root, command, timeout_seconds)
-            )
+            with sandbox_runner.workspace(root, record, plan_root=root) as remote:
+                result = remote.verify(root, command, timeout_seconds)
             row.update(
                 {
                     "command": command,
@@ -63,6 +62,8 @@ def probe_repository_catalog(
                     "output_tail": result.output[-2000:],
                     "backend": result.backend,
                     "sandbox_argv": list(result.sandbox_argv),
+                    "sandbox_id": result.sandbox_id,
+                    "sandbox_snapshot": result.sandbox_snapshot,
                 }
             )
             if result.passed:
