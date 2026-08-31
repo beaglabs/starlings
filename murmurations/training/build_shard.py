@@ -20,6 +20,12 @@ from murmurations.training.probe_repositories import probe_repository_catalog
 from murmurations.training.daytona import DaytonaCorpusRunner
 
 
+
+
+def _log(message: str) -> None:
+    print(f"[corpus] {message}", flush=True)
+
+
 def _write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -89,6 +95,7 @@ def build_shard(
     if not sandbox_config:
         raise RuntimeError("serious corpus generation requires a Daytona sandbox config")
     sandbox = DaytonaCorpusRunner.from_config(sandbox_config)
+    _log("validating Daytona snapshot")
     sandbox.validate_environment()
     catalog_path = _catalog_for_run(
         config["catalog"], output_dir, limit_repositories
@@ -114,6 +121,7 @@ def build_shard(
     }
 
     # Static code/document windows use every pinned permissive repository.
+    _log("materializing static code/document windows")
     code = materialize_repository_code(
         catalog_path,
         paths["code_train"],
@@ -124,9 +132,12 @@ def build_shard(
         max_files_per_repo=int(config.get("max_files_per_repo", 2000)),
     )
 
+    _log(f"static materialization complete rows={code.get('rows', 'unknown')}")
+
     # Dynamic episodes use only repositories whose clean verifier passes inside
     # the pinned Daytona corpus snapshot. Repository code is never executed on
     # the corpus-generation host.
+    _log("probing clean-verifier eligibility in Daytona")
     probe = probe_repository_catalog(
         catalog_path,
         cache_dir=cache_dir,
@@ -134,6 +145,10 @@ def build_shard(
         report_path=paths["probe_report"],
         eligible_catalog_path=paths["eligible_catalog"],
         sandbox_runner=sandbox,
+    )
+    _log(
+        f"probe complete eligible={probe['eligible']}/{probe['repositories']} "
+        f"rate={probe['eligibility_rate']:.3f}"
     )
     if int(probe["eligible"]) == 0:
         raise RuntimeError("no repositories passed the clean-verifier eligibility probe")
@@ -150,6 +165,10 @@ def build_shard(
         if bool(enrichment.get("enabled", False))
         else 0
     )
+    _log(
+        f"generating repair trajectories repos={probe['eligible']} "
+        f"episodes_per_repo={requested_per_repo}"
+    )
     generation = generate_trajectory_corpus(
         paths["eligible_catalog"],
         paths["episodes"],
@@ -165,10 +184,15 @@ def build_shard(
         max_enrichment_calls=max_enrichment_calls,
         sandbox_runner=sandbox,
     )
+    _log(
+        f"trajectory generation complete written={generation['written']} "
+        f"requested={generation['requested']} rate={generation['success_rate']:.3f}"
+    )
     generation["eligible_repositories"] = int(probe["eligible"])
     generation["catalog_repositories"] = int(probe["repositories"])
     _write_json(paths["generation_report"], generation)
 
+    _log("materializing trajectory rows")
     trajectory = materialize_file(
         paths["episodes"],
         paths["trajectory_train"],
@@ -214,6 +238,7 @@ def build_shard(
         if "min_terminal_argv_events" in quality:
             quality["min_terminal_argv_events"] = 1
 
+    _log("running shard QA")
     qa = validate_corpus_shard(
         catalog_path=catalog_path,
         episodes_path=paths["episodes"],
@@ -225,6 +250,7 @@ def build_shard(
         quality=quality,
     )
     _write_json(paths["qa_report"], qa)
+    _log(f"QA complete passed={qa['passed']}")
 
     manifest = {
         "version": 1,
