@@ -235,21 +235,9 @@ def detect_prepare_commands(root: str | Path) -> list[list[str]]:
             if test_group is not None:
                 commands.append([python, "-m", "pip", "install", "--group", test_group])
 
-    if (root / "gradlew").exists():
-        commands.append(["./gradlew", "dependencies", "--no-daemon"])
-    elif (root / "mvnw").exists():
-        command = ["./mvnw", "-q", "-DskipTests", "dependency:go-offline"]
-        primary = _maven_primary_module(root)
-        if primary:
-            command.extend(["--projects", primary, "--also-make"])
-        commands.append(command)
-    elif (root / "pom.xml").exists():
-        command = ["mvn", "-q", "-DskipTests", "dependency:go-offline"]
-        primary = _maven_primary_module(root)
-        if primary:
-            command.extend(["--projects", primary, "--also-make"])
-        commands.append(command)
-
+    # Maven and Gradle resolve dependencies as part of their verifier commands.
+    # A separate dependency-only pass duplicates work and can fail on projects
+    # whose build extensions compute platform-specific dependency coordinates.
     return commands
 
 
