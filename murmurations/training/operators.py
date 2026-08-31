@@ -116,7 +116,21 @@ def detect_test_command(root: str | Path) -> list[str] | None:
     if (root / "build.zig").exists():
         return ["zig", "build", "test"]
     if (root / "CMakeLists.txt").exists():
-        return ["cmake", "--build", ".murmurations-build", "--target", "test", "--parallel", "2"]
+        return [
+            "ctest",
+            "--build-and-test",
+            ".",
+            ".murmurations-build",
+            "--build-generator",
+            "Ninja",
+            "--build-noclean",
+            "--build-options",
+            "-DBUILD_TESTING=ON",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "--test-command",
+            "ctest",
+            "--output-on-failure",
+        ]
     if (root / "Cargo.toml").exists():
         primary = _cargo_primary_package(root)
         if primary:
