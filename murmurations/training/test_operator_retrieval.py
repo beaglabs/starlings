@@ -66,6 +66,43 @@ class OperatorRetrievalTests(unittest.TestCase):
                 operator_ref="repo.tests",
             )
 
+    def test_terminal_backed_package_type_and_docs_operators(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text(
+                "[project]\n"
+                "name = \"fixture-package\"\n"
+                "version = \"1.0.0\"\n"
+                "dependencies = [\"example>=1\"]\n",
+                encoding="utf-8",
+            )
+            (root / "sample.py").write_text(
+                "def add(a, b):\n"
+                "    \"\"\"Add two values.\"\"\"\n"
+                "    return a + b\n",
+                encoding="utf-8",
+            )
+
+            registry = default_operator_registry(root)
+            names = {descriptor.name for descriptor in registry.descriptors()}
+            self.assertIn("type.check", names)
+            self.assertIn("package.metadata", names)
+            self.assertIn("docs.lookup", names)
+
+            package = execute_operator("package.metadata", "", root)
+            self.assertTrue(package.ok, package.text)
+            self.assertIn("fixture-package", package.text)
+            self.assertTrue(package.metadata.get("argv"))
+
+            checked = execute_operator("type.check", "", root)
+            self.assertTrue(checked.ok, checked.text)
+            self.assertTrue(checked.metadata.get("argv"))
+
+            docs = execute_operator("docs.lookup", "sample", root)
+            self.assertTrue(docs.ok, docs.text)
+            self.assertIn("add", docs.text)
+            self.assertTrue(docs.metadata.get("argv"))
+
     def test_python_ast_and_search_adapters_execute(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
