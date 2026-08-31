@@ -6,8 +6,6 @@ import argparse
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import json
 from pathlib import Path
-import shutil
-import threading
 import time
 from typing import Any
 
@@ -15,8 +13,7 @@ import yaml
 
 from murmurations.training.daytona import DaytonaCorpusRunner
 
-from murmurations.training.environments.repositories import RepoCatalog, RepoRecord, checkout_repository
-from murmurations.training.operators import detect_prepare_commands, detect_test_command
+from murmurations.training.environments.repositories import RepoCatalog, RepoRecord
 
 
 PROBE_PLAN_VERSION = 2
@@ -90,15 +87,11 @@ def _ordered_results(
 def _probe_one(
     record: RepoRecord,
     *,
-    cache_dir: str | Path,
     timeout_seconds: int,
     probe_signature: str,
     sandbox_runner,
-    prune_checkouts: bool,
-    checkout_gate,
 ) -> dict[str, Any]:
     started = time.monotonic()
-    root: Path | None = None
     row: dict[str, Any] = {
         "probe_signature": probe_signature,
         "repository": record.name,
@@ -107,30 +100,21 @@ def _probe_one(
         "commit": record.commit,
     }
     try:
-        with checkout_gate:
-            root = checkout_repository(record, cache_dir)
-            command = detect_test_command(root)
-            if command is None:
-                raise RuntimeError("no supported repository test command detected")
-            prepare_commands = detect_prepare_commands(root)
-            remote_root = root
-            if prune_checkouts and record.path is None:
-                shutil.rmtree(root, ignore_errors=True)
-                root = None
-
         worker_runner = (
             sandbox_runner.worker()
             if hasattr(sandbox_runner, "worker")
             else sandbox_runner
         )
         with worker_runner.workspace(
-            remote_root,
+            None,
             record,
-            plan_root=remote_root,
-            prepare_commands=prepare_commands,
             sync_local_changes=False,
+            remote_plan=True,
         ) as remote:
-            result = remote.verify(remote_root, command, timeout_seconds)
+            command = list(remote.planned_test_command or ())
+            if not command:
+                raise RuntimeError("no supported repository test command detected")
+            result = remote.verify(None, command, timeout_seconds)
         row.update(
             {
                 "command": command,
@@ -147,15 +131,7 @@ def _probe_one(
             row["error"] = "clean verifier failed"
     except Exception as exc:
         row.update({"passed": False, "error": str(exc)})
-    finally:
-        row["seconds"] = round(time.monotonic() - started, 3)
-        if (
-            prune_checkouts
-            and record.path is None
-            and root is not None
-            and root.exists()
-        ):
-            shutil.rmtree(root, ignore_errors=True)
+    row["seconds"] = round(time.monotonic() - started, 3)
     return row
 
 
@@ -229,7 +205,6 @@ def probe_repository_catalog(
     sandbox_runner=None,
     prune_checkouts: bool = False,
     concurrency: int = 1,
-    local_checkout_concurrency: int = 1,
 ) -> dict[str, Any]:
     catalog = RepoCatalog.from_jsonl(catalog_path)
     provenance = sandbox_runner.provenance() if sandbox_runner is not None else {}
@@ -246,8 +221,6 @@ def probe_repository_catalog(
         raise RuntimeError("repository eligibility probing requires Daytona")
     if concurrency <= 0:
         raise ValueError("probe concurrency must be positive")
-    if local_checkout_concurrency <= 0:
-        raise ValueError("probe local checkout concurrency must be positive")
 
     if completed:
         print(
@@ -265,7 +238,6 @@ def probe_repository_catalog(
             f"[probe] launching pending={len(pending)} concurrency={concurrency}",
             flush=True,
         )
-        checkout_gate = threading.BoundedSemaphore(local_checkout_concurrency)
         executor = ThreadPoolExecutor(max_workers=concurrency)
         pending_iter = iter(pending)
         futures: dict[Any, RepoRecord] = {}
@@ -278,12 +250,9 @@ def probe_repository_catalog(
             future = executor.submit(
                 _probe_one,
                 record,
-                cache_dir=cache_dir,
                 timeout_seconds=timeout_seconds,
                 probe_signature=probe_signature,
                 sandbox_runner=sandbox_runner,
-                prune_checkouts=prune_checkouts,
-                checkout_gate=checkout_gate,
             )
             futures[future] = record
             return True
@@ -330,7 +299,6 @@ def main() -> None:
     parser.add_argument("--report", required=True)
     parser.add_argument("--eligible-catalog", required=True)
     parser.add_argument("--concurrency", type=int, default=None)
-    parser.add_argument("--local-checkout-concurrency", type=int, default=None)
     args = parser.parse_args()
     config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
     sandbox = DaytonaCorpusRunner.from_config(dict(config.get("sandbox") or {}))
@@ -339,11 +307,6 @@ def main() -> None:
         args.concurrency
         if args.concurrency is not None
         else int(config.get("probe_concurrency", 1))
-    )
-    local_checkout_concurrency = (
-        args.local_checkout_concurrency
-        if args.local_checkout_concurrency is not None
-        else int(config.get("probe_local_checkout_concurrency", 1))
     )
     report = probe_repository_catalog(
         args.catalog,
@@ -354,7 +317,6 @@ def main() -> None:
         sandbox_runner=sandbox,
         prune_checkouts=True,
         concurrency=concurrency,
-        local_checkout_concurrency=local_checkout_concurrency,
     )
     print(
         json.dumps(
