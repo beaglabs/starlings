@@ -19,6 +19,14 @@ code_chunk_chars: 6000
 max_files_per_repo: 1500
 max_context_chars: 12000
 
+terminal_evidence:
+  enabled: true
+  max_calls_per_episode: 2
+  operators:
+    - type.check
+    - package.metadata
+    - docs.lookup
+
 quality:
   min_catalog_repositories: 50
   min_eligible_repositories: 20
@@ -27,3 +35,5 @@ quality:
   min_unique_mutations: 500
   min_code_rows: 10000
   min_trajectory_rows: 10000
+  min_terminal_operator_events: 200
+  min_terminal_operator_types: 2
