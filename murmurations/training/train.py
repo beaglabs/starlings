@@ -41,14 +41,28 @@ def scheduler_lambda(step: int, *, warmup: int, total: int) -> float:
     return 0.5 * (1.0 + math.cos(math.pi * min(1.0, progress)))
 
 
+def _assert_finite_losses(losses: dict[str, torch.Tensor], *, where: str) -> None:
+    bad = [
+        name
+        for name, value in losses.items()
+        if not bool(torch.isfinite(value.detach()).all().item())
+    ]
+    if bad:
+        raise FloatingPointError(
+            f"non-finite Murmurations loss at {where}: {', '.join(sorted(bad))}"
+        )
+
+
 def evaluate(accelerator: Accelerator, model, loader, loss_weights) -> float:
     model.eval()
     total = torch.tensor(0.0, device=accelerator.device)
     count = torch.tensor(0.0, device=accelerator.device)
     with torch.no_grad():
-        for batch in loader:
+        for batch_index, batch in enumerate(loader):
             outputs = model(batch["input_ids"], batch["control_positions"])
-            loss = compute_losses(outputs, batch, loss_weights)["total"]
+            losses = compute_losses(outputs, batch, loss_weights)
+            _assert_finite_losses(losses, where=f"eval batch {batch_index}")
+            loss = losses["total"]
             total += loss.detach()
             count += 1
     total, count = accelerator.reduce(total, reduction="sum"), accelerator.reduce(count, reduction="sum")
@@ -130,6 +144,7 @@ def main() -> None:
             with accelerator.accumulate(model):
                 outputs = model(batch["input_ids"], batch["control_positions"])
                 losses = compute_losses(outputs, batch, loss_weights)
+                _assert_finite_losses(losses, where=f"train step {step + 1}")
                 accelerator.backward(losses["total"])
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(model.parameters(), float(train_cfg.get("max_grad_norm", 1.0)))
