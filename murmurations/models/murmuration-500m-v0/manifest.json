@@ -2,11 +2,11 @@
   "architecture": "MurmurationModel",
   "checkpoint": null,
   "format": "safetensors-or-accelerate-state",
-  "parameter_count": 503413791,
+  "parameter_count": 504455199,
   "protocol_version": 2,
   "status": "untrained",
   "tokenizer_vocab_size": 32768,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "weights": [],
-  "notes": "The model points into retrieved operator descriptors and existing context. The host assigns canonical BLAKE3 identities after structured action decoding."
+  "notes": "The structured argument head uses a 128-dimensional learned bilinear pointer space over context hidden states. The model points into retrieved operator descriptors and existing context; the host assigns canonical BLAKE3 identities after structured action decoding."
 }
