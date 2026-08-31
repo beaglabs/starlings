@@ -34,6 +34,44 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(output["parent_count_logits"].shape, (2, 5))
         self.assertEqual(output["confidence"].shape, (2,))
 
+    def test_pointer_heads_exclude_control_token_itself(self) -> None:
+        cfg = MurmurationConfig(
+            vocab_size=64,
+            d_model=32,
+            n_layers=1,
+            n_heads=4,
+            d_ff=64,
+            max_seq_len=16,
+            max_parents=4,
+        )
+        model = MurmurationModel(cfg)
+        tokens = torch.randint(0, cfg.vocab_size, (2, 8))
+        control = torch.tensor([5, 6])
+        output = model(tokens, control)
+
+        minimum = torch.finfo(output["operator_pointer_logits"].dtype).min
+        for batch_index, control_index in enumerate(control.tolist()):
+            self.assertEqual(
+                float(output["argument_start_logits"][batch_index, control_index].item()),
+                float(minimum),
+            )
+            self.assertEqual(
+                float(output["argument_end_logits"][batch_index, control_index].item()),
+                float(minimum),
+            )
+            self.assertEqual(
+                float(output["operator_pointer_logits"][batch_index, control_index].item()),
+                float(minimum),
+            )
+            self.assertTrue(
+                torch.all(
+                    output["parent_pointer_logits"][
+                        batch_index, :, control_index
+                    ]
+                    == minimum
+                ).item()
+            )
+
     def test_default_architecture_parameter_count_is_stable(self) -> None:
         cfg = MurmurationConfig()
         embedding = cfg.vocab_size * cfg.d_model
