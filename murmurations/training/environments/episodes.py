@@ -174,6 +174,7 @@ def make_oracle_bootstrap_episode(
     episode_seed: int = 17,
     enrichment_operators: tuple[str, ...] = (),
     max_enrichment_calls: int = 0,
+    command_runner=None,
 ) -> Episode:
     """Create an explicitly labeled bootstrap demonstration from known mutation truth."""
 
@@ -214,6 +215,9 @@ def make_oracle_bootstrap_episode(
         environment={
             "exit_code": mutation.broken_verification.exit_code,
             "output": mutation.broken_verification.output[-8000:],
+            "argv": list(mutation.broken_verification.argv),
+            "sandbox_backend": mutation.broken_verification.backend,
+            "sandbox_argv": list(mutation.broken_verification.sandbox_argv),
         },
     )
 
@@ -253,6 +257,7 @@ def make_oracle_bootstrap_episode(
             execution_argument,
             root,
             timeout_seconds=timeout_seconds,
+            command_runner=command_runner,
         )
         execute_event = builder.add(
             Operation.EXECUTE,
@@ -332,7 +337,13 @@ def make_oracle_bootstrap_episode(
     )
 
     repair_mutation(root, mutation)
-    repaired = execute_operator("repo.tests", "", root, timeout_seconds=timeout_seconds)
+    repaired = execute_operator(
+        "repo.tests",
+        "",
+        root,
+        timeout_seconds=timeout_seconds,
+        command_runner=command_runner,
+    )
     verify_repair = builder.add(
         Operation.EXECUTE,
         ArgumentKind.ACTION,
@@ -341,7 +352,14 @@ def make_oracle_bootstrap_episode(
         retrieval_query=ask_verify,
         operator_ref="repo.tests",
         parents=(proposal,),
-        environment={"ok": repaired.ok, "exit_code": repaired.exit_code, "output": repaired.text[-8000:]},
+        environment={
+            "ok": repaired.ok,
+            "exit_code": repaired.exit_code,
+            "output": repaired.text[-8000:],
+            "argv": repaired.metadata.get("argv"),
+            "sandbox_backend": repaired.metadata.get("sandbox_backend"),
+            "sandbox_argv": repaired.metadata.get("sandbox_argv"),
+        },
     )
 
     result_text = (repaired.text or (
