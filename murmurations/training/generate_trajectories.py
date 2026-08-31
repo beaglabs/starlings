@@ -9,6 +9,10 @@ from pathlib import Path
 import re
 from typing import Any
 
+import yaml
+
+from murmurations.training.daytona import DaytonaCorpusRunner
+
 from murmurations.training.environments.episodes import make_oracle_bootstrap_episode
 from murmurations.training.environments.mutations import inject_verified_mutation
 from murmurations.training.environments.repositories import RepoCatalog, RepoRecord, checkout_repository
@@ -197,6 +201,7 @@ def generate_trajectory_corpus(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
     parser.add_argument("--catalog", required=True, help="JSONL repository catalog")
     parser.add_argument("--output", required=True, help="Episode JSONL output")
     parser.add_argument("--cache-dir", default=".cache/murmurations/repos")
@@ -213,6 +218,9 @@ def main() -> None:
     parser.add_argument("--max-enrichment-calls", type=int, default=0)
     args = parser.parse_args()
 
+    config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
+    sandbox = DaytonaCorpusRunner.from_config(dict(config.get("sandbox") or {}))
+    sandbox.validate_environment()
     report = generate_trajectory_corpus(
         args.catalog,
         args.output,
@@ -227,6 +235,7 @@ def main() -> None:
         failures_path=args.failures,
         enrichment_operators=tuple(args.enrichment_operator),
         max_enrichment_calls=args.max_enrichment_calls,
+        sandbox_runner=sandbox,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     if report["written"] == 0:
