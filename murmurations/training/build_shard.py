@@ -137,6 +137,13 @@ def build_shard(
         if episodes_per_repo is not None
         else int(config.get("episodes_per_repo", 20))
     )
+    enrichment = dict(config.get("terminal_evidence") or {})
+    enrichment_operators = tuple(enrichment.get("operators") or ())
+    max_enrichment_calls = (
+        int(enrichment.get("max_calls_per_episode", 0))
+        if bool(enrichment.get("enabled", False))
+        else 0
+    )
     generation = generate_trajectory_corpus(
         paths["eligible_catalog"],
         paths["episodes"],
@@ -148,6 +155,8 @@ def build_shard(
         max_attempts=int(config.get("max_mutation_attempts", 64)),
         generation_retries=int(config.get("generation_retries", 4)),
         failures_path=paths["failures"],
+        enrichment_operators=enrichment_operators,
+        max_enrichment_calls=max_enrichment_calls,
     )
     generation["eligible_repositories"] = int(probe["eligible"])
     generation["catalog_repositories"] = int(probe["repositories"])
@@ -191,6 +200,10 @@ def build_shard(
         )
         quality["min_code_rows"] = 1
         quality["min_trajectory_rows"] = max(1, expected_successes)
+        if "min_terminal_operator_events" in quality:
+            quality["min_terminal_operator_events"] = 1
+        if "min_terminal_operator_types" in quality:
+            quality["min_terminal_operator_types"] = 1
 
     qa = validate_corpus_shard(
         catalog_path=catalog_path,
