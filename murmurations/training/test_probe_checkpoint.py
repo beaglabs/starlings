@@ -100,7 +100,15 @@ class ProbeCheckpointTests(unittest.TestCase):
             def worker(self):
                 return self
 
-            def workspace(self, _root, record, *, plan_root=None):
+            def workspace(
+                self,
+                _root,
+                record,
+                *,
+                plan_root=None,
+                prepare_commands=None,
+                sync_local_changes=True,
+            ):
                 runner = self
 
                 class Workspace:
