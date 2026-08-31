@@ -16,7 +16,6 @@ generation_retries: 4
 timeout_seconds: 180
 max_mutation_attempts: 48
 probe_concurrency: 8
-probe_local_checkout_concurrency: 1
 
 code_chunk_chars: 6000
 max_files_per_repo: 1500
