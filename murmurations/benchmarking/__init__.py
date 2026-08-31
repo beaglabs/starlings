@@ -1,0 +1,1 @@
+"""Benchmarking recipe for Murmurations."""

@@ -1,0 +1,12 @@
+{
+  "architecture": "MurmurationModel",
+  "checkpoint": null,
+  "format": "safetensors-or-accelerate-state",
+  "parameter_count": 503410717,
+  "protocol_version": 1,
+  "status": "untrained",
+  "tokenizer_vocab_size": 32768,
+  "version": "0.1.0",
+  "weights": [],
+  "notes": "Identities are assigned by canonical host encoding after structured action decoding; the model does not predict BLAKE3 digests."
+}
