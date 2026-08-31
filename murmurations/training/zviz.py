@@ -16,10 +16,6 @@ import tempfile
 from typing import Any, Sequence
 
 
-_EXIT_PATTERNS = (
-    re.compile(r"Container exited with code (\d+)"),
-    re.compile(r"exit_code:\s*(\d+)"),
-)
 _ZVIZ_LOG = re.compile(r"^\[\d+\] \[(?:DEBUG|INFO|WARN|ERROR)\] ")
 
 
@@ -161,10 +157,16 @@ class ZVizCorpusRunner:
         }
 
     @staticmethod
-    def _workload_exit_code(output: str) -> int | None:
-        matches: list[int] = []
-        for pattern in _EXIT_PATTERNS:
-            matches.extend(int(match.group(1)) for match in pattern.finditer(output))
+    def _workload_exit_code(output: str, container_id: str) -> int | None:
+        pattern = re.compile(
+            rf"^\[\d+\] \[INFO\] Container {re.escape(container_id)} "
+            r"started \(pid: .*?, exit_code: (\d+)\)$"
+        )
+        matches = [
+            int(match.group(1))
+            for line in output.splitlines()
+            if (match := pattern.match(line))
+        ]
         return matches[-1] if matches else None
 
     @staticmethod
@@ -267,7 +269,7 @@ class ZVizCorpusRunner:
                     except (OSError, subprocess.TimeoutExpired):
                         pass
 
-                workload_code = self._workload_exit_code(raw_output)
+                workload_code = self._workload_exit_code(raw_output, container_id)
                 output = self._clean_output(raw_output)
                 if workload_code is None:
                     runtime_note = (
