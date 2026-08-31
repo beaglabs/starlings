@@ -163,10 +163,7 @@ class DaytonaWorkspace:
             ttl_minutes=self.runner.ttl_minutes,
             ephemeral=True,
             public=False,
-            labels={
-                "murmurations": "corpus",
-                "repository": self.repository.name,
-            },
+            labels={"murmurations": "corpus"},
             env_vars={
                 "CI": "1",
                 "PYTHONDONTWRITEBYTECODE": "1",
