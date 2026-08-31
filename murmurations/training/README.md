@@ -42,6 +42,45 @@ python -m murmurations.benchmarking.run replay \
   --trace data/murmurations/smoke-episodes.jsonl
 ```
 
+## First serious corpus shard
+
+The committed shard-000 recipe uses 60 public repositories pinned to exact
+commits across Python, Rust, Go, JavaScript/TypeScript, C/C++, Zig, and Java.
+Static code/document windows use the full catalog. Dynamic repair episodes use
+only repositories whose clean verifier passes the local eligibility probe.
+
+Run a small stratified probe/build first:
+
+```sh
+python3 -m murmurations.training.build_shard \
+  --config murmurations/training/corpus/shard-000.yaml \
+  --limit-repositories 7 \
+  --episodes-per-repo 2
+```
+
+The 7-repo subset is selected across languages rather than taking the first
+seven catalog rows. Inspect:
+
+```sh
+cat data/murmurations/shard-000/repo-probe.json
+cat data/murmurations/shard-000/qa-report.json
+```
+
+If the probe passes, remove the probe output and build the full shard:
+
+```sh
+rm -rf data/murmurations/shard-000
+
+python3 -m murmurations.training.build_shard \
+  --config murmurations/training/corpus/shard-000.yaml
+```
+
+The full recipe requests 20 unique verifier-caught mutations per eligible repo,
+with hard QA gates for pinned permissive provenance, clean-verifier eligibility,
+generation yield, unique mutations, static/trajectory row counts, repository
+train/eval isolation, duplicate mutation rejection, and exact static-window
+deduplication. Generated files include SHA-256 digests in the QA report.
+
 ## Repository catalog
 
 Large-scale generation uses a JSONL catalog of **pinned, permissively licensed**
