@@ -81,6 +81,22 @@ generation yield, unique mutations, static/trajectory row counts, repository
 train/eval isolation, duplicate mutation rejection, and exact static-window
 deduplication. Generated files include SHA-256 digests in the QA report.
 
+### Terminal-backed evidence in shard-000
+
+Dynamic trajectories can retrieve semantic operators backed by local argv-only
+terminal commands:
+
+- `type.check` — compiler/type-checker diagnostics;
+- `package.metadata` — local manifest/package/dependency metadata;
+- `docs.lookup` — local language/package documentation where a safe local CLI
+  is available.
+
+The exact argv, exit code, and output are recorded as episode evidence. The
+model sees the stable semantic operator descriptor rather than a shell string.
+Up to two of these operators are selected in seeded variable order per episode,
+so the recipe does not encode a mandatory terminal-tool workflow. Shard QA
+requires actual terminal-operator coverage.
+
 ## Repository catalog
 
 Large-scale generation uses a JSONL catalog of **pinned, permissively licensed**
