@@ -1,4 +1,4 @@
-version: 0.2.0
+version: 0.3.0
 architecture: murmurations.training.model.MurmurationModel
 model:
   vocab_size: 32768
@@ -11,6 +11,7 @@ model:
   rms_eps: 0.000001
   dropout: 0.0
   max_parents: 4
+  pointer_dim: 128
 heads:
   language: tied_token_projection
   operation:
@@ -18,4 +19,6 @@ heads:
   argument:
     kinds: [NONE, TEXT, VARIABLE, INVARIANT, CLAIM, EVIDENCE, AGENT, CAPABILITY, ARTIFACT, ACTION, SYMBOL, SCALAR, OPERATOR]
     direct_parent_limit: 4
+    pointer_projection_dim: 128
+    pointer_scoring: shared_key_low_rank_bilinear
     outputs: [kind, span_start, span_end, operator_pointer, parent_pointers, parent_count, confidence]
