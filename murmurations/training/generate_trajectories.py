@@ -59,6 +59,7 @@ def generate_trajectory_corpus(
     failures_path: str | Path | None = None,
     enrichment_operators: tuple[str, ...] = (),
     max_enrichment_calls: int = 0,
+    sandbox_runner=None,
 ) -> dict[str, Any]:
     catalog = RepoCatalog.from_jsonl(catalog_path)
     schedule = _schedule(
@@ -122,6 +123,9 @@ def generate_trajectory_corpus(
                             timeout_seconds=timeout_seconds,
                             max_attempts=max_attempts,
                             excluded_fingerprints=used[repo.name],
+                            verify_runner=(
+                                None if sandbox_runner is None else sandbox_runner.verify
+                            ),
                         )
                         registry = default_operator_registry(workspace)
                         episode = make_oracle_bootstrap_episode(
@@ -133,6 +137,9 @@ def generate_trajectory_corpus(
                             episode_seed=attempt_seed,
                             enrichment_operators=enrichment_operators,
                             max_enrichment_calls=max_enrichment_calls,
+                            command_runner=(
+                                None if sandbox_runner is None else sandbox_runner.run_operator
+                            ),
                         )
                         record = episode.record()
                         record["mutation"]["fingerprint"] = canonical_id(
