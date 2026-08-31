@@ -152,7 +152,11 @@ class ArgumentHead(nn.Module):
         parent_pointer = torch.einsum("bpd,btd->bpt", parent_query, hidden) * self.scale
 
         positions = torch.arange(hidden.shape[1], device=hidden.device)[None, :]
-        invalid = positions > control_positions[:, None]
+        # Pointer targets must come from context strictly before <ACT>.
+        # The pointer query is derived from the <ACT> hidden state, so allowing
+        # the control position itself creates a pathological self-similarity
+        # attractor that can dominate every pointer distribution.
+        invalid = positions >= control_positions[:, None]
         minimum = torch.finfo(span_start.dtype).min
         span_start = span_start.masked_fill(invalid, minimum)
         span_end = span_end.masked_fill(invalid, minimum)
