@@ -70,6 +70,42 @@ def detect_test_command(root: str | Path) -> list[str] | None:
     return None
 
 
+def detect_prepare_commands(root: str | Path) -> list[list[str]]:
+    """Return deterministic dependency-preparation commands for a pinned repo."""
+    root = Path(root)
+    commands: list[list[str]] = []
+
+    if (root / "Cargo.toml").exists():
+        command = ["cargo", "fetch"]
+        if (root / "Cargo.lock").exists():
+            command.append("--locked")
+        commands.append(command)
+
+    if (root / "go.mod").exists():
+        commands.append(["go", "mod", "download"])
+
+    package = root / "package.json"
+    if package.exists():
+        if (root / "package-lock.json").exists() or (root / "npm-shrinkwrap.json").exists():
+            commands.append(["npm", "ci", "--no-audit", "--no-fund"])
+        else:
+            commands.append(["npm", "install", "--no-audit", "--no-fund"])
+
+    if (root / "requirements.txt").exists():
+        commands.append(["python3", "-m", "pip", "install", "-r", "requirements.txt"])
+    if (root / "pyproject.toml").exists():
+        commands.append(["python3", "-m", "pip", "install", "-e", "."])
+
+    if (root / "gradlew").exists():
+        commands.append(["./gradlew", "dependencies", "--no-daemon"])
+    elif (root / "mvnw").exists():
+        commands.append(["./mvnw", "-q", "-DskipTests", "dependency:go-offline"])
+    elif (root / "pom.xml").exists():
+        commands.append(["mvn", "-q", "-DskipTests", "dependency:go-offline"])
+
+    return commands
+
+
 def detect_check_command(root: str | Path) -> list[str] | None:
     root = Path(root)
     if (root / "build.zig").exists():
@@ -87,8 +123,15 @@ def detect_check_command(root: str | Path) -> list[str] | None:
     if (root / "pom.xml").exists():
         return ["mvn", "test", "-q", "-DskipTests"]
     package = root / "package.json"
-    if package.exists() and (root / "node_modules" / ".bin" / "tsc").exists():
-        return [str(root / "node_modules" / ".bin" / "tsc"), "--noEmit"]
+    if package.exists():
+        try:
+            payload = json.loads(package.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+        dependencies = dict(payload.get("dependencies") or {})
+        dependencies.update(payload.get("devDependencies") or {})
+        if "typescript" in dependencies or (root / "tsconfig.json").exists():
+            return ["npx", "--no-install", "tsc", "--noEmit"]
     return None
 
 
