@@ -109,8 +109,7 @@ def verify(root: str | Path, argv: Sequence[str], timeout_seconds: int) -> Verif
         return Verification(False, None, f"command not found: {argv[0]}")
     except subprocess.TimeoutExpired as exc:
         output = exc.stdout if isinstance(exc.stdout, str) else ""
-        return Verification(False, None, (output or "")[-8000:] + "
-[TIMEOUT]")
+        return Verification(False, None, (output or "")[-8000:] + "\\n[TIMEOUT]")
     return Verification(completed.returncode == 0, completed.returncode, completed.stdout[-8000:])
 
 
