@@ -57,6 +57,8 @@ def generate_trajectory_corpus(
     max_attempts: int = 64,
     generation_retries: int = 4,
     failures_path: str | Path | None = None,
+    enrichment_operators: tuple[str, ...] = (),
+    max_enrichment_calls: int = 0,
 ) -> dict[str, Any]:
     catalog = RepoCatalog.from_jsonl(catalog_path)
     schedule = _schedule(
@@ -128,6 +130,9 @@ def generate_trajectory_corpus(
                             mutation,
                             registry,
                             timeout_seconds=timeout_seconds,
+                            episode_seed=attempt_seed,
+                            enrichment_operators=enrichment_operators,
+                            max_enrichment_calls=max_enrichment_calls,
                         )
                         record = episode.record()
                         record["mutation"]["fingerprint"] = canonical_id(
@@ -194,6 +199,8 @@ def main() -> None:
     parser.add_argument("--max-attempts", type=int, default=64)
     parser.add_argument("--generation-retries", type=int, default=4)
     parser.add_argument("--failures", default=None)
+    parser.add_argument("--enrichment-operator", action="append", default=[])
+    parser.add_argument("--max-enrichment-calls", type=int, default=0)
     args = parser.parse_args()
 
     report = generate_trajectory_corpus(
@@ -208,6 +215,8 @@ def main() -> None:
         max_attempts=args.max_attempts,
         generation_retries=args.generation_retries,
         failures_path=args.failures,
+        enrichment_operators=tuple(args.enrichment_operator),
+        max_enrichment_calls=args.max_enrichment_calls,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     if report["written"] == 0:
