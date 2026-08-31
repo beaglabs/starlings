@@ -58,7 +58,7 @@ class CorpusTests(unittest.TestCase):
         two = mutation_fingerprint("src/a.py", 4, "eq_to_ne", "a == b", "a != b")
         self.assertNotEqual(one, two)
 
-    def test_qa_rejects_non_zviz_terminal_execution(self) -> None:
+    def test_qa_rejects_non_daytona_terminal_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             catalog = root / "catalog.jsonl"
@@ -158,11 +158,11 @@ class CorpusTests(unittest.TestCase):
                     "min_code_rows": 1,
                     "min_trajectory_rows": 1,
                     "min_terminal_argv_events": 1,
-                    "require_zviz_terminal_execution": True,
+                    "require_daytona_terminal_execution": True,
                 },
             )
             self.assertFalse(report["passed"])
-            self.assertFalse(report["gates"]["terminal_execution_is_zviz"])
+            self.assertFalse(report["gates"]["terminal_execution_is_daytona"])
             self.assertEqual(
                 report["terminal_evidence"]["sandbox_backends"],
                 {"local": 1},
