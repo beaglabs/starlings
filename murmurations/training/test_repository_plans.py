@@ -80,12 +80,15 @@ class RepositoryPlanTests(unittest.TestCase):
 
             commands = detect_prepare_commands(root)
             self.assertIn(
+                ["python3", "-m", "venv", ".murmurations-venv"],
+                commands,
+            )
+            self.assertIn(
                 [
-                    "python3",
+                    ".murmurations-venv/bin/python3",
                     "-m",
                     "pip",
                     "install",
-                    "--break-system-packages",
                     "-e",
                     ".",
                 ],
@@ -93,11 +96,10 @@ class RepositoryPlanTests(unittest.TestCase):
             )
             self.assertIn(
                 [
-                    "python3",
+                    ".murmurations-venv/bin/python3",
                     "-m",
                     "pip",
                     "install",
-                    "--break-system-packages",
                     "--group",
                     "test",
                 ],
@@ -184,6 +186,43 @@ class RepositoryPlanTests(unittest.TestCase):
                 ],
                 detect_prepare_commands(root),
             )
+
+    def test_python_plural_tests_group_is_selected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text(
+                "[project]\nname='example'\nversion='0.1.0'\n"
+                "[dependency-groups]\ntests=['pytest']\n",
+                encoding="utf-8",
+            )
+            (root / "tests").mkdir()
+            (root / "tests" / "test_example.py").write_text("def test_ok(): pass\n", encoding="utf-8")
+            commands = detect_prepare_commands(root)
+            self.assertIn(
+                [
+                    ".murmurations-venv/bin/python3", "-m", "pip", "install",
+                    "--group", "tests",
+                ],
+                commands,
+            )
+            self.assertEqual(
+                detect_test_command(root),
+                [".murmurations-venv/bin/python3", "-m", "pytest", "-q"],
+            )
+
+    def test_pnpm_workspace_uses_pnpm(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "package.json").write_text(
+                '{"name":"workspace","packageManager":"pnpm@10.34.5","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+            (root / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+            self.assertIn(
+                ["pnpm", "install", "--frozen-lockfile"],
+                detect_prepare_commands(root),
+            )
+            self.assertEqual(detect_test_command(root), ["pnpm", "test"])
 
 
 if __name__ == "__main__":
