@@ -1,18 +1,76 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
 from murmurations.training.environments.episodes import make_oracle_bootstrap_episode
-from murmurations.training.environments.mutations import inject_verified_mutation
+from murmurations.training.environments.mutations import inject_verified_mutation, verify
 from murmurations.training.environments.repositories import RepoRecord
 from murmurations.training.materialize import materialize_episode
 from murmurations.training.operators import default_operator_registry
 
 
 class DataPipelineTests(unittest.TestCase):
+    def test_verify_does_not_reuse_stale_python_bytecode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "tests").mkdir()
+            (root / "src" / "__init__.py").write_text("", encoding="utf-8")
+            source = root / "src" / "logic.py"
+            source.write_text(
+                "def same(a, b):\n    return a == b\n", encoding="utf-8"
+            )
+            (root / "tests" / "test_logic.py").write_text(
+                "import unittest\n"
+                "from src.logic import same\n\n"
+                "class T(unittest.TestCase):\n"
+                "    def test_same(self):\n"
+                "        self.assertTrue(same(3, 3))\n"
+                "        self.assertFalse(same(3, 4))\n",
+                encoding="utf-8",
+            )
+            verifier = [
+                sys.executable,
+                "-m",
+                "unittest",
+                "discover",
+                "-s",
+                "tests",
+            ]
+
+            original_stat = source.stat()
+            warmed = subprocess.run(
+                verifier,
+                cwd=root,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(warmed.returncode, 0, warmed.stdout)
+            self.assertTrue(any(root.rglob("*.pyc")))
+
+            # Same-size mutation + restored mtime makes timestamp/size pyc
+            # validation accept the stale clean bytecode unless verify purges it.
+            source.write_text(
+                "def same(a, b):\n    return a != b\n", encoding="utf-8"
+            )
+            os.utime(
+                source,
+                ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+            )
+
+            broken = verify(root, verifier, timeout_seconds=20)
+            self.assertFalse(broken.passed)
+            self.assertFalse(any(root.rglob("*.pyc")))
+
     def test_verified_mutation_episode_materializes_operator_supervision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "clean"
