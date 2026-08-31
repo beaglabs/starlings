@@ -102,13 +102,36 @@ def _maven_primary_module(root: Path) -> str | None:
     return candidates[0] if candidates else None
 
 
-def _has_python_test_dependency_group(root: Path) -> bool:
+def _python_test_dependency_group(root: Path) -> str | None:
     path = root / "pyproject.toml"
     if not path.exists():
-        return False
+        return None
     payload = _load_toml(path)
     groups = payload.get("dependency-groups") or {}
-    return isinstance(groups, dict) and "test" in groups
+    if not isinstance(groups, dict):
+        return None
+    for name in ("tests", "test"):
+        if name in groups:
+            return name
+    return None
+
+
+def _python_bin(root: Path) -> str:
+    return ".murmurations-venv/bin/python3"
+
+
+def _package_manager(root: Path) -> str:
+    package = root / "package.json"
+    if not package.exists():
+        return "npm"
+    try:
+        payload = json.loads(package.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+    declared = str(payload.get("packageManager") or "")
+    if declared.startswith("pnpm@") or (root / "pnpm-lock.yaml").exists():
+        return "pnpm"
+    return "npm"
 
 
 def detect_test_command(root: str | Path) -> list[str] | None:
@@ -138,11 +161,13 @@ def detect_test_command(root: str | Path) -> list[str] | None:
         return ["cargo", "test", "--quiet"]
     if (root / "go.mod").exists():
         return ["go", "test", "./..."]
-    if (root / "pytest.ini").exists() or _pyproject_uses_pytest(root):
-        return [sys.executable, "-m", "pytest", "-q"]
+    if (root / "pytest.ini").exists() or _pyproject_uses_pytest(root) or (root / "conftest.py").exists():
+        return [_python_bin(root), "-m", "pytest", "-q"]
     tests_dir = root / "tests"
     if tests_dir.is_dir() and any(tests_dir.rglob("test*.py")):
-        return [sys.executable, "-m", "unittest", "discover", "-s", "tests"]
+        if (tests_dir / "conftest.py").exists() or (root / "pyproject.toml").exists():
+            return [_python_bin(root), "-m", "pytest", "-q"]
+        return [_python_bin(root), "-m", "unittest", "discover", "-s", "tests"]
     if (root / "gradlew").exists():
         return ["./gradlew", "test", "--no-daemon"]
     if (root / "mvnw").exists():
@@ -159,7 +184,8 @@ def detect_test_command(root: str | Path) -> list[str] | None:
         except (OSError, json.JSONDecodeError):
             payload = {}
         if "test" in payload.get("scripts", {}):
-            return ["npm", "test", "--silent"]
+            manager = _package_manager(root)
+            return [manager, "test"] if manager == "pnpm" else ["npm", "test", "--silent"]
     return None
 
 
@@ -167,6 +193,9 @@ def detect_prepare_commands(root: str | Path) -> list[list[str]]:
     """Return deterministic dependency-preparation commands for a pinned repo."""
     root = Path(root)
     commands: list[list[str]] = []
+
+    if (root / ".gitmodules").exists():
+        commands.append(["git", "submodule", "update", "--init", "--recursive"])
 
     if (root / "CMakeLists.txt").exists():
         commands.append([
@@ -185,20 +214,26 @@ def detect_prepare_commands(root: str | Path) -> list[list[str]]:
 
     package = root / "package.json"
     if package.exists():
-        if (root / "package-lock.json").exists() or (root / "npm-shrinkwrap.json").exists():
+        manager = _package_manager(root)
+        if manager == "pnpm":
+            commands.append(["pnpm", "install", "--frozen-lockfile"])
+        elif (root / "package-lock.json").exists() or (root / "npm-shrinkwrap.json").exists():
             commands.append(["npm", "ci", "--no-audit", "--no-fund"])
         else:
             commands.append(["npm", "install", "--no-audit", "--no-fund"])
 
-    if (root / "requirements.txt").exists():
-        commands.append(["python3", "-m", "pip", "install", "--break-system-packages", "-r", "requirements.txt"])
-    if (root / "pyproject.toml").exists():
-        commands.append(["python3", "-m", "pip", "install", "--break-system-packages", "-e", "."])
-        if _has_python_test_dependency_group(root):
-            commands.append([
-                "python3", "-m", "pip", "install", "--break-system-packages",
-                "--group", "test",
-            ])
+    is_python_repo = (root / "pyproject.toml").exists() or (root / "requirements.txt").exists()
+    if is_python_repo:
+        python = _python_bin(root)
+        commands.append(["python3", "-m", "venv", ".murmurations-venv"])
+        commands.append([python, "-m", "pip", "install", "--upgrade", "pip"])
+        if (root / "requirements.txt").exists():
+            commands.append([python, "-m", "pip", "install", "-r", "requirements.txt"])
+        if (root / "pyproject.toml").exists():
+            commands.append([python, "-m", "pip", "install", "-e", "."])
+            test_group = _python_test_dependency_group(root)
+            if test_group is not None:
+                commands.append([python, "-m", "pip", "install", "--group", test_group])
 
     if (root / "gradlew").exists():
         commands.append(["./gradlew", "dependencies", "--no-daemon"])
@@ -229,7 +264,7 @@ def detect_check_command(root: str | Path) -> list[str] | None:
     if (root / "go.mod").exists():
         return ["go", "test", "-run", "^$", "./..."]
     if (root / "pyproject.toml").exists() or any(root.glob("*.py")):
-        return [sys.executable, "-m", "compileall", "-q", "."]
+        return [_python_bin(root), "-m", "compileall", "-q", "."]
     if (root / "gradlew").exists():
         return ["./gradlew", "classes", "--no-daemon"]
     if (root / "mvnw").exists():
@@ -275,7 +310,7 @@ def detect_package_metadata_command(root: str | Path) -> list[str] | None:
             "('name','version','requires-python','dependencies','optional-dependencies') "
             "if k in p},sort_keys=True))"
         )
-        return [sys.executable, "-c", script]
+        return [_python_bin(root), "-c", script]
     if (root / "pom.xml").exists():
         script = (
             "import json,xml.etree.ElementTree as E,pathlib;"
@@ -313,7 +348,7 @@ def detect_docs_lookup_command(root: str | Path, query: str) -> list[str] | None
     if backend == "go":
         return ["go", "doc", query]
     if backend == "python":
-        return [sys.executable, "-m", "pydoc", query]
+        return [_python_bin(root), "-m", "pydoc", query]
     return None
 
 
