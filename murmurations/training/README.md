@@ -47,9 +47,17 @@ python -m murmurations.benchmarking.run replay \
 The committed shard-000 recipe uses 60 public repositories pinned to exact
 commits across Python, Rust, Go, JavaScript/TypeScript, C/C++, Zig, and Java.
 Static code/document windows use the full catalog. Dynamic repair episodes use
-only repositories whose clean verifier passes the local eligibility probe.
+only repositories whose clean verifier passes inside the pinned ZViz corpus
+environment. Serious corpus generation never executes repository commands on
+the host.
 
-Run a small stratified probe/build first:
+On a Linux corpus builder, prepare the pinned ZViz runtime/rootfs once:
+
+```sh
+bash murmurations/training/corpus/zviz/prepare.sh
+```
+
+Then run the small stratified probe/build:
 
 ```sh
 python3 -m murmurations.training.build_shard \
@@ -83,8 +91,8 @@ deduplication. Generated files include SHA-256 digests in the QA report.
 
 ### Terminal-backed evidence in shard-000
 
-Dynamic trajectories can retrieve semantic operators backed by local argv-only
-terminal commands:
+Dynamic trajectories can retrieve semantic operators backed by argv-only
+commands executed inside ZViz:
 
 - `type.check` — compiler/type-checker diagnostics;
 - `package.metadata` — local manifest/package/dependency metadata;
@@ -127,26 +135,25 @@ The split is repository-level, not row-level.
 
 ## Generate dynamic repair trajectories
 
-```sh
-python -m murmurations.training.generate_trajectories \
-  --catalog data/murmurations/repos.jsonl \
-  --output data/murmurations/episodes.jsonl \
-  --episodes 1000
-```
+Dynamic repair trajectories are a serious-corpus operation and are generated
+through `build_shard`, which requires the configured ZViz sandbox. The
+low-level trajectory generator is not a host-execution path.
 
 For each successful episode the generator:
 
 1. checks out/selects a pinned clean repository;
-2. runs its supported verifier and requires a pass;
-3. copies it into an isolated work directory;
+2. runs its supported verifier inside ZViz and requires a pass;
+3. copies it into an isolated work directory mounted at `/tmp/work`;
 4. tries controlled source mutations;
-5. keeps only a mutation that changes the verifier to failure;
+5. keeps only a mutation that changes the sandboxed verifier to failure;
 6. exposes repo/search/AST/docs/check/test operators through OR;
-7. records an attributable bootstrap repair trajectory;
-8. applies the known inverse mutation;
-9. reruns the verifier and records the result.
+7. executes terminal-backed operators inside the same ZViz environment;
+8. records an attributable bootstrap repair trajectory;
+9. applies the known inverse mutation;
+10. reruns the sandboxed verifier and records the result.
 
-Failed mutation attempts are discarded instead of mislabeled.
+Failed mutation attempts are discarded instead of mislabeled. Shard QA also
+fails if terminal argv evidence is not attributed to ZViz.
 
 ## Materialize trajectories
 
