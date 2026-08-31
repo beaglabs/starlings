@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
 import torch
 from torch.utils.data import Dataset
@@ -22,22 +22,10 @@ def _find_subsequence(haystack: Sequence[int], needle: Sequence[int]) -> tuple[i
 
 
 class ProtocolDataset(Dataset[dict[str, Any]]):
-    """Expected JSONL shape:
-
-    {
-      "context": "... canonical refs such as b3:... appear here ...",
-      "language_target": "optional prose/code continuation",
-      "operation": "QUERY",
-      "argument": {
-        "kind": "SYMBOL",
-        "text": "execution.Runner.step",
-        "parents": ["b3:<64 hex>"],
-        "confidence_permille": 920
-      }
-    }
+    """Trajectory JSONL with language + structured action supervision.
 
     Argument and parent labels are pointer-supervised against exact strings in
-    the context. The model never predicts content hashes directly.
+    the context. The model never predicts BLAKE3 identities directly.
     """
 
     def __init__(self, path: str | Path, tokenizer: Any, max_seq_len: int) -> None:
@@ -60,6 +48,10 @@ class ProtocolDataset(Dataset[dict[str, Any]]):
         context = str(row["context"])
         language_target = str(row.get("language_target", ""))
         context_ids = self.tokenizer.encode(context, add_special_tokens=False)
+        act_ids = self.tokenizer.encode("<ACT>", add_special_tokens=False)
+        if len(act_ids) != 1:
+            raise ValueError("<ACT> must be a single special token")
+        control_ids = context_ids + act_ids
         target_ids = self.tokenizer.encode(language_target, add_special_tokens=False)
 
         if not context_ids:
@@ -68,8 +60,8 @@ class ProtocolDataset(Dataset[dict[str, Any]]):
         if eos is None:
             raise ValueError("tokenizer must define eos_token_id")
 
-        input_ids = context_ids + target_ids + [eos]
-        language_labels = [-100] * len(context_ids) + target_ids + [eos]
+        input_ids = control_ids + target_ids + [eos]
+        language_labels = [-100] * len(control_ids) + target_ids + [eos]
         if len(input_ids) > self.max_seq_len:
             raise ValueError(
                 f"example length {len(input_ids)} exceeds max_seq_len={self.max_seq_len}; "
@@ -106,7 +98,7 @@ class ProtocolDataset(Dataset[dict[str, Any]]):
         return {
             "input_ids": input_ids,
             "language_labels": language_labels,
-            "control_position": len(context_ids) - 1,
+            "control_position": len(control_ids) - 1,
             "operation_label": int(operation),
             "argument_kind_label": int(kind),
             "argument_start_label": start_label,
@@ -134,31 +126,13 @@ class ProtocolCollator:
         return {
             "input_ids": torch.tensor(input_ids, dtype=torch.long),
             "language_labels": torch.tensor(language_labels, dtype=torch.long),
-            "control_positions": torch.tensor(
-                [row["control_position"] for row in rows], dtype=torch.long
-            ),
-            "operation_labels": torch.tensor(
-                [row["operation_label"] for row in rows], dtype=torch.long
-            ),
-            "argument_kind_labels": torch.tensor(
-                [row["argument_kind_label"] for row in rows], dtype=torch.long
-            ),
-            "argument_start_labels": torch.tensor(
-                [row["argument_start_label"] for row in rows], dtype=torch.long
-            ),
-            "argument_end_labels": torch.tensor(
-                [row["argument_end_label"] for row in rows], dtype=torch.long
-            ),
-            "parent_pointer_labels": torch.tensor(
-                [row["parent_pointer_labels"] for row in rows], dtype=torch.long
-            ),
-            "parent_count_labels": torch.tensor(
-                [row["parent_count_label"] for row in rows], dtype=torch.long
-            ),
-            "confidence_targets": torch.tensor(
-                [row["confidence_target"] for row in rows], dtype=torch.float32
-            ),
-            "confidence_mask": torch.tensor(
-                [row["confidence_mask"] for row in rows], dtype=torch.bool
-            ),
+            "control_positions": torch.tensor([row["control_position"] for row in rows], dtype=torch.long),
+            "operation_labels": torch.tensor([row["operation_label"] for row in rows], dtype=torch.long),
+            "argument_kind_labels": torch.tensor([row["argument_kind_label"] for row in rows], dtype=torch.long),
+            "argument_start_labels": torch.tensor([row["argument_start_label"] for row in rows], dtype=torch.long),
+            "argument_end_labels": torch.tensor([row["argument_end_label"] for row in rows], dtype=torch.long),
+            "parent_pointer_labels": torch.tensor([row["parent_pointer_labels"] for row in rows], dtype=torch.long),
+            "parent_count_labels": torch.tensor([row["parent_count_label"] for row in rows], dtype=torch.long),
+            "confidence_targets": torch.tensor([row["confidence_target"] for row in rows], dtype=torch.float32),
+            "confidence_mask": torch.tensor([row["confidence_mask"] for row in rows], dtype=torch.bool),
         }

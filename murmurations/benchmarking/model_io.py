@@ -22,9 +22,9 @@ def load_model(checkpoint: str | Path, device: torch.device) -> MurmurationModel
     safe = root / "model.safetensors"
     binary = root / "pytorch_model.bin"
     if safe.exists():
-        state = load_file(str(safe), device=str(device))
+        state = load_file(str(safe), device="cpu")
     elif binary.exists():
-        state = torch.load(binary, map_location=device, weights_only=True)
+        state = torch.load(binary, map_location="cpu", weights_only=True)
     else:
         raise FileNotFoundError(
             "benchmark loader expects a consolidated model.safetensors or pytorch_model.bin; "

@@ -82,6 +82,7 @@ class ActionFrame:
 
 
 CONTROL_TOKENS: Sequence[str] = (
+    "<ACT>",
     "<OBSERVE>",
     "<QUERY>",
     "<CLAIM>",

@@ -1,20 +1,19 @@
 # Benchmarking
 
-Murmurations benchmarks two things separately:
+Murmurations keeps three evaluation layers separate:
 
 1. **model competence** — language/code likelihood, operation selection, typed
    argument grounding, parent pointers, and confidence calibration;
 2. **protocol integrity** — canonical identity, direct-parent closure,
-   Merkle-DAG acyclicity, and replayability.
+   Merkle-DAG acyclicity, and replayability;
+3. **environment outcome** — whether an emitted candidate actually compiles,
+   passes tests, survives hidden/property tests, or meets another executable
+   success condition.
 
-Keeping them separate prevents a good language model from hiding broken
-provenance semantics, or perfect provenance plumbing from being mistaken for
-reasoning quality.
+Keeping these separate prevents fluent language from hiding broken provenance,
+or perfect provenance plumbing from being mistaken for task competence.
 
 ## Head benchmark
-
-Consolidate a distributed checkpoint to a single `model.safetensors` (or
-`pytorch_model.bin`) and keep its `model_config.json` beside it:
 
 ```sh
 python -m murmurations.benchmarking.run heads \\
@@ -24,36 +23,49 @@ python -m murmurations.benchmarking.run heads \\
   --device auto
 ```
 
-Reported metrics include:
-
-- language NLL/perplexity;
-- operation accuracy;
-- argument-kind accuracy;
-- argument start/end pointer accuracy;
-- parent-pointer and parent-count accuracy;
-- confidence MAE.
+Metrics include language NLL/perplexity, operation accuracy, argument-kind and
+span accuracy, parent pointers/count, and confidence MAE.
 
 ## Replay benchmark
-
-A replay JSONL contains one canonical action frame per line, optionally with its
-claimed `id`:
-
-```json
-{"id":"b3:...","frame":{"operation":"CLAIM","argument_kind":"TEXT","argument":"x","parents":[],"confidence_permille":900}}
-```
-
-Run:
 
 ```sh
 python -m murmurations.benchmarking.run replay --trace run/frames.jsonl
 ```
 
-The command fails on identity mismatch, missing parents, or cycles.
+A replay trace is append-only and parent-closed. The command fails on identity
+mismatch, missing parents, or cycles.
 
-## Next benchmark layers
+## Coding-repair outcome benchmark
 
-The next adapters should evaluate full environment episodes rather than only
-teacher-forced heads: compiler/test-driven coding repair, distractor-heavy tool
-selection, challenge/retraction quality, delegation efficiency, active-agent
-fraction, and success-vs-test-time-compute. Those should use the same immutable
-trace format rather than inventing benchmark-specific orchestration.
+The scoring backend accepts a YAML file of explicit argv commands. It does not
+invoke a shell and it does not prescribe how the candidate was produced.
+
+```yaml
+tasks:
+  - id: zig-regression
+    cwd: .
+    timeout_seconds: 120
+    commands:
+      - [zig, test, src/root.zig]
+      - [zig, build, test]
+```
+
+Score a candidate workspace:
+
+```sh
+python -m murmurations.benchmarking.run coding \\
+  --spec benchmarks/zig.yaml \\
+  --candidate-root /tmp/candidate
+```
+
+This is intentionally compatible with normal transformer inference, the
+protocol-native baseline, later multi-agent populations, and later local-k=7
+micro-dynamics. All can be judged by the same external verifier.
+
+## System-level metrics to add to traces
+
+Full Starlings episodes should also record success versus test-time compute:
+operation count, compiler/test calls, challenges resolved, retractions,
+delegations, unique evidence, active logical agents, active micro-agent
+fraction, recurrent ticks, wall time, and final outcome. These are properties
+of the emergent system, not of a particular benchmark workflow.

@@ -49,6 +49,7 @@ def main() -> None:
         vocab_size=args.vocab_size,
         min_frequency=2,
         special_tokens=list(BASE_SPECIAL_TOKENS) + list(CONTROL_TOKENS),
+        initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
         show_progress=True,
     )
     tokenizer.train_from_iterator(iter_corpus(args.input), trainer=trainer)

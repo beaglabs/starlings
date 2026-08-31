@@ -1,4 +1,4 @@
-"""Canonical carrier for P = (A, G, X, M, F, Π, C, Φ, J).
+"""Deterministic carrier for P = (A, G, X, M, F, Π, C, Φ, J).
 
 The meanings of the nine slots are deliberately not redefined here. Murmurations
 only validates that the complete context exists and renders it deterministically
@@ -8,12 +8,11 @@ for model input. Starlings owns the formal semantics.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from typing import Any, Mapping
 
 import yaml
-
-from .canonical import canonical_bytes
 
 _KEYS = ("A", "G", "X", "M", "F", "Pi", "C", "Phi", "J")
 _ALIASES = {"Π": "Pi", "Φ": "Phi"}
@@ -56,5 +55,13 @@ class PopulationContext:
         return {key: getattr(self, key) for key in _KEYS}
 
     def render(self) -> str:
-        payload = canonical_bytes(self.record()).decode("utf-8")
+        # Population context is deterministic model input, not an identity-bearing
+        # ActionFrame. Finite floats are therefore allowed here.
+        payload = json.dumps(
+            self.record(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
         return f"<POPULATION>{payload}</POPULATION>"
