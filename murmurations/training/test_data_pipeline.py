@@ -149,6 +149,14 @@ class DataPipelineTests(unittest.TestCase):
                 if operator is not None:
                     self.assertIn(f"<OPERATOR>{operator}</OPERATOR>", row["context"])
 
+            # Terminal-backed semantic operators also expose their concrete argv
+            # to subsequent state, so the language stream can learn command
+            # implementations without coupling operator identity to one backend.
+            self.assertTrue(
+                any("ARGV[" in row["context"] for row in rows),
+                "expected concrete terminal argv evidence in materialized state",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
