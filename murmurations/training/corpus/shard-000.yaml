@@ -48,3 +48,4 @@ quality:
   min_terminal_operator_events: 200
   min_terminal_operator_types: 2
   min_terminal_argv_events: 200
+  require_zviz_terminal_execution: true
