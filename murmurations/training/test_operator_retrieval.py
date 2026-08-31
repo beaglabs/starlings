@@ -103,6 +103,29 @@ class OperatorRetrievalTests(unittest.TestCase):
             self.assertIn("add", docs.text)
             self.assertTrue(docs.metadata.get("argv"))
 
+    def test_remote_python_operator_preserves_venv_argv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pyproject.toml").write_text(
+                "[project]\nname='fixture'\nversion='1.0.0'\n",
+                encoding="utf-8",
+            )
+            seen: list[list[str]] = []
+
+            def runner(_root, argv, _timeout):
+                from murmurations.training.operators import OperatorResult
+                seen.append(list(argv))
+                return OperatorResult(True, "ok", exit_code=0, metadata={"argv": list(argv)})
+
+            result = execute_operator(
+                "package.metadata",
+                "",
+                root,
+                command_runner=runner,
+            )
+            self.assertTrue(result.ok)
+            self.assertEqual(seen[0][0], ".murmurations-venv/bin/python3")
+
     def test_python_ast_and_search_adapters_execute(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
