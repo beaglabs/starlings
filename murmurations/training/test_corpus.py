@@ -265,6 +265,106 @@ class CorpusTests(unittest.TestCase):
                 ["Zig"],
             )
 
+    def test_qa_requires_verifier_accepted_semantic_mutations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog = root / "catalog.jsonl"
+            catalog.write_text(
+                json.dumps(
+                    {
+                        "name": "fixture",
+                        "commit": "fixture-v1",
+                        "license": "MIT",
+                        "language": "Python",
+                        "path": str(root),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            repo = RepoCatalog.from_jsonl(catalog).records[0]
+            episodes = root / "episodes.jsonl"
+            episodes.write_text(
+                json.dumps(
+                    {
+                        "repository": {
+                            "name": repo.name,
+                            "identity": repo.identity,
+                            "language": repo.language,
+                            "license": repo.license,
+                        },
+                        "mutation": {
+                            "kind": "eq_to_ne",
+                            "fingerprint": "b3:" + "05" * 32,
+                        },
+                        "generation": {
+                            "candidate_source": "deterministic",
+                        },
+                        "events": [],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            def write_row(path: Path, source_type: str) -> None:
+                path.write_text(
+                    json.dumps(
+                        {
+                            "context": "x",
+                            "language_target": "",
+                            "operation": "NOOP",
+                            "argument": {"kind": "NONE"},
+                            "provenance": {
+                                "source_type": source_type,
+                                "repository_identity": repo.identity,
+                                "repository": repo.name,
+                                "content_sha256": source_type,
+                            },
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+
+            code_train = root / "code-train.jsonl"
+            code_eval = root / "code-eval.jsonl"
+            traj_train = root / "traj-train.jsonl"
+            traj_eval = root / "traj-eval.jsonl"
+            write_row(code_train, "repository_code")
+            write_row(traj_train, "trajectory")
+            code_eval.write_text("", encoding="utf-8")
+            traj_eval.write_text("", encoding="utf-8")
+
+            report = validate_corpus_shard(
+                catalog_path=catalog,
+                episodes_path=episodes,
+                code_train_path=code_train,
+                code_eval_path=code_eval,
+                trajectory_train_path=traj_train,
+                trajectory_eval_path=traj_eval,
+                generation_report={
+                    "success_rate": 1.0,
+                    "eligible_repositories": 1,
+                },
+                quality={
+                    "min_catalog_repositories": 1,
+                    "min_generation_success_rate": 0.0,
+                    "min_eligible_repositories": 1,
+                    "min_dynamic_repositories": 1,
+                    "min_unique_mutations": 1,
+                    "min_semantic_mutations": 1,
+                    "min_code_rows": 1,
+                    "min_trajectory_rows": 1,
+                },
+            )
+
+            self.assertFalse(report["gates"]["semantic_mutations"])
+            self.assertEqual(
+                report["episodes"]["candidate_sources"],
+                {"deterministic": 1},
+            )
+
     def test_qa_rejects_repository_split_leakage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
