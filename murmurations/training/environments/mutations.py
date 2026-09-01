@@ -13,7 +13,10 @@ from typing import Iterable, Sequence
 from murmurations.utils.canonical import canonical_id
 
 
-_SOURCE_EXTENSIONS = {".c", ".cc", ".cpp", ".go", ".h", ".hpp", ".js", ".py", ".rs", ".ts", ".zig"}
+_SOURCE_EXTENSIONS = {
+    ".c", ".cc", ".cpp", ".go", ".h", ".hpp", ".java", ".js", ".jsx",
+    ".py", ".rs", ".ts", ".tsx", ".zig",
+}
 _SKIP_DIRS = {".git", ".venv", "node_modules", "target", "zig-cache", ".zig-cache", "test", "tests"}
 _RULES = (
     ("==", "!=", "eq_to_ne"),
