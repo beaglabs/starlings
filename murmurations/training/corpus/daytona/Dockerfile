@@ -45,7 +45,9 @@ RUN apt-get update \
          else \
            url="https://ziglang.org/builds/zig-${zig_arch}-linux-$version.tar.xz"; \
          fi; \
-         curl -fsSL "$url" | tar -xJ --strip-components=1 -C "/opt/zig/$version"; \
+         mirror="https://mirrors.nektro.net/zig/$version/zig-${zig_arch}-linux-$version.tar.xz"; \
+         (curl -fsSL "$url" || curl -fsSL "$mirror") \
+           | tar -xJ --strip-components=1 -C "/opt/zig/$version"; \
        }; \
        install_zig "$ZIG_DEFAULT_VERSION" stable; \
        install_zig "$ZIG_ZLS_VERSION" builds; \
