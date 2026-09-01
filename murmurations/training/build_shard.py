@@ -95,6 +95,10 @@ def _full_generation_targets(quality: dict[str, Any]) -> dict[str, Any]:
         "unique_mutations": int(quality.get("min_unique_mutations", 0)),
         "trajectory_rows": int(quality.get("min_trajectory_rows", 0)),
         "dynamic_repositories": int(quality.get("min_dynamic_repositories", 0)),
+        "required_dynamic_languages": [
+            str(language)
+            for language in (quality.get("required_dynamic_languages") or [])
+        ],
         "terminal_operator_events": int(quality.get("min_terminal_operator_events", 0)),
         "terminal_operator_types": int(quality.get("min_terminal_operator_types", 0)),
         "terminal_argv_events": int(quality.get("min_terminal_argv_events", 0)),
@@ -199,6 +203,22 @@ def build_shard(
         )
     if int(probe["eligible"]) == 0:
         raise RuntimeError("no repositories passed the clean-verifier eligibility probe")
+
+    if limit_repositories is None:
+        required_languages = {
+            str(language)
+            for language in (quality.get("required_dynamic_languages") or [])
+        }
+        eligible_catalog = RepoCatalog.from_jsonl(paths["eligible_catalog"])
+        eligible_languages = {
+            record.language or "unknown" for record in eligible_catalog.records
+        }
+        missing_languages = sorted(required_languages - eligible_languages)
+        if missing_languages:
+            raise RuntimeError(
+                "clean-verifier eligibility is missing required dynamic languages: "
+                + ", ".join(missing_languages)
+            )
 
     enrichment = dict(config.get("terminal_evidence") or {})
     enrichment_operators = tuple(enrichment.get("operators") or ())
