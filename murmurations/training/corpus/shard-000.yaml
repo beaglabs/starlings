@@ -78,6 +78,7 @@ quality:
     - TypeScript
     - Zig
   min_unique_mutations: 500
+  min_semantic_mutations: 100
   min_code_rows: 10000
   min_trajectory_rows: 10000
   min_terminal_operator_events: 200
