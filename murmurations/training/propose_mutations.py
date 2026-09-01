@@ -19,7 +19,7 @@ import urllib.request
 
 from murmurations.training.environments.mutations import (
     MutationCandidate,
-    mutation_fingerprint,
+    enumerate_mutation_candidates,
 )
 from murmurations.training.environments.repositories import (
     RepoCatalog,
@@ -42,8 +42,16 @@ def _safe(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value)
 
 
-def _source_files(root: Path, *, max_files: int) -> list[Path]:
-    rows: list[tuple[int, str, Path]] = []
+def _source_files(
+    root: Path,
+    *,
+    max_files: int,
+) -> list[tuple[Path, int | None]]:
+    anchors: dict[str, list[int]] = {}
+    for candidate in enumerate_mutation_candidates(root):
+        anchors.setdefault(candidate.relative_path, []).append(candidate.line_number)
+
+    rows: list[tuple[int, int, str, Path, int | None]] = []
     for path in root.rglob("*"):
         if not path.is_file() or path.suffix.lower() not in _SOURCE_EXTENSIONS:
             continue
@@ -58,9 +66,25 @@ def _source_files(root: Path, *, max_files: int) -> list[Path]:
             continue
         if size <= 0 or size > 256_000:
             continue
-        rows.append((1 if is_test else 0, str(relative), path))
-    rows.sort(key=lambda item: (item[0], item[1]))
-    return [item[2] for item in rows[:max_files]]
+
+        relative_text = str(relative)
+        candidate_lines = anchors.get(relative_text, [])
+        anchor = (
+            sorted(candidate_lines)[len(candidate_lines) // 2]
+            if candidate_lines
+            else None
+        )
+        rows.append(
+            (
+                1 if is_test else 0,
+                -len(candidate_lines),
+                relative_text,
+                path,
+                anchor,
+            )
+        )
+    rows.sort(key=lambda item: (item[0], item[1], item[2]))
+    return [(item[3], item[4]) for item in rows[:max_files]]
 
 
 def _test_index(root: Path, *, limit: int = 80) -> list[str]:
@@ -77,13 +101,27 @@ def _test_index(root: Path, *, limit: int = 80) -> list[str]:
     return rows
 
 
-def _numbered_excerpt(path: Path, *, max_lines: int) -> str:
+def _numbered_excerpt(
+    path: Path,
+    *,
+    max_lines: int,
+    anchor_line: int | None = None,
+) -> str:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError):
         return ""
-    selected = lines[:max_lines]
-    return "\n".join(f"{index + 1}: {line}" for index, line in enumerate(selected))
+    if not lines:
+        return ""
+    if anchor_line is None:
+        start = 0
+    else:
+        start = max(0, min(len(lines) - 1, anchor_line - 1) - max_lines // 2)
+    end = min(len(lines), start + max_lines)
+    return "\n".join(
+        f"{index + 1}: {lines[index]}"
+        for index in range(start, end)
+    )
 
 
 def _request_json(
@@ -267,8 +305,13 @@ def propose_for_repository(
         tests = _test_index(root)
         paths = _source_files(root, max_files=max_files)
 
-        def propose(path: Path) -> list[MutationCandidate]:
-            excerpt = _numbered_excerpt(path, max_lines=max_lines_per_file)
+        def propose(item: tuple[Path, int | None]) -> list[MutationCandidate]:
+            path, anchor_line = item
+            excerpt = _numbered_excerpt(
+                path,
+                max_lines=max_lines_per_file,
+                anchor_line=anchor_line,
+            )
             if not excerpt:
                 return []
             payload = _request_json(
@@ -289,7 +332,7 @@ def propose_for_repository(
 
         candidates: list[MutationCandidate] = []
         with ThreadPoolExecutor(max_workers=max(1, request_concurrency)) as executor:
-            futures = {executor.submit(propose, path): path for path in paths}
+            futures = {executor.submit(propose, item): item[0] for item in paths}
             for future in as_completed(futures):
                 candidates.extend(future.result())
 
