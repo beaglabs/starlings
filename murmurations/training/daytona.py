@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 import shlex
 import time
+import urllib.error
+import urllib.request
 from typing import Any, Sequence
 
 from murmurations.training.environments.repositories import RepoRecord
@@ -91,6 +93,7 @@ class DaytonaCorpusRunner:
                         api_key=os.environ.get("DAYTONA_API_KEY"),
                         api_url=os.environ.get("DAYTONA_API_URL"),
                         target=self.target,
+                        connection_pool_maxsize=None,
                     )
                 )
             else:
@@ -112,11 +115,112 @@ class DaytonaCorpusRunner:
             "cpu": getattr(snapshot, "cpu", None),
             "memory_gib": getattr(snapshot, "mem", None),
             "disk_gib": getattr(snapshot, "disk", None),
+            "organization_id": getattr(snapshot, "organization_id", None),
         }
         self._log(
             f"snapshot ready name={self._snapshot_info['name']} "
             f"state={self._snapshot_info['state']}"
         )
+
+    def concurrency_capacity(self, max_workers: int) -> dict[str, Any]:
+        """Return the safe cross-sandbox worker capacity for this snapshot."""
+        if max_workers <= 0:
+            raise ValueError("max_workers must be positive")
+        if self._snapshot_info is None:
+            raise RuntimeError("validate_environment must run before capacity discovery")
+
+        cpu = float(self._snapshot_info.get("cpu") or 0)
+        memory = float(self._snapshot_info.get("memory_gib") or 0)
+        disk = float(self._snapshot_info.get("disk_gib") or 0)
+        if cpu <= 0 or memory <= 0 or disk <= 0:
+            raise RuntimeError("Daytona snapshot resource metadata is incomplete")
+
+        result: dict[str, Any] = {
+            "requested_max_workers": max_workers,
+            "snapshot_cpu": cpu,
+            "snapshot_memory_gib": memory,
+            "snapshot_disk_gib": disk,
+            "source": "configured_max",
+            "workers": max_workers,
+        }
+        organization_id = str(
+            self._snapshot_info.get("organization_id")
+            or os.environ.get("DAYTONA_ORGANIZATION_ID")
+            or ""
+        ).strip()
+        api_key = os.environ.get("DAYTONA_API_KEY")
+        api_url = os.environ.get("DAYTONA_API_URL", "https://app.daytona.io/api").rstrip("/")
+        if not organization_id or not api_key:
+            return result
+
+        request = urllib.request.Request(
+            f"{api_url}/organizations/{organization_id}/usage",
+            headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+            self._log(f"capacity discovery unavailable; using configured max: {exc}")
+            return result
+
+        regions = list(payload.get("regionUsage") or [])
+        target = self.target
+        region = next(
+            (
+                item for item in regions
+                if not target or str(item.get("regionId") or "") == target
+            ),
+            None,
+        )
+        if region is None:
+            self._log("capacity discovery found no matching region; using configured max")
+            return result
+
+        available_cpu = max(
+            0.0,
+            float(region.get("totalCpuQuota") or 0)
+            - float(region.get("currentCpuUsage") or 0),
+        )
+        available_memory = max(
+            0.0,
+            float(region.get("totalMemoryQuota") or 0)
+            - float(region.get("currentMemoryUsage") or 0),
+        )
+        available_disk = max(
+            0.0,
+            float(region.get("totalDiskQuota") or 0)
+            - float(region.get("currentDiskUsage") or 0),
+        )
+        workers = min(
+            max_workers,
+            int(available_cpu // cpu),
+            int(available_memory // memory),
+            int(available_disk // disk),
+        )
+        if workers <= 0:
+            raise RuntimeError(
+                "Daytona has no free capacity for the corpus snapshot: "
+                f"cpu={available_cpu:g}, memory={available_memory:g}GiB, "
+                f"disk={available_disk:g}GiB"
+            )
+        result.update(
+            {
+                "source": "organization_usage",
+                "organization_id": organization_id,
+                "region": region.get("regionId"),
+                "available_cpu": available_cpu,
+                "available_memory_gib": available_memory,
+                "available_disk_gib": available_disk,
+                "workers": workers,
+            }
+        )
+        self._log(
+            f"capacity workers={workers} available_cpu={available_cpu:g} "
+            f"available_memory={available_memory:g}GiB "
+            f"available_disk={available_disk:g}GiB"
+        )
+        return result
 
     def provenance(self) -> dict[str, Any]:
         return {
