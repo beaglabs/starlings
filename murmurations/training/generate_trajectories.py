@@ -234,7 +234,7 @@ def _generate_repo_burst(
     repo: RepoRecord,
     slots: list[tuple[int, int]],
     excluded_fingerprints: set[str],
-    cache_dir: str | Path,
+    source: Path,
     work_root: Path,
     repo_index: int,
     seed: int,
@@ -245,12 +245,10 @@ def _generate_repo_burst(
     max_enrichment_calls: int,
     sandbox_runner,
     signature: str,
-    prune_checkouts: bool,
     partition_id: int = 0,
     partition_count: int = 1,
     semantic_candidates: tuple[MutationCandidate, ...] = (),
 ) -> list[_GenerationOutcome]:
-    source: Path | None = None
     outcomes: list[_GenerationOutcome] = []
     local_used = set(excluded_fingerprints)
     worker_runner = (
@@ -260,7 +258,6 @@ def _generate_repo_burst(
     )
     workspace = work_root / _safe(repo.name) / f"partition-{partition_id:03d}"
     try:
-        source = checkout_repository(repo, cache_dir)
         verifier = detect_test_command(source)
         if verifier is None:
             raise RuntimeError("no supported repository test command detected")
@@ -375,13 +372,6 @@ def _generate_repo_burst(
             )
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
-        if (
-            prune_checkouts
-            and source is not None
-            and repo.path is None
-            and source.exists()
-        ):
-            shutil.rmtree(source, ignore_errors=True)
     return outcomes
 
 
