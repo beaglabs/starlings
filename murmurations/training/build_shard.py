@@ -7,6 +7,7 @@ from collections import defaultdict, deque
 import json
 import math
 from pathlib import Path
+import shutil
 from typing import Any
 
 import yaml
@@ -16,7 +17,7 @@ from murmurations.training.environments.repositories import RepoCatalog, RepoRec
 from murmurations.training.generate_trajectories import generate_trajectory_corpus
 from murmurations.training.materialize import materialize_file
 from murmurations.training.materialize_code import materialize_repository_code
-from murmurations.training.probe_repositories import probe_repository_catalog
+from murmurations.training.probe_repositories import load_probe_artifacts, probe_repository_catalog
 from murmurations.training.daytona import DaytonaCorpusRunner
 
 
