@@ -100,6 +100,7 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
     candidate_sources: Counter[str] = Counter()
     fingerprints: Counter[str] = Counter()
     terminal_argv_events = 0
+    external_execution_events = 0
     sandbox_backends: Counter[str] = Counter()
 
     for episode in iter_jsonl(path):
@@ -124,6 +125,8 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
             if operator:
                 operator_refs[str(operator)] += 1
             environment = event.get("environment") or {}
+            if bool(environment.get("external_execution", False)):
+                external_execution_events += 1
             argv = environment.get("argv")
             if isinstance(argv, list) and argv:
                 terminal_argv_events += 1
@@ -147,6 +150,7 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
         "unique_mutations": len(fingerprints),
         "duplicate_mutations": duplicates,
         "terminal_argv_events": terminal_argv_events,
+        "external_execution_events": external_execution_events,
         "sandbox_backends": dict(sorted(sandbox_backends.items())),
     }
 
@@ -237,6 +241,8 @@ def validate_corpus_shard(
         >= int(quality.get("min_terminal_operator_types", 0)),
         "terminal_argv_events": int(episodes["terminal_argv_events"])
         >= int(quality.get("min_terminal_argv_events", 0)),
+        "external_execution_events": int(episodes["external_execution_events"])
+        >= int(quality.get("min_external_execution_events", 0)),
         "terminal_execution_is_daytona": (
             not bool(quality.get("require_daytona_terminal_execution", False))
             or (
