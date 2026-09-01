@@ -152,6 +152,12 @@ def main() -> None:
             "train the tokenizer at the configured vocabulary size"
         )
     model = MurmurationModel(model_cfg)
+    if bool(train_cfg.get("float8_backbone", False)):
+        # torchao's Float8Linear training path expects the source Linear
+        # modules and their activations to be CUDA BF16 before conversion.
+        # Accelerate mixed precision alone only autocasts forward ops; it does
+        # not convert the model parameters themselves.
+        model = model.to(device=accelerator.device, dtype=torch.bfloat16)
     float8_report = _configure_float8_backbone(model, train_cfg)
     if accelerator.is_main_process:
         print(json.dumps({"float8": float8_report}, sort_keys=True), flush=True)
