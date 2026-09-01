@@ -17,10 +17,10 @@ tokenizer:
 training:
   train_data:
     - data/murmurations/pretrain-train.jsonl
-    - data/murmurations/trajectory-train.jsonl
+    - data/murmurations/shard-000/trajectory-train.jsonl
   eval_data:
     - data/murmurations/pretrain-eval.jsonl
-    - data/murmurations/trajectory-eval.jsonl
+    - data/murmurations/shard-000/trajectory-eval.jsonl
   output_dir: murmurations/training/runs/murmuration-500m-v0
   seed: 17
   mixed_precision: bf16
