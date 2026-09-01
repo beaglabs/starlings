@@ -82,7 +82,7 @@ executed by Murmurations. For every imported tool call it records the original
 tool name, exact tool arguments, terminal command when present, and linked
 observation. It then maps the action to a stable semantic operator such as
 `repo.search`, `repo.tests`, `type.check`, `package.metadata`,
-`docs.lookup`, `repo.edit`, or `repo.command`.
+`docs.lookup`. File edits and otherwise-unclassified terminal calls remain\ngrounded `EXECUTE` events with their exact source tool call, but intentionally\ncarry no operator-pointer label because those capabilities are not in the\nruntime retrieval registry.
 
 A typical source interaction:
 
