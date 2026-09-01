@@ -145,24 +145,6 @@ def build_shard(
         "manifest": output_dir / "manifest.json",
     }
 
-    # Static code/document windows use every pinned permissive repository.
-    _log("materializing static code/document windows")
-    code = materialize_repository_code(
-        catalog_path,
-        paths["code_train"],
-        paths["code_eval"],
-        cache_dir=cache_dir,
-        eval_fraction=eval_fraction,
-        chunk_chars=int(config.get("code_chunk_chars", 6000)),
-        max_files_per_repo=int(config.get("max_files_per_repo", 2000)),
-        prune_checkouts=True,
-    )
-
-    _log(
-        f"static materialization complete rows="
-        f"{int(code.get('train_rows', 0)) + int(code.get('eval_rows', 0))}"
-    )
-
     # Dynamic episodes use only repositories whose clean verifier passes inside
     # the pinned Daytona corpus snapshot. Reuse a complete standalone probe only
     # when its exact catalog and snapshot/plan signature still match.
@@ -224,6 +206,24 @@ def build_shard(
                 "clean-verifier eligibility is missing required dynamic languages: "
                 + ", ".join(missing_languages)
             )
+
+    # Static code/document windows use every pinned permissive repository.
+    _log("materializing static code/document windows")
+    code = materialize_repository_code(
+        catalog_path,
+        paths["code_train"],
+        paths["code_eval"],
+        cache_dir=cache_dir,
+        eval_fraction=eval_fraction,
+        chunk_chars=int(config.get("code_chunk_chars", 6000)),
+        max_files_per_repo=int(config.get("max_files_per_repo", 2000)),
+        prune_checkouts=True,
+    )
+
+    _log(
+        f"static materialization complete rows="
+        f"{int(code.get('train_rows', 0)) + int(code.get('eval_rows', 0))}"
+    )
 
     enrichment = dict(config.get("terminal_evidence") or {})
     enrichment_operators = tuple(enrichment.get("operators") or ())
