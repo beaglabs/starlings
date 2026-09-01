@@ -37,21 +37,23 @@ RUN apt-get update \
          arm64) zig_arch="aarch64" ;; \
          *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
        esac \
-    && install_zig() { \
-         version="$1"; channel="$2"; \
-         mkdir -p "/opt/zig/$version"; \
-         if [ "$channel" = stable ]; then \
-           url="https://ziglang.org/download/$version/zig-${zig_arch}-linux-$version.tar.xz"; \
-         else \
-           url="https://ziglang.org/builds/zig-${zig_arch}-linux-$version.tar.xz"; \
-         fi; \
-         mirror="https://mirrors.nektro.net/zig/$version/zig-${zig_arch}-linux-$version.tar.xz"; \
-         (curl -fsSL "$url" || curl -fsSL "$mirror") \
-           | tar -xJ --strip-components=1 -C "/opt/zig/$version"; \
-       }; \
-       install_zig "$ZIG_DEFAULT_VERSION" stable; \
-       install_zig "$ZIG_ZLS_VERSION" builds; \
-       install_zig "$ZIG_CLAP_VERSION" builds; \
+    && { \
+         install_zig() { \
+           version="$1"; channel="$2"; \
+           mkdir -p "/opt/zig/$version"; \
+           if [ "$channel" = stable ]; then \
+             url="https://ziglang.org/download/$version/zig-${zig_arch}-linux-$version.tar.xz"; \
+           else \
+             url="https://ziglang.org/builds/zig-${zig_arch}-linux-$version.tar.xz"; \
+           fi; \
+           mirror="https://mirrors.nektro.net/zig/$version/zig-${zig_arch}-linux-$version.tar.xz"; \
+           (curl -fsSL "$url" || curl -fsSL "$mirror") \
+             | tar -xJ --strip-components=1 -C "/opt/zig/$version"; \
+         }; \
+         install_zig "$ZIG_DEFAULT_VERSION" stable; \
+         install_zig "$ZIG_ZLS_VERSION" builds; \
+         install_zig "$ZIG_CLAP_VERSION" builds; \
+       } \
     && ln -s "/opt/zig/${ZIG_DEFAULT_VERSION}/zig" /usr/local/bin/zig \
     && /opt/zig/${ZIG_DEFAULT_VERSION}/zig version \
     && /opt/zig/${ZIG_ZLS_VERSION}/zig version \
