@@ -44,120 +44,79 @@ python -m murmurations.benchmarking.run replay \
 
 ## First serious corpus shard
 
-The committed shard-000 recipe uses 60 public repositories pinned to exact
-commits across Python, Rust, Go, JavaScript/TypeScript, C/C++, Zig, and Java.
-Static code/document windows use the full catalog. Dynamic repair episodes use
-only repositories whose clean verifier passes in an ephemeral Daytona sandbox
-created from the pinned `murmurations-corpus-v1-2cpu` snapshot. Serious corpus
-generation never executes repository commands on the host.
+Shard-000 no longer generates its bulk trajectory supervision by synthesizing
+hundreds of new bugs. It imports **resolved SWE-smith agent trajectories** from
+the Agent Data Protocol standardized ATIF corpus and deterministically compiles
+their real tool calls and observations into Murmurations event DAGs.
 
-Install the pinned Daytona SDK, configure your Daytona credentials, and prepare
-the corpus snapshot once. This can be run directly from macOS; no Lima, Docker,
-or local language toolchains are required:
+The source is pinned in `shard-000.yaml`:
+
+- dataset: `neulab/agent-data-collection`
+- configuration: `swe-smith`
+- split: `std`
+- revision: `17f755bd6c6588d98a91ae6512576d9772919ab2`
+- source license: MIT
+
+The importer streams the dataset rather than downloading the full multi-GB
+artifact. It accepts only records whose source metadata says `resolved=true`,
+excludes any repository already used by the static 60-repository code catalog,
+and stops only after all configured trajectory-volume and repository-diversity
+targets are met.
+
+Install dependencies and build:
 
 ```sh
 python3 -m pip install -r murmurations/requirements.txt
-export DAYTONA_API_KEY=...
-export DAYTONA_API_URL=https://app.daytona.io/api
-python3 -m murmurations.training.prepare_daytona \
-  --name murmurations-corpus-v1-2cpu \
-  --cpu 2 \
-  --memory-gib 4 \
-  --disk-gib 10
-```
 
-Eligibility probing is checkpointed per repository and shard-000 runs up to
-eight Daytona probe sandboxes concurrently in the US target region. Probe
-planning and repository checkout happen entirely inside Daytona; the host only
-reads the catalog and writes checkpoint/report files. Re-running the same probe
-resumes compatible snapshot/plan checkpoints instead of repeating completed
-repositories. Because eligibility identity includes the snapshot ID, switching
-from the 4-vCPU snapshot to the 2-vCPU snapshot intentionally requires a fresh
-clean-verifier probe.
-
-Then run the small stratified probe/build:
-
-```sh
-python3 -m murmurations.training.build_shard \
-  --config murmurations/training/corpus/shard-000.yaml \
-  --limit-repositories 7 \
-  --episodes-per-repo 2
-```
-
-The 7-repo subset is selected across languages rather than taking the first
-seven catalog rows. Inspect:
-
-```sh
-cat data/murmurations/shard-000/repo-probe.json
-cat data/murmurations/shard-000/qa-report.json
-```
-
-For the full hybrid shard, first produce a clean probe for the 2-vCPU snapshot:
-
-```sh
-python3 -m murmurations.training.probe_repositories \
-  --config murmurations/training/corpus/shard-000.yaml \
-  --catalog murmurations/training/corpus/shard-000-repos.jsonl \
-  --report data/murmurations/shard-000-full-probe.json \
-  --eligible-catalog data/murmurations/shard-000-eligible.jsonl
-```
-
-Then generate verifier-untrusted semantic candidates on Molab or any machine
-running an OpenAI-compatible local code-model endpoint:
-
-```sh
-export MURMURATIONS_PROPOSER_BASE_URL=http://127.0.0.1:8000/v1
-export MURMURATIONS_PROPOSER_MODEL=<local-code-model>
-
-python3 -m murmurations.training.propose_mutations \
-  --catalog data/murmurations/shard-000-eligible.jsonl \
-  --output data/murmurations/shard-000-semantic-candidates.jsonl
-```
-
-The proposer is not trusted to produce labels, test results, repairs, or shell
-commands. It emits exact one-line source edits only. The candidate file is
-validated against pinned source lines and its SHA-256 digest becomes part of
-the resumable generation identity.
-
-Keep the configured standalone full-probe cache
-(`data/murmurations/shard-000-full-probe.json` and
-`data/murmurations/shard-000-eligible.jsonl`). The builder validates its exact
-catalog, Daytona snapshot/planner signature, and semantic candidate digest
-before reusing compatible state:
-
-```sh
 rm -rf data/murmurations/shard-000
 
 python3 -m murmurations.training.build_shard \
   --config murmurations/training/corpus/shard-000.yaml
 ```
 
-The full recipe is target-driven rather than fixed-count. Missing required
-languages are scheduled first, then eligible repositories continue in balanced
-round-robin bursts until the configured mutation, trajectory-row, dynamic
-repository, terminal-evidence, language-coverage, and generation-yield targets
-are satisfied, or bounded per-repository request/success caps are exhausted.
-Shard-000 requires dynamic episodes from C, C++, Go, Java, JavaScript, Python,
-Rust, TypeScript, and Zig. Episode and failure JSONL are append-only resumable
-journals, and their generation signature includes the Daytona snapshot identity
-plus repository-planner digest so verifier changes cannot silently reuse stale
-episodes. Generated files include SHA-256 digests in the QA report.
+No Daytona credentials, snapshot, Docker/Lima environment, or LLM endpoint is
+required for this build.
 
-### Terminal-backed evidence in shard-000
+The compiler preserves source execution evidence without pretending it was
+executed by Murmurations. For every imported tool call it records the original
+tool name, exact tool arguments, terminal command when present, and linked
+observation. It then maps the action to a stable semantic operator such as
+`repo.search`, `repo.tests`, `type.check`, `package.metadata`,
+`docs.lookup`, `repo.edit`, or `repo.command`.
 
-Dynamic trajectories can retrieve semantic operators backed by argv-only
-commands executed inside the episode's Daytona sandbox:
+A typical source interaction:
 
-- `type.check` — compiler/type-checker diagnostics;
-- `package.metadata` — local manifest/package/dependency metadata;
-- `docs.lookup` — local language/package documentation where a safe local CLI
-  is available.
+```text
+terminal {"command":"cd /testbed && pytest -q"}
+→ "42 passed"
+```
 
-The exact argv, exit code, and output are recorded as episode evidence. The
-model sees the stable semantic operator descriptor rather than a shell string.
-Up to two of these operators are selected in seeded variable order per episode,
-so the recipe does not encode a mandatory terminal-tool workflow. Shard QA
-requires actual terminal-operator coverage.
+becomes:
+
+```text
+QUERY repo.tests
+→ EXECUTE repo.tests
+   TOOL=terminal
+   COMMAND=cd /testbed && pytest -q
+→ EVIDENCE "42 passed"
+```
+
+Agent messages are retained as CLAIM/PROPOSE supervision, successful source
+termination becomes ACCEPT, and all event parent references are verified by the
+same Merkle-DAG machinery as native Murmurations episodes.
+
+Shard-000 currently requires at least 500 unique resolved trajectories, 10,000
+materialized trajectory rows, 20 imported repositories, and 1,000 grounded
+external EXECUTE events. Static language-model rows still come from the
+committed multilingual 60-repository catalog.
+
+### Native execution calibration
+
+Daytona remains useful, but it is no longer the bulk corpus generator. The
+native verifier-grounded generator is retained for small calibration/evaluation
+sets where we specifically want traces produced by Murmurations' own execution
+adapter. Those traces should be treated as held-out validation or later corpus
+augmentation rather than a prerequisite for training the first serious model.
 
 ## Repository catalog
 
