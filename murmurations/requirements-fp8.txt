@@ -1,0 +1,3 @@
+# Optional Blackwell/Hopper FP8 training support.
+# Keep separate from base requirements so CPU/macOS installs do not pull CUDA-only paths.
+torchao==0.17.0
