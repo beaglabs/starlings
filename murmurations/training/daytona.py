@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import base64
 import hashlib
 import json
 import os
@@ -506,6 +507,55 @@ class DaytonaWorkspace:
                 f"{self.remote_root}/{relative}",
             )
         self._local_hashes = current
+
+    def replace_source_line(
+        self,
+        relative_path: str,
+        line_number: int,
+        expected_line: str,
+        replacement_line: str,
+    ) -> None:
+        if self.sandbox is None:
+            raise RuntimeError("Daytona workspace is not active")
+        relative = Path(relative_path)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("mutation path must remain inside the repository")
+        if line_number <= 0:
+            raise ValueError("mutation line number must be positive")
+
+        script = (
+            "import base64,pathlib,sys;"
+            "root=pathlib.Path('.').resolve();"
+            "p=(root/pathlib.Path(sys.argv[1])).resolve();"
+            "p.relative_to(root);"
+            "lines=p.read_text(encoding='utf-8').splitlines(keepends=True);"
+            "i=int(sys.argv[2])-1;"
+            "expected=base64.b64decode(sys.argv[3]).decode('utf-8');"
+            "replacement=base64.b64decode(sys.argv[4]).decode('utf-8');"
+            "assert 0 <= i < len(lines), 'mutation line out of range';"
+            "assert lines[i] == expected, 'mutation source line mismatch';"
+            "lines[i]=replacement;"
+            "p.write_text(''.join(lines),encoding='utf-8')"
+        )
+        argv = [
+            "python3",
+            "-c",
+            script,
+            relative.as_posix(),
+            str(line_number),
+            base64.b64encode(expected_line.encode("utf-8")).decode("ascii"),
+            base64.b64encode(replacement_line.encode("utf-8")).decode("ascii"),
+        ]
+        response = self.sandbox.process.exec(
+            shlex.join(argv) + " 2>&1",
+            cwd=self.remote_root,
+            timeout=30,
+        )
+        if int(response.exit_code) != 0:
+            raise RuntimeError(
+                "remote mutation edit failed: "
+                f"{(response.result or '')[-4000:]}"
+            )
 
     def run(
         self,
