@@ -102,6 +102,7 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
     terminal_argv_events = 0
     external_execution_events = 0
     sandbox_backends: Counter[str] = Counter()
+    accept_counts_per_episode: Counter[int] = Counter()
 
     for episode in iter_jsonl(path):
         episodes += 1
@@ -117,10 +118,14 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
         if fingerprint:
             fingerprints[str(fingerprint)] += 1
 
+        episode_accepts = 0
         for event in episode.get("events", []):
             events += 1
             frame = event.get("frame") or {}
-            operations[str(frame.get("operation", "unknown"))] += 1
+            operation = str(frame.get("operation", "unknown"))
+            operations[operation] += 1
+            if operation == "ACCEPT":
+                episode_accepts += 1
             operator = frame.get("operator_ref")
             if operator:
                 operator_refs[str(operator)] += 1
@@ -131,6 +136,7 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
             if isinstance(argv, list) and argv:
                 terminal_argv_events += 1
                 sandbox_backends[str(environment.get("sandbox_backend") or "unknown")] += 1
+        accept_counts_per_episode[episode_accepts] += 1
 
     duplicates = {
         fingerprint: count
@@ -152,6 +158,11 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
         "terminal_argv_events": terminal_argv_events,
         "external_execution_events": external_execution_events,
         "sandbox_backends": dict(sorted(sandbox_backends.items())),
+        "accept_counts_per_episode": {
+            str(count): episodes_with_count
+            for count, episodes_with_count in sorted(accept_counts_per_episode.items())
+        },
+        "episodes_with_exactly_one_accept": int(accept_counts_per_episode.get(1, 0)),
     }
 
 
@@ -219,6 +230,10 @@ def validate_trajectory_shard(
         >= int(quality.get("min_external_execution_events", 0)),
         "no_split_leakage": not leakage,
         "no_duplicate_trajectories": not episodes["duplicate_mutations"],
+        "exactly_one_accept_per_episode": int(
+            episodes["episodes_with_exactly_one_accept"]
+        )
+        == int(episodes["episodes"]),
     }
 
     return {
