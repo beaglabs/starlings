@@ -282,6 +282,10 @@ def build_shard(
             ),
             target_rows=target_rows,
             max_episodes=max_episodes,
+            exclude_repositories={
+                record.name
+                for record in RepoCatalog.from_jsonl(catalog_path).records
+            },
         )
         generation["eligible_repositories"] = int(generation["repositories"])
         generation["catalog_repositories"] = len(RepoCatalog.from_jsonl(catalog_path).records)
