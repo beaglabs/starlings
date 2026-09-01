@@ -155,6 +155,101 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
     }
 
 
+
+def validate_trajectory_shard(
+    *,
+    episodes_path: str | Path,
+    trajectory_train_path: str | Path,
+    trajectory_eval_path: str | Path,
+    generation_report: dict[str, Any],
+    quality: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate an imported trajectory shard without requiring any code corpus.
+
+    Imported execution traces are a self-contained supervision stream. Static
+    code windows remain useful for language pretraining, but they are not a
+    prerequisite for importing or accepting trajectory data.
+    """
+
+    episodes = _episode_stats(episodes_path)
+    train = _row_stats([trajectory_train_path])
+    evaluation = _row_stats([trajectory_eval_path])
+    trajectory_stats = _row_stats([trajectory_train_path, trajectory_eval_path])
+
+    train_ids = set(train["repository_identities"])
+    eval_ids = set(evaluation["repository_identities"])
+    leakage = sorted(train_ids & eval_ids)
+
+    required_dynamic_languages = {
+        str(language)
+        for language in (quality.get("required_dynamic_languages") or [])
+    }
+    present_dynamic_languages = {
+        str(language)
+        for language, count in episodes["languages"].items()
+        if int(count) > 0
+    }
+    missing_dynamic_languages = sorted(
+        required_dynamic_languages - present_dynamic_languages
+    )
+
+    required_operator_refs = {
+        str(name) for name in (quality.get("required_operator_refs") or [])
+    }
+    present_operator_refs = {
+        str(name)
+        for name, count in episodes["operator_refs"].items()
+        if int(count) > 0
+    }
+    missing_operator_refs = sorted(required_operator_refs - present_operator_refs)
+
+    gates = {
+        "resolved_only": bool(generation_report.get("resolved_only", False)),
+        "generation_success_rate": float(generation_report.get("success_rate", 0.0))
+        >= float(quality.get("min_generation_success_rate", 0.0)),
+        "episodes": int(episodes["episodes"])
+        >= int(quality.get("min_episodes", 1)),
+        "dynamic_repositories": len(episodes["repositories"])
+        >= int(quality.get("min_dynamic_repositories", 1)),
+        "required_dynamic_languages": not missing_dynamic_languages,
+        "required_operator_refs": not missing_operator_refs,
+        "trajectory_rows": int(trajectory_stats["rows"])
+        >= int(quality.get("min_trajectory_rows", 1)),
+        "external_execution_events": int(episodes["external_execution_events"])
+        >= int(quality.get("min_external_execution_events", 0)),
+        "no_split_leakage": not leakage,
+        "no_duplicate_trajectories": not episodes["duplicate_mutations"],
+    }
+
+    return {
+        "passed": all(gates.values()),
+        "gates": gates,
+        "generation": generation_report,
+        "episodes": episodes,
+        "dynamic_language_coverage": {
+            "required": sorted(required_dynamic_languages),
+            "present": sorted(present_dynamic_languages),
+            "missing": missing_dynamic_languages,
+        },
+        "operator_coverage": {
+            "required": sorted(required_operator_refs),
+            "present": sorted(present_operator_refs),
+            "missing": missing_operator_refs,
+            "counts": episodes["operator_refs"],
+        },
+        "rows": {
+            "train": train,
+            "eval": evaluation,
+            "trajectory": trajectory_stats,
+        },
+        "split_leakage": leakage,
+        "files": {
+            "episodes": file_digest(episodes_path),
+            "trajectory_train": file_digest(trajectory_train_path),
+            "trajectory_eval": file_digest(trajectory_eval_path),
+        },
+    }
+
 def validate_corpus_shard(
     *,
     catalog_path: str | Path,
