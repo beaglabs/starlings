@@ -25,7 +25,7 @@ from murmurations.utils.protocol import ArgumentKind, Operation
 
 DEFAULT_DATASET = "neulab/agent-data-collection"
 DEFAULT_CONFIG = "swe-smith"
-DEFAULT_SPLIT = "std"
+DEFAULT_SPLIT = "raw"
 DEFAULT_REVISION = "17f755bd6c6588d98a91ae6512576d9772919ab2"
 
 
@@ -140,6 +140,151 @@ def _as_list(value: Any) -> list[Any]:
     return []
 
 
+_FUNCTION_CALL_RE = re.compile(
+    r"<function=([^>\s]+)>\s*(.*?)</function>",
+    re.IGNORECASE | re.DOTALL,
+)
+_PARAMETER_RE = re.compile(
+    r"<parameter=([^>]+)>(.*?)</parameter>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _parse_raw_tool_call(
+    content: str,
+    *,
+    call_id: str,
+) -> tuple[str, dict[str, Any], str] | None:
+    """Parse one SWE-smith XML tool call from an assistant message."""
+
+    match = _FUNCTION_CALL_RE.search(content)
+    if match is None:
+        return None
+    function_name = match.group(1).strip()
+    body = match.group(2)
+    arguments = {
+        name.strip(): value
+        for name, value in _PARAMETER_RE.findall(body)
+        if name.strip()
+    }
+    message = (content[: match.start()] + content[match.end() :]).strip()
+
+    normalized_name = function_name.lower()
+    if normalized_name == "bash":
+        function_name = "terminal"
+    elif normalized_name == "submit":
+        function_name = "finish"
+
+    return function_name, arguments, message
+
+
+def _raw_to_atif_record(record: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize original SWE-smith messages into the importer ATIF subset."""
+
+    messages = _as_list(record.get("messages"))
+    if not messages:
+        return None
+
+    steps: list[dict[str, Any]] = []
+    index = 0
+    step_id = 0
+    while index < len(messages):
+        raw_message = messages[index]
+        index += 1
+        if not isinstance(raw_message, dict):
+            continue
+
+        role = str(raw_message.get("role") or "").strip().lower()
+        content = str(raw_message.get("content") or "")
+        if role not in {"system", "user", "assistant"}:
+            continue
+
+        step_id += 1
+        if role == "system":
+            steps.append(
+                {"step_id": step_id, "source": "system", "message": content}
+            )
+            continue
+        if role == "user":
+            steps.append(
+                {"step_id": step_id, "source": "user", "message": content}
+            )
+            continue
+
+        call_id = f"raw_call_{step_id}"
+        parsed = _parse_raw_tool_call(content, call_id=call_id)
+        if parsed is None:
+            steps.append(
+                {"step_id": step_id, "source": "agent", "message": content}
+            )
+            continue
+
+        function_name, arguments, message = parsed
+        step: dict[str, Any] = {
+            "step_id": step_id,
+            "source": "agent",
+            "message": message,
+            "tool_calls": [
+                {
+                    "tool_call_id": call_id,
+                    "function_name": function_name,
+                    "arguments": arguments,
+                }
+            ],
+        }
+
+        # SWE-smith raw trajectories put the environment/tool observation in
+        # the immediately following user turn. Consume it into this tool step
+        # instead of treating it as a second task/user instruction.
+        if index < len(messages):
+            candidate = messages[index]
+            if (
+                isinstance(candidate, dict)
+                and str(candidate.get("role") or "").strip().lower() == "user"
+            ):
+                observation = str(candidate.get("content") or "")
+                step["observation"] = {
+                    "results": [
+                        {
+                            "source_call_id": call_id,
+                            "content": observation,
+                        }
+                    ]
+                }
+                index += 1
+
+        steps.append(step)
+
+    resolved = record.get("resolved")
+    raw = {
+        "instance_id": record.get("instance_id"),
+        "resolved": resolved,
+        "model": record.get("model"),
+        "traj_id": record.get("traj_id"),
+        "patch": record.get("patch", ""),
+    }
+    trajectory_id = str(record.get("traj_id") or record.get("id") or "").strip()
+    if not trajectory_id:
+        return None
+    return {
+        "id": trajectory_id,
+        "steps": steps,
+        "extra": {
+            "raw": raw,
+            "source_dataset": "swe-smith",
+            "source_format": "raw",
+        },
+    }
+
+
+def _normalize_source_record(record: dict[str, Any]) -> dict[str, Any] | None:
+    if "steps" in record:
+        return record
+    if "messages" in record:
+        return _raw_to_atif_record(record)
+    return None
+
+
 def _repo_name(instance_id: str) -> str:
     prefix = instance_id.split(".", 1)[0]
     if "__" in prefix:
@@ -233,6 +378,10 @@ def _tool_argument(function_name: str, arguments: dict[str, Any]) -> str:
 
 
 def convert_atif_record(record: dict[str, Any]) -> dict[str, Any] | None:
+    normalized = _normalize_source_record(record)
+    if normalized is None:
+        return None
+    record = normalized
     extra = _as_dict(record.get("extra"))
     if not _resolved(extra):
         return None
@@ -463,23 +612,19 @@ def _iter_huggingface(
     split: str,
     revision: str,
 ) -> Iterable[dict[str, Any]]:
-    """Stream the pinned JSONL file directly from Hugging Face.
+    """Stream the pinned SWE-smith JSONL file directly from Hugging Face.
 
-    Avoid `datasets.load_dataset(..., streaming=True)` here: for a single large
-    JSONL artifact it performs dataset-builder/Xet initialization before yielding
-    the first record, which can look like a hang and is unnecessary for this
-    importer. Hugging Face's resolve endpoint supports ordinary HTTP streaming
-    and redirects to the backing object store as needed.
+    The first serious shard uses the raw split because it preserves the source
+    success metadata (`resolved`) and original message/tool exchange without
+    depending on a particular generation of the ADP standardized schema.
     """
 
-    if split != "std":
-        raise ValueError(
-            "SWE-smith importer currently requires the standardized std split"
-        )
+    if split not in {"raw", "std"}:
+        raise ValueError("SWE-smith importer split must be 'raw' or 'std'")
 
     encoded_dataset = urllib.parse.quote(dataset, safe="/")
     encoded_revision = urllib.parse.quote(revision, safe="")
-    encoded_path = urllib.parse.quote(f"{config}/full_std.jsonl", safe="/")
+    encoded_path = urllib.parse.quote(f"{config}/full_{split}.jsonl", safe="/")
     source_url = (
         f"https://huggingface.co/datasets/{encoded_dataset}/resolve/"
         f"{encoded_revision}/{encoded_path}?download=true"
