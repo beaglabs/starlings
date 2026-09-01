@@ -218,6 +218,20 @@ def build_shard(
         chunk_chars=int(config.get("code_chunk_chars", 6000)),
         max_files_per_repo=int(config.get("max_files_per_repo", 2000)),
         prune_checkouts=True,
+        concurrency=(
+            None
+            if str(generation_config.get("concurrency", "auto")).lower() == "auto"
+            else int(generation_config["concurrency"])
+        ),
+        max_concurrency=int(generation_config.get("max_concurrency", 125)),
+        budget_usd=(
+            float(generation_config["budget_usd"])
+            if generation_config.get("budget_usd") is not None
+            else None
+        ),
+        budget_safety_fraction=float(
+            generation_config.get("budget_safety_fraction", 0.90)
+        ),
     )
 
     _log(
@@ -288,6 +302,17 @@ def build_shard(
         f"trajectory generation complete written={generation['written']} "
         f"requested={generation['requested']} rate={generation['success_rate']:.3f}"
     )
+    if generation.get("concurrency"):
+        _log(
+            f"generation concurrency workers="
+            f"{generation['concurrency']['workers']} "
+            f"source={generation['concurrency']['capacity'].get('source')}"
+        )
+    if generation.get("budget"):
+        _log(
+            f"generation budget theoretical_ceiling_usd="
+            f"{generation['budget']['theoretical_max_spend_usd']:.2f}"
+        )
     generation["eligible_repositories"] = int(probe["eligible"])
     generation["catalog_repositories"] = int(probe["repositories"])
     _write_json(paths["generation_report"], generation)
