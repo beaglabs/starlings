@@ -349,24 +349,12 @@ def build_shard(
         "manifest": output_dir / "manifest.json",
     }
 
-    if generation_mode == "import":
-        # Import mode deliberately has no Daytona eligibility phase. A synthetic
-        # probe summary is replaced with real imported-repository counts after
-        # the trajectory stream is converted.
-        probe = {
-            "mode": "external_import",
-            "repositories": 0,
-            "eligible": 1,
-            "eligibility_rate": 1.0,
-        }
-    else:
-        assert sandbox is not None
-        probe = None
+    probe = None
 
     # Native dynamic episodes use only repositories whose clean verifier passes
-    # inside the pinned Daytona corpus snapshot. Import mode skips this block.
+    # inside the pinned Daytona corpus snapshot.
     probe_cache = dict(config.get("probe_cache") or {})
-    if generation_mode != "import" and limit_repositories is None and probe_cache:
+    if limit_repositories is None and probe_cache:
         cached_report = Path(str(probe_cache.get("report") or ""))
         cached_eligible = Path(str(probe_cache.get("eligible_catalog") or ""))
         if cached_report.exists() and cached_eligible.exists():
@@ -389,7 +377,7 @@ def build_shard(
                     f"rate={probe['eligibility_rate']:.3f}"
                 )
 
-    if generation_mode != "import" and probe is None:
+    if probe is None:
         _log("probing clean-verifier eligibility in Daytona")
         probe = probe_repository_catalog(
             catalog_path,
@@ -404,10 +392,10 @@ def build_shard(
             f"probe complete eligible={probe['eligible']}/{probe['repositories']} "
             f"rate={probe['eligibility_rate']:.3f}"
         )
-    if generation_mode != "import" and int(probe["eligible"]) == 0:
+    if int(probe["eligible"]) == 0:
         raise RuntimeError("no repositories passed the clean-verifier eligibility probe")
 
-    if generation_mode != "import" and limit_repositories is None:
+    if limit_repositories is None:
         required_languages = {
             str(language)
             for language in (quality.get("required_dynamic_languages") or [])
