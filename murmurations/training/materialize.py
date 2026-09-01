@@ -32,6 +32,29 @@ def _clip_middle(value: str, limit: int) -> str:
     return value[:head] + marker + value[-tail:]
 
 
+def _clip_utf8_tail(value: str, max_bytes: int) -> str:
+    """Return an exact suffix that fits a UTF-8 byte budget."""
+
+    if max_bytes <= 0:
+        return ""
+    encoded = value.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return value
+
+    low = 0
+    high = len(value)
+    best = len(value)
+    while low <= high:
+        mid = (low + high) // 2
+        suffix = value[mid:]
+        if len(suffix.encode("utf-8")) <= max_bytes:
+            best = mid
+            high = mid - 1
+        else:
+            low = mid + 1
+    return value[best:]
+
+
 def _summary(event: dict[str, Any], *, max_chars: int | None = None) -> str:
     """Render a bounded event summary while keeping its pointer identity visible."""
 
@@ -114,6 +137,7 @@ def _render_context(
     event_index: int,
     *,
     max_context_chars: int,
+    argument_text_override: str | None = None,
 ) -> str:
     event = episode["events"][event_index]
     repository = episode["repository"]
@@ -153,7 +177,11 @@ def _render_context(
             selected_ids.add(parent_id)
 
     frame = event.get("frame") or {}
-    argument_text = frame.get("argument")
+    argument_text = (
+        argument_text_override
+        if argument_text_override is not None
+        else frame.get("argument")
+    )
     grounding_text = str(event.get("grounding") or "")
     if argument_text is not None:
         argument_text = str(argument_text)
@@ -216,24 +244,89 @@ def _render_context(
     return context
 
 
+def _render_context_with_byte_budget(
+    episode: dict[str, Any],
+    event_index: int,
+    *,
+    max_context_chars: int,
+    max_context_bytes: int,
+    argument_text_override: str | None,
+) -> str:
+    if max_context_bytes <= 0:
+        raise ValueError("max_context_bytes must be positive")
+
+    char_limit = min(max_context_chars, max_context_bytes)
+    while char_limit > 0:
+        context = _render_context(
+            episode,
+            event_index,
+            max_context_chars=char_limit,
+            argument_text_override=argument_text_override,
+        )
+        encoded_size = len(context.encode("utf-8"))
+        if encoded_size <= max_context_bytes:
+            return context
+        char_limit -= max(32, encoded_size - max_context_bytes)
+
+    raise ValueError("structured trajectory context cannot fit byte budget")
+
+
 def materialize_episode(
     episode: dict[str, Any],
     *,
     max_context_chars: int = 12000,
+    max_example_bytes: int = 4000,
+    max_argument_bytes: int = 1800,
+    max_language_target_bytes: int = 1200,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for index, event in enumerate(episode["events"]):
         frame = event["frame"]
+        raw_argument = frame.get("argument")
+        training_argument = (
+            _clip_utf8_tail(str(raw_argument), max_argument_bytes)
+            if raw_argument is not None
+            else None
+        )
+        raw_target = str(event.get("language_target", ""))
+        target = _clip_utf8_tail(raw_target, max_language_target_bytes)
+
+        target_bytes = len(target.encode("utf-8"))
+        context_budget = max_example_bytes - target_bytes
+        try:
+            context = _render_context_with_byte_budget(
+                episode,
+                index,
+                max_context_chars=max_context_chars,
+                max_context_bytes=context_budget,
+                argument_text_override=training_argument,
+            )
+        except ValueError:
+            # Structured pointer targets take precedence over free-form
+            # continuation text. Retry with no language-target reservation.
+            target = ""
+            context = _render_context_with_byte_budget(
+                episode,
+                index,
+                max_context_chars=max_context_chars,
+                max_context_bytes=max_example_bytes,
+                argument_text_override=training_argument,
+            )
+
+        remaining_target_bytes = max(
+            0,
+            max_example_bytes - len(context.encode("utf-8")),
+        )
+        target = _clip_utf8_tail(target, remaining_target_bytes)
+
         rows.append(
             {
-                "context": _render_context(
-                    episode, index, max_context_chars=max_context_chars
-                ),
-                "language_target": event.get("language_target", ""),
+                "context": context,
+                "language_target": target,
                 "operation": frame["operation"],
                 "argument": {
                     "kind": frame["argument_kind"],
-                    "text": frame.get("argument"),
+                    "text": training_argument,
                     "operator": frame.get("operator_ref"),
                     "parents": frame.get("parents", []),
                     "confidence_permille": frame.get("confidence_permille", 1000),
@@ -260,6 +353,7 @@ def materialize_file(
     *,
     eval_fraction: float = 0.1,
     max_context_chars: int = 12000,
+    max_example_bytes: int = 4000,
 ) -> dict[str, int]:
     train_rows: list[dict[str, Any]] = []
     eval_rows: list[dict[str, Any]] = []
@@ -272,7 +366,11 @@ def materialize_file(
             split = split_for_repo(episode["repository"]["identity"], eval_fraction)
             target = eval_rows if split == "eval" else train_rows
             target.extend(
-                materialize_episode(episode, max_context_chars=max_context_chars)
+                materialize_episode(
+                    episode,
+                    max_context_chars=max_context_chars,
+                    max_example_bytes=max_example_bytes,
+                )
             )
 
     for path, rows in ((Path(train_path), train_rows), (Path(eval_path), eval_rows)):
@@ -291,6 +389,7 @@ def main() -> None:
     parser.add_argument("--eval-output", required=True)
     parser.add_argument("--eval-fraction", type=float, default=0.1)
     parser.add_argument("--max-context-chars", type=int, default=12000)
+    parser.add_argument("--max-example-bytes", type=int, default=4000)
     args = parser.parse_args()
     counts = materialize_file(
         args.episodes,
@@ -298,6 +397,7 @@ def main() -> None:
         args.eval_output,
         eval_fraction=args.eval_fraction,
         max_context_chars=args.max_context_chars,
+        max_example_bytes=args.max_example_bytes,
     )
     print(json.dumps(counts, indent=2, sort_keys=True))
 
