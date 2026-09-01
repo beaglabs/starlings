@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -17,8 +18,19 @@ from murmurations.training.daytona import DaytonaCorpusRunner
 from murmurations.training.environments.repositories import RepoCatalog, RepoRecord
 
 
-PROBE_PLAN_VERSION = 2
+PROBE_PLAN_VERSION = 3
 MIN_HOST_FREE_BYTES = 64 * 1024 * 1024
+
+
+def _probe_signature(sandbox_runner) -> str:
+    provenance = sandbox_runner.provenance()
+    snapshot_info = dict(provenance.get("snapshot_info") or {})
+    snapshot_identity = (
+        snapshot_info.get("id") or provenance.get("snapshot") or "unknown"
+    )
+    planner = Path(__file__).with_name("repository_plan.py")
+    digest = hashlib.sha256(planner.read_bytes()).hexdigest()
+    return f"v{PROBE_PLAN_VERSION}:{snapshot_identity}:{digest}"
 
 
 def _record_dict(record: RepoRecord) -> dict[str, Any]:
@@ -225,12 +237,7 @@ def load_probe_artifacts(
         raise FileNotFoundError("cached probe artifacts are incomplete")
 
     report = json.loads(report_target.read_text(encoding="utf-8"))
-    provenance = sandbox_runner.provenance()
-    snapshot_info = dict(provenance.get("snapshot_info") or {})
-    snapshot_identity = (
-        snapshot_info.get("id") or provenance.get("snapshot") or "unknown"
-    )
-    expected_signature = f"v{PROBE_PLAN_VERSION}:{snapshot_identity}"
+    expected_signature = _probe_signature(sandbox_runner)
     expected_keys = {(record.name, record.commit) for record in catalog.records}
     rows = list(report.get("results") or [])
     actual_keys = {
@@ -275,10 +282,7 @@ def probe_repository_catalog(
     concurrency: int = 1,
 ) -> dict[str, Any]:
     catalog = RepoCatalog.from_jsonl(catalog_path)
-    provenance = sandbox_runner.provenance() if sandbox_runner is not None else {}
-    snapshot_info = dict(provenance.get("snapshot_info") or {})
-    snapshot_identity = snapshot_info.get("id") or provenance.get("snapshot") or "unknown"
-    probe_signature = f"v{PROBE_PLAN_VERSION}:{snapshot_identity}"
+    probe_signature = _probe_signature(sandbox_runner) if sandbox_runner is not None else "unavailable"
     checkpoint = _checkpoint_path(report_path)
     _require_host_checkpoint_space(checkpoint)
     completed = _load_checkpoint(
