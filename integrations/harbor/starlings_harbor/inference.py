@@ -30,7 +30,20 @@ class Decision:
 
 
 def history_text(history: list[dict[str, Any]]) -> str:
-    return json.dumps(history, ensure_ascii=False, separators=(",", ":"))
+    """Return the same bounded observation history for conditions A and B."""
+    selected: list[dict[str, Any]] = []
+    for item in reversed(history[-8:]):
+        normalized = dict(item)
+        output = normalized.get("output")
+        if isinstance(output, str) and len(output) > 6000:
+            normalized["output"] = output[-6000:]
+            normalized["output_prefix_truncated"] = True
+        candidate = list(reversed([normalized, *selected]))
+        encoded = json.dumps(candidate, ensure_ascii=False, separators=(",", ":"))
+        if len(encoded) > 24000 and selected:
+            break
+        selected.insert(0, normalized)
+    return json.dumps(selected, ensure_ascii=False, separators=(",", ":"))
 
 
 def _endpoint_candidates(base: str) -> list[str]:
