@@ -1,18 +1,21 @@
 # Murmurations training
 
-The training path is:
+The default first-serious-corpus path is:
 
 ```text
 1. language / operation / argument heads
 2. EXECUTE + operator-reference supervision
 3. Python Operator Retrieval (OR)
-4. dynamic permissive repository sampling
-5. repo / AST / docs / compiler / test operators
-6. verifier-grounded trajectory generation
-7. train/eval materialization
+4. import successful execution-grounded SWE-smith trajectories
+5. deterministic command/tool -> semantic-operator compilation
+6. optional local/Blackwell semantic-label augmentation
+7. trajectory-only QA + train/eval materialization
 8. train the 500M model
 9. benchmark
 ```
+
+Native Daytona execution remains available for a small held-out calibration set;
+it is not the bulk shard-000 data factory.
 
 ## End-to-end smoke test
 
@@ -63,26 +66,44 @@ excludes any repository already used by the static 60-repository code catalog,
 and stops only after all configured trajectory-volume and repository-diversity
 targets are met.
 
-Install dependencies and build:
+Install only the import-path dependencies and smoke-test the pipeline:
 
 ```sh
-python3 -m pip install -r murmurations/requirements.txt
+python3 -m pip install -r murmurations/requirements-import.txt
 
+rm -rf data/murmurations/shard-000
+
+python3 -m murmurations.training.build_shard \
+  --config murmurations/training/corpus/shard-000.yaml \
+  --smoke
+```
+
+Then build the serious trajectory shard:
+
+```sh
 rm -rf data/murmurations/shard-000
 
 python3 -m murmurations.training.build_shard \
   --config murmurations/training/corpus/shard-000.yaml
 ```
 
+Import mode does not clone or materialize the static repository catalog, does
+not construct a Daytona client, and has no code-row QA gate. The catalog named
+by `exclude_catalog` is read only to keep imported trajectory repositories
+disjoint from separately-managed code pretraining data.
+
 No Daytona credentials, snapshot, Docker/Lima environment, or LLM endpoint is
-required for this build.
+required for the default build.
 
 The compiler preserves source execution evidence without pretending it was
 executed by Murmurations. For every imported tool call it records the original
 tool name, exact tool arguments, terminal command when present, and linked
 observation. It then maps the action to a stable semantic operator such as
 `repo.search`, `repo.tests`, `type.check`, `package.metadata`,
-`docs.lookup`. File edits and otherwise-unclassified terminal calls remain\ngrounded `EXECUTE` events with their exact source tool call, but intentionally\ncarry no operator-pointer label because those capabilities are not in the\nruntime retrieval registry.
+`docs.lookup`. File edits and otherwise-unclassified terminal calls remain grounded
+`EXECUTE` events with their exact source tool call, but intentionally carry no
+operator-pointer label because those capabilities are not in the runtime
+retrieval registry.
 
 A typical source interaction:
 
@@ -105,10 +126,29 @@ Agent messages are retained as CLAIM/PROPOSE supervision, successful source
 termination becomes ACCEPT, and all event parent references are verified by the
 same Merkle-DAG machinery as native Murmurations episodes.
 
-Shard-000 currently requires at least 500 unique resolved trajectories, 10,000
-materialized trajectory rows, 20 imported repositories, and 1,000 grounded
-external EXECUTE events. Static language-model rows still come from the
-committed multilingual 60-repository catalog.
+Shard-000 currently requires at least 500 resolved trajectories, 10,000
+materialized trajectory rows, 20 imported repositories, 1,000 grounded external
+EXECUTE events, and observed `repo.search` + `repo.tests` operator coverage.
+These are trajectory-only gates. Static code/language rows are managed and
+validated separately.
+
+### Optional Blackwell semantic annotation
+
+Deterministic conversion is sufficient to build shard-000. A local
+OpenAI-compatible model can optionally refine non-authoritative semantic fields
+without touching commands, outputs, success labels, ActionFrames, or event IDs.
+
+Enable `generation.semantic_annotation.enabled` in `shard-000.yaml`, then set:
+
+```sh
+export MURMURATIONS_ANNOTATOR_BASE_URL=http://127.0.0.1:8000/v1
+export MURMURATIONS_ANNOTATOR_MODEL=<local-model-name>
+```
+
+The annotator may refine `retrieval_query` and attach labels such as
+localization, hypothesis, repair, verification, and prior supporting evidence.
+A query rewrite is rejected if it would remove the already-grounded operator
+from Operator Retrieval's candidate set.
 
 ### Native execution calibration
 
@@ -146,11 +186,12 @@ python -m murmurations.training.materialize_code \
 
 The split is repository-level, not row-level.
 
-## Generate dynamic repair trajectories
+## Native Daytona calibration / augmentation
 
-Dynamic repair trajectories are a serious-corpus operation and are generated
-through `build_shard`, which requires the configured Daytona snapshot. The
-low-level trajectory generator is not a host-execution path.
+The original dynamic repair generator is retained for small native calibration
+or later augmentation sets. It requires the configured Daytona snapshot. It is
+not used by shard-000 import mode and is not required before the first 500M
+training run.
 
 For each persistent partition worker the generator:
 
@@ -194,7 +235,7 @@ Train one tokenizer over both streams:
 python -m murmurations.training.tokenizer \
   --input \
     data/murmurations/pretrain-train.jsonl \
-    data/murmurations/trajectory-train.jsonl \
+    data/murmurations/shard-000/trajectory-train.jsonl \
   --output murmurations/models/murmuration-500m-v0/tokenizer \
   --vocab-size 32768
 ```
