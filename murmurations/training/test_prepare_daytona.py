@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 import unittest
 
 from murmurations.training.prepare_daytona import (
@@ -86,6 +87,29 @@ class PrepareDaytonaTests(unittest.TestCase):
 
         self.assertIs(result, created)
         self.assertEqual(service.create_calls, 2)
+
+    def test_zig_archive_fallback_is_signature_verified(self) -> None:
+        dockerfile = (
+            Path(__file__).parent
+            / "corpus"
+            / "daytona"
+            / "Dockerfile"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("minisign", dockerfile)
+        self.assertIn(
+            "RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti+JO/wCYvhbAb/U",
+            dockerfile,
+        )
+        self.assertIn(
+            "http://mirrors.nektro.net/zig/$version/$filename",
+            dockerfile,
+        )
+        self.assertNotIn(
+            "https://mirrors.nektro.net/zig/$version/$filename",
+            dockerfile,
+        )
+        self.assertIn('minisign -Vm "$archive" -P "$zig_pubkey"', dockerfile)
 
     def test_non_replace_does_not_retry_conflict(self) -> None:
         service = _SnapshotService()
