@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import time
 from typing import Any
 import urllib.error
 import urllib.request
@@ -134,11 +135,13 @@ def _request_json(
     prompt: str,
     timeout_seconds: int,
     temperature: float,
+    request_retries: int,
 ) -> Any:
     url = base_url.rstrip("/") + "/chat/completions"
     payload = {
         "model": model,
         "temperature": temperature,
+        "max_tokens": 1200,
         "messages": [
             {
                 "role": "system",
@@ -161,11 +164,22 @@ def _request_json(
         headers=headers,
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            body = json.loads(response.read().decode("utf-8"))
-    except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"semantic proposer request failed: {exc}") from exc
+    if request_retries <= 0:
+        raise ValueError("request_retries must be positive")
+    last_error: Exception | None = None
+    body: Any = None
+    for attempt in range(request_retries):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                body = json.loads(response.read().decode("utf-8"))
+            break
+        except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+            last_error = exc
+            if attempt + 1 < request_retries:
+                time.sleep(min(4.0, 0.5 * (2 ** attempt)))
+    else:
+        assert last_error is not None
+        raise RuntimeError(f"semantic proposer request failed: {last_error}") from last_error
 
     try:
         content = body["choices"][0]["message"]["content"]
@@ -306,6 +320,7 @@ def propose_for_repository(
     request_concurrency: int,
     timeout_seconds: int,
     temperature: float,
+    request_retries: int,
     prune_checkout: bool,
 ) -> list[dict[str, Any]]:
     root: Path | None = None
@@ -336,6 +351,7 @@ def propose_for_repository(
                 ),
                 timeout_seconds=timeout_seconds,
                 temperature=temperature,
+                request_retries=request_retries,
             )
             return _validated_candidates(root=root, path=path, payload=payload)
 
@@ -343,7 +359,15 @@ def propose_for_repository(
         with ThreadPoolExecutor(max_workers=max(1, request_concurrency)) as executor:
             futures = {executor.submit(propose, item): item[0] for item in paths}
             for future in as_completed(futures):
-                candidates.extend(future.result())
+                path = futures[future]
+                try:
+                    candidates.extend(future.result())
+                except Exception as exc:
+                    print(
+                        f"[proposer] skip repo={repo.name} "
+                        f"path={path.relative_to(root)} error={exc}",
+                        flush=True,
+                    )
 
         seen: set[str] = set()
         rows: list[dict[str, Any]] = []
@@ -407,6 +431,8 @@ def main() -> None:
     parser.add_argument("--max-lines-per-file", type=int, default=220)
     parser.add_argument("--candidates-per-file", type=int, default=4)
     parser.add_argument("--request-concurrency", type=int, default=8)
+    parser.add_argument("--repository-concurrency", type=int, default=4)
+    parser.add_argument("--request-retries", type=int, default=3)
     parser.add_argument("--timeout-seconds", type=int, default=180)
     parser.add_argument("--temperature", type=float, default=0.6)
     parser.add_argument("--keep-checkouts", action="store_true")
@@ -418,31 +444,49 @@ def main() -> None:
     tmp = output.with_name(output.name + ".tmp")
     total = 0
     by_repo: dict[str, int] = {}
+
+    def generate_repo(repo: RepoRecord) -> list[dict[str, Any]]:
+        return propose_for_repository(
+            repo,
+            cache_dir=args.cache_dir,
+            base_url=args.base_url,
+            model=args.model,
+            api_key=args.api_key,
+            max_files=args.max_files_per_repo,
+            max_lines_per_file=args.max_lines_per_file,
+            candidates_per_file=args.candidates_per_file,
+            request_concurrency=args.request_concurrency,
+            timeout_seconds=args.timeout_seconds,
+            temperature=args.temperature,
+            request_retries=args.request_retries,
+            prune_checkout=not args.keep_checkouts,
+        )
+
     try:
+        rows_by_repo: dict[str, list[dict[str, Any]]] = {}
+        with ThreadPoolExecutor(
+            max_workers=max(1, args.repository_concurrency)
+        ) as executor:
+            futures = {
+                executor.submit(generate_repo, repo): repo
+                for repo in catalog.records
+            }
+            for future in as_completed(futures):
+                repo = futures[future]
+                rows = future.result()
+                rows_by_repo[repo.name] = rows
+                print(
+                    f"[proposer] repo={repo.name} candidates={len(rows)}",
+                    flush=True,
+                )
+
         with tmp.open("w", encoding="utf-8") as handle:
             for repo in catalog.records:
-                rows = propose_for_repository(
-                    repo,
-                    cache_dir=args.cache_dir,
-                    base_url=args.base_url,
-                    model=args.model,
-                    api_key=args.api_key,
-                    max_files=args.max_files_per_repo,
-                    max_lines_per_file=args.max_lines_per_file,
-                    candidates_per_file=args.candidates_per_file,
-                    request_concurrency=args.request_concurrency,
-                    timeout_seconds=args.timeout_seconds,
-                    temperature=args.temperature,
-                    prune_checkout=not args.keep_checkouts,
-                )
+                rows = rows_by_repo.get(repo.name, [])
                 by_repo[repo.name] = len(rows)
                 for row in rows:
                     handle.write(json.dumps(row, sort_keys=True) + "\n")
                 total += len(rows)
-                print(
-                    f"[proposer] repo={repo.name} candidates={len(rows)} total={total}",
-                    flush=True,
-                )
         tmp.replace(output)
     finally:
         if tmp.exists():
