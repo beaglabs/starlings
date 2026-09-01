@@ -125,6 +125,7 @@ def build_shard(
     work_dir = config.get("work_dir", ".cache/murmurations/work")
     eval_fraction = float(config.get("eval_fraction", 0.1))
     timeout_seconds = int(config.get("timeout_seconds", 120))
+    quality = dict(config.get("quality") or {})
 
     paths = {
         "eligible_catalog": output_dir / "eligible-repos.jsonl",
@@ -225,7 +226,6 @@ def build_shard(
         max_context_chars=int(config.get("max_context_chars", 12000)),
     )
 
-    quality = dict(config.get("quality") or {})
     if limit_repositories is not None:
         probe_success = float(quality.get("min_generation_success_rate", 0.0))
         eligible_for_probe = max(1, int(probe["eligible"]))
