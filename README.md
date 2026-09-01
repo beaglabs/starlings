@@ -239,17 +239,22 @@ python3 -m unittest discover -s python -p 'test_*.py'
 
 The root suite covers deterministic runtime behavior, message routing, seeded entropy, provenance validation and stress, fork/merge causal closure, replica divergence, protocol traces and workflows, CFG parsing/stress, model-evaluation records, and formal-population behavior.
 
-## Hosted Harbor evaluation
+## Harbor evaluation
 
-Starlings includes a first-party ACP integration for controlled Hosted Harbor
-evaluations under [`integrations/harbor`](integrations/harbor/README.md).
+Starlings includes a first-party Harbor integration under
+[`integrations/harbor`](integrations/harbor/README.md).
 
-It exposes three conditions from one pinned repository revision:
+The primary path uses the open-source Harbor CLI on any normal Python host
+(including Molab) and remote CPU task environments such as Daytona. Hosted
+Harbor is optional.
 
-- **A — baseline:** a conventional terminal agent using a Harbor-selected hosted model;
-- **B — Starlings:** the same model, prompt, terminal executor, history, and budgets
+The controlled evaluation exposes:
+
+- **A — baseline:** a conventional agent loop using a hosted model;
+- **B — Starlings:** the exact same model, prompt, tools, history, and budgets
   routed through the actual Zig `Population` / `Agent` runtime;
-- **C — deterministic Starlings:** the same Starlings runtime with no neural model.
+- **C — deterministic Starlings:** the same Zig runtime with no neural model.
 
-The integration is intended to measure architectural capability lift while
-holding learned weights fixed.
+The intended experiment measures architectural capability lift while holding
+learned weights fixed. The Molab + Daytona CPU smoke configs live under
+[`benchmarks/harbor-molab`](benchmarks/harbor-molab/).
