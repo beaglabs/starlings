@@ -23,6 +23,10 @@ generation:
   # snapshot disk allocation and assumes every retry lives for the full TTL.
   budget_usd: 3000
   budget_safety_fraction: 0.90
+  # Parallel workers retain one shallow pinned checkout and one mutation
+  # workspace. Preserve headroom on the Mac instead of risking ENOSPC.
+  host_disk_reserve_gib: 2.0
+  host_disk_per_worker_gib: 0.5
 
 generation_retries: 4
 timeout_seconds: 180
