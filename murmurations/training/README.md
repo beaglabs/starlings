@@ -48,7 +48,7 @@ The committed shard-000 recipe uses 60 public repositories pinned to exact
 commits across Python, Rust, Go, JavaScript/TypeScript, C/C++, Zig, and Java.
 Static code/document windows use the full catalog. Dynamic repair episodes use
 only repositories whose clean verifier passes in an ephemeral Daytona sandbox
-created from the pinned `murmurations-corpus-v1` snapshot. Serious corpus
+created from the pinned `murmurations-corpus-v1-2cpu` snapshot. Serious corpus
 generation never executes repository commands on the host.
 
 Install the pinned Daytona SDK, configure your Daytona credentials, and prepare
@@ -59,7 +59,11 @@ or local language toolchains are required:
 python3 -m pip install -r murmurations/requirements.txt
 export DAYTONA_API_KEY=...
 export DAYTONA_API_URL=https://app.daytona.io/api
-python3 -m murmurations.training.prepare_daytona --replace
+python3 -m murmurations.training.prepare_daytona \
+  --name murmurations-corpus-v1-2cpu \
+  --cpu 2 \
+  --memory-gib 4 \
+  --disk-gib 10
 ```
 
 Eligibility probing is checkpointed per repository and shard-000 runs up to
@@ -67,7 +71,9 @@ eight Daytona probe sandboxes concurrently in the US target region. Probe
 planning and repository checkout happen entirely inside Daytona; the host only
 reads the catalog and writes checkpoint/report files. Re-running the same probe
 resumes compatible snapshot/plan checkpoints instead of repeating completed
-repositories.
+repositories. Because eligibility identity includes the snapshot ID, switching
+from the 4-vCPU snapshot to the 2-vCPU snapshot intentionally requires a fresh
+clean-verifier probe.
 
 Then run the small stratified probe/build:
 
@@ -86,11 +92,38 @@ cat data/murmurations/shard-000/repo-probe.json
 cat data/murmurations/shard-000/qa-report.json
 ```
 
-For the full shard, keep the configured standalone full-probe cache
+For the full hybrid shard, first produce a clean probe for the 2-vCPU snapshot:
+
+```sh
+python3 -m murmurations.training.probe_repositories \
+  --config murmurations/training/corpus/shard-000.yaml \
+  --catalog murmurations/training/corpus/shard-000-repos.jsonl \
+  --report data/murmurations/shard-000-full-probe.json \
+  --eligible-catalog data/murmurations/shard-000-eligible.jsonl
+```
+
+Then generate verifier-untrusted semantic candidates on Molab or any machine
+running an OpenAI-compatible local code-model endpoint:
+
+```sh
+export MURMURATIONS_PROPOSER_BASE_URL=http://127.0.0.1:8000/v1
+export MURMURATIONS_PROPOSER_MODEL=<local-code-model>
+
+python3 -m murmurations.training.propose_mutations \
+  --catalog data/murmurations/shard-000-eligible.jsonl \
+  --output data/murmurations/shard-000-semantic-candidates.jsonl
+```
+
+The proposer is not trusted to produce labels, test results, repairs, or shell
+commands. It emits exact one-line source edits only. The candidate file is
+validated against pinned source lines and its SHA-256 digest becomes part of
+the resumable generation identity.
+
+Keep the configured standalone full-probe cache
 (`data/murmurations/shard-000-full-probe.json` and
 `data/murmurations/shard-000-eligible.jsonl`). The builder validates its exact
-catalog and Daytona snapshot/plan signature before reusing it. A prior limited
-build output directory may be removed without deleting that cache:
+catalog, Daytona snapshot/planner signature, and semantic candidate digest
+before reusing compatible state:
 
 ```sh
 rm -rf data/murmurations/shard-000
@@ -160,22 +193,26 @@ Dynamic repair trajectories are a serious-corpus operation and are generated
 through `build_shard`, which requires the configured Daytona snapshot. The
 low-level trajectory generator is not a host-execution path.
 
-For each successful episode the generator:
+For each persistent partition worker the generator:
 
-1. checks out/selects the pinned repository locally for static inspection only;
-2. creates one ephemeral Daytona sandbox from the pinned corpus snapshot;
-3. clones and checks out the exact repository commit remotely;
-4. runs deterministic ecosystem preparation inside that sandbox;
-5. runs the clean verifier remotely and requires a pass;
-6. tries controlled source mutations locally and synchronizes only changed source files;
-7. keeps only a mutation that changes the remote verifier to failure;
-8. exposes repo/search/AST/docs/check/test operators through OR;
-9. executes terminal-backed operators inside the same Daytona sandbox;
-10. applies the known inverse mutation and reruns the remote verifier.
+1. shares one read-only pinned host checkout across partitions of a repository;
+2. creates one ephemeral Daytona sandbox and prepares dependencies/build state once;
+3. establishes one clean canonical verifier pass for that worker;
+4. mixes deterministic and LLM semantic source candidates;
+5. assigns candidates to disjoint fingerprint partitions so same-repo workers cannot duplicate work;
+6. optionally runs a deterministic narrow pytest/Go triage command to reject obvious misses cheaply;
+7. admits a mutation only when the full canonical verifier changes from pass to fail;
+8. records actual repo/search/docs/compiler/test operator evidence;
+9. applies the known inverse source line;
+10. requires the full canonical verifier to pass again before the episode may be journaled;
+11. repeats multiple requests in the already-prepared sandbox until its burst ends or global shard targets are met.
 
-Failed mutation attempts are discarded instead of mislabeled. The sandbox is
-deleted when the episode ends, and shard QA fails if terminal argv evidence is
-not attributed to Daytona.
+The LLM never supplies executable commands or trusted evidence. Failed
+mutations and failed repairs are discarded instead of mislabeled. Shard-000
+uses four fingerprint partitions per eligible repository, exposes up to 128
+independent worker lanes, and lets Daytona quota plus live host-disk capacity
+choose the actual concurrency. QA additionally requires at least 100
+verifier-accepted LLM-origin mutations.
 
 ## Materialize trajectories
 
