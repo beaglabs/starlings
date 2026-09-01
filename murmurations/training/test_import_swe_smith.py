@@ -8,6 +8,7 @@ import unittest
 import yaml
 
 import murmurations.training.build_shard as build_shard_module
+from murmurations.training.annotate_imported import apply_annotation_payload
 from murmurations.training.build_shard import build_shard
 from murmurations.training.import_swe_smith import (
     classify_tool_call,
@@ -182,6 +183,71 @@ class SweSmithImportTests(unittest.TestCase):
         self.assertIn("COMMAND[", rendered)
         self.assertIn("pytest -q", rendered)
         self.assertIn("42 passed in 1.21s", rendered)
+
+    def test_semantic_annotation_cannot_change_grounded_identity(self) -> None:
+        episode = convert_atif_record(_record())
+        self.assertIsNotNone(episode)
+        assert episode is not None
+
+        test_execute = next(
+            event
+            for event in episode["events"]
+            if event["frame"]["operation"] == "EXECUTE"
+            and event["frame"].get("operator_ref") == "repo.tests"
+        )
+        prior_evidence = next(
+            event
+            for event in episode["events"]
+            if event["frame"]["operation"] == "EVIDENCE"
+        )
+        original_id = test_execute["id"]
+        original_frame = json.loads(json.dumps(test_execute["frame"]))
+        original_environment = json.loads(json.dumps(test_execute["environment"]))
+
+        report = apply_annotation_payload(
+            episode,
+            {
+                "events": [
+                    {
+                        "id": original_id,
+                        "retrieval_query": "verify repository tests after repair",
+                        "intent": "verification",
+                        "supporting_evidence": [prior_evidence["id"], "not-an-event"],
+                        "argument_kind_suggestion": "ACTION",
+                    }
+                ]
+            },
+            model="fixture-blackwell-model",
+        )
+
+        self.assertEqual(report["applied"], 1)
+        self.assertEqual(report["query_updates"], 1)
+        self.assertEqual(test_execute["id"], original_id)
+        self.assertEqual(test_execute["frame"], original_frame)
+        self.assertEqual(test_execute["environment"], original_environment)
+        self.assertEqual(
+            test_execute["semantic_annotation"]["supporting_evidence"],
+            [prior_evidence["id"]],
+        )
+        self.assertIn("repo.tests", test_execute["candidates"])
+
+        previous_query = test_execute["retrieval_query"]
+        rejected = apply_annotation_payload(
+            episode,
+            {
+                "events": [
+                    {
+                        "id": original_id,
+                        "retrieval_query": "look up package documentation",
+                        "intent": "documentation",
+                    }
+                ]
+            },
+            model="fixture-blackwell-model",
+        )
+        self.assertEqual(rejected["applied"], 1)
+        self.assertEqual(rejected["query_updates"], 0)
+        self.assertEqual(test_execute["retrieval_query"], previous_query)
 
     def test_unresolved_records_are_rejected(self) -> None:
         self.assertIsNone(convert_atif_record(_record(resolved=False)))
