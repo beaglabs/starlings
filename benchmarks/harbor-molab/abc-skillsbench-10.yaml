@@ -7,7 +7,7 @@ quiet: false
 environment:
   type: daytona
   delete: true
-  gpus: 0
+  override_gpus: 0
 
 agents:
   - import_path: integrations.harbor.local_agents:BaselineAgent
