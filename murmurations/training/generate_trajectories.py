@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from collections import defaultdict, deque
 import json
 import os
@@ -49,6 +50,21 @@ def _balanced_repositories(catalog: RepoCatalog) -> list[RepoRecord]:
                 progressed = True
         if not progressed:
             return order
+
+
+def _prioritized_repositories(
+    order: list[RepoRecord],
+    *,
+    required_languages: set[str],
+    present_languages: set[str],
+) -> list[RepoRecord]:
+    missing = required_languages - present_languages
+    if not missing:
+        return list(order)
+    return [
+        *[repo for repo in order if (repo.language or "unknown") in missing],
+        *[repo for repo in order if (repo.language or "unknown") not in missing],
+    ]
 
 
 def _schedule(
@@ -143,6 +159,18 @@ def _episode_metrics(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _execution_identity(sandbox_runner) -> dict[str, Any]:
+    provenance = sandbox_runner.provenance()
+    snapshot_info = dict(provenance.get("snapshot_info") or {})
+    planner = Path(__file__).with_name("repository_plan.py")
+    return {
+        "runtime": provenance.get("runtime"),
+        "snapshot": provenance.get("snapshot"),
+        "snapshot_id": snapshot_info.get("id"),
+        "planner_sha256": hashlib.sha256(planner.read_bytes()).hexdigest(),
+    }
+
+
 def _generation_signature(
     catalog: RepoCatalog,
     *,
@@ -152,10 +180,11 @@ def _generation_signature(
     enrichment_operators: tuple[str, ...],
     max_enrichment_calls: int,
     mode: dict[str, Any],
+    execution_identity: dict[str, Any] | None = None,
 ) -> str:
     return canonical_id(
         {
-            "version": 2,
+            "version": 3,
             "catalog": [record.identity for record in catalog.records],
             "seed": seed,
             "max_attempts": max_attempts,
@@ -163,6 +192,7 @@ def _generation_signature(
             "enrichment_operators": list(enrichment_operators),
             "max_enrichment_calls": max_enrichment_calls,
             "mode": mode,
+            "execution_identity": execution_identity or {},
         }
     )
 
@@ -375,6 +405,7 @@ def generate_trajectory_corpus(
         enrichment_operators=enrichment_operators,
         max_enrichment_calls=max_enrichment_calls,
         mode=mode,
+        execution_identity=_execution_identity(sandbox_runner),
     )
     (
         used,
@@ -586,13 +617,10 @@ def generate_trajectory_corpus(
                 and int(metrics["requested"]) < maximum_requested
             ):
                 progressed = False
-                missing_languages = required_languages - metrics["dynamic_languages"]
-                prioritized = sorted(
+                prioritized = _prioritized_repositories(
                     order,
-                    key=lambda repo: (
-                        0 if (repo.language or "unknown") in missing_languages else 1,
-                        order.index(repo),
-                    ),
+                    required_languages=required_languages,
+                    present_languages=metrics["dynamic_languages"],
                 )
                 for repo in prioritized:
                     if _targets_met(metrics, targets):
