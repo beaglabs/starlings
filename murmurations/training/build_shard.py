@@ -256,6 +256,7 @@ def build_shard(
     *,
     limit_repositories: int | None = None,
     episodes_per_repo: int | None = None,
+    smoke: bool = False,
 ) -> dict[str, Any]:
     config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
     output_dir = Path(config["output_dir"])
@@ -276,7 +277,7 @@ def build_shard(
             output_dir,
             generation_config,
             dict(config.get("quality") or {}),
-            smoke=limit_repositories is not None,
+            smoke=smoke or limit_repositories is not None,
         )
 
     catalog_path = _catalog_for_run(
@@ -587,28 +588,31 @@ def main() -> None:
     parser.add_argument("--config", required=True)
     parser.add_argument("--limit-repositories", type=int, default=None)
     parser.add_argument("--episodes-per-repo", type=int, default=None)
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Use the configured small import limits without materializing code.",
+    )
     args = parser.parse_args()
     manifest = build_shard(
         args.config,
         limit_repositories=args.limit_repositories,
         episodes_per_repo=args.episodes_per_repo,
+        smoke=args.smoke,
     )
-    print(
-        json.dumps(
-            {
-                "name": manifest["name"],
-                "passed": manifest["qa"]["passed"],
-                "catalog_repositories": manifest["qa"]["catalog"]["repositories"],
-                "eligible_repositories": manifest["probe"]["eligible"],
-                "episodes": manifest["qa"]["episodes"]["episodes"],
-                "code_rows": manifest["qa"]["rows"]["code"]["rows"],
-                "trajectory_rows": manifest["qa"]["rows"]["trajectory"]["rows"],
-                "output_dir": manifest["config"]["output_dir"],
-            },
-            indent=2,
-            sort_keys=True,
-        )
-    )
+    summary = {
+        "name": manifest["name"],
+        "mode": manifest.get("mode", "native"),
+        "passed": manifest["qa"]["passed"],
+        "episodes": manifest["qa"]["episodes"]["episodes"],
+        "trajectory_rows": manifest["qa"]["rows"]["trajectory"]["rows"],
+        "output_dir": manifest["config"]["output_dir"],
+    }
+    if manifest.get("mode") != "import":
+        summary["catalog_repositories"] = manifest["qa"]["catalog"]["repositories"]
+        summary["eligible_repositories"] = manifest["probe"]["eligible"]
+        summary["code_rows"] = manifest["qa"]["rows"]["code"]["rows"]
+    print(json.dumps(summary, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":
