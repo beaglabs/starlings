@@ -159,22 +159,43 @@ def build_shard(
     )
 
     # Dynamic episodes use only repositories whose clean verifier passes inside
-    # the pinned Daytona corpus snapshot. Repository code is never executed on
-    # the corpus-generation host.
-    _log("probing clean-verifier eligibility in Daytona")
-    probe = probe_repository_catalog(
-        catalog_path,
-        cache_dir=cache_dir,
-        timeout_seconds=timeout_seconds,
-        report_path=paths["probe_report"],
-        eligible_catalog_path=paths["eligible_catalog"],
-        sandbox_runner=sandbox,
-        concurrency=int(config.get("probe_concurrency", 1)),
-    )
-    _log(
-        f"probe complete eligible={probe['eligible']}/{probe['repositories']} "
-        f"rate={probe['eligibility_rate']:.3f}"
-    )
+    # the pinned Daytona corpus snapshot. Reuse a complete standalone probe only
+    # when its exact catalog and snapshot/plan signature still match.
+    probe = None
+    probe_cache = dict(config.get("probe_cache") or {})
+    if limit_repositories is None and probe_cache:
+        cached_report = Path(str(probe_cache.get("report") or ""))
+        cached_eligible = Path(str(probe_cache.get("eligible_catalog") or ""))
+        if cached_report.exists() and cached_eligible.exists():
+            _log("validating cached clean-verifier probe")
+            probe = load_probe_artifacts(
+                catalog_path,
+                cached_report,
+                cached_eligible,
+                sandbox_runner=sandbox,
+            )
+            _copy_artifact(cached_report, paths["probe_report"])
+            _copy_artifact(cached_eligible, paths["eligible_catalog"])
+            _log(
+                f"reused probe eligible={probe['eligible']}/{probe['repositories']} "
+                f"rate={probe['eligibility_rate']:.3f}"
+            )
+
+    if probe is None:
+        _log("probing clean-verifier eligibility in Daytona")
+        probe = probe_repository_catalog(
+            catalog_path,
+            cache_dir=cache_dir,
+            timeout_seconds=timeout_seconds,
+            report_path=paths["probe_report"],
+            eligible_catalog_path=paths["eligible_catalog"],
+            sandbox_runner=sandbox,
+            concurrency=int(config.get("probe_concurrency", 1)),
+        )
+        _log(
+            f"probe complete eligible={probe['eligible']}/{probe['repositories']} "
+            f"rate={probe['eligibility_rate']:.3f}"
+        )
     if int(probe["eligible"]) == 0:
         raise RuntimeError("no repositories passed the clean-verifier eligibility probe")
 
