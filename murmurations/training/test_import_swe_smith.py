@@ -474,9 +474,17 @@ class SweSmithImportTests(unittest.TestCase):
             root = Path(tmp)
             input_path = root / "raw.jsonl"
             first = _raw_record(traj_id="same.trace", style="xml")
-            second = _raw_record(traj_id="same.trace", style="tool")
+            duplicate = _raw_record(traj_id="same.trace", style="tool")
+            second_unique = _raw_record(traj_id="other.trace", style="ticks")
             input_path.write_text(
-                json.dumps(first) + "\n" + json.dumps(second) + "\n",
+                (
+                    json.dumps(first)
+                    + "\n"
+                    + json.dumps(duplicate)
+                    + "\n"
+                    + json.dumps(second_unique)
+                    + "\n"
+                ),
                 encoding="utf-8",
             )
             output = root / "episodes.jsonl"
@@ -485,13 +493,14 @@ class SweSmithImportTests(unittest.TestCase):
                 output,
                 input_jsonl=input_path,
                 target_rows=1,
-                min_episodes=1,
+                min_episodes=2,
                 min_repositories=1,
                 max_episodes=2,
             )
 
-            self.assertEqual(report["written"], 1)
+            self.assertEqual(report["written"], 2)
             self.assertEqual(report["duplicate_trajectories_skipped"], 1)
+            self.assertEqual(report["source_scanned"], 3)
             self.assertEqual(
                 len(
                     [
@@ -500,7 +509,7 @@ class SweSmithImportTests(unittest.TestCase):
                         if line
                     ]
                 ),
-                1,
+                2,
             )
 
     def test_stream_import_stops_at_target_and_excludes_static_repositories(self) -> None:
