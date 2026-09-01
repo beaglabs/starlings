@@ -225,7 +225,20 @@ class ImportedShardBuildTests(unittest.TestCase):
             static_repo = root / "static"
             static_repo.mkdir()
             (static_repo / "sample.py").write_text(
-                "def add(a, b):\n    return a + b\n",
+                (
+                    "def add(a, b):\n"
+                    "    return a + b\n\n"
+                    "def subtract(a, b):\n"
+                    "    return a - b\n\n"
+                    "def multiply(a, b):\n"
+                    "    return a * b\n\n"
+                    "def divide(a, b):\n"
+                    "    if b == 0:\n"
+                    "        raise ValueError('division by zero')\n"
+                    "    return a / b\n\n"
+                    "def clamp(value, lower, upper):\n"
+                    "    return max(lower, min(value, upper))\n"
+                ),
                 encoding="utf-8",
             )
             catalog = root / "catalog.jsonl"
