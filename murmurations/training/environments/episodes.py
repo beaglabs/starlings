@@ -350,6 +350,11 @@ def make_oracle_bootstrap_episode(
         timeout_seconds=timeout_seconds,
         command_runner=command_runner,
     )
+    if not repaired.ok:
+        raise RuntimeError(
+            "oracle repair did not restore the canonical repository verifier"
+        )
+
     verify_repair = builder.add(
         Operation.EXECUTE,
         ArgumentKind.ACTION,
