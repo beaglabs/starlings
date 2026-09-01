@@ -52,6 +52,14 @@ _DOCS_RE = re.compile(
     re.IGNORECASE,
 )
 
+_RETRIEVABLE_OPERATORS = {
+    "repo.search",
+    "repo.tests",
+    "type.check",
+    "package.metadata",
+    "docs.lookup",
+}
+
 
 def import_operator_registry() -> OperatorRegistry:
     return OperatorRegistry(
@@ -100,24 +108,6 @@ def import_operator_registry() -> OperatorRegistry:
                 requires=("repo",),
                 provides=("docs.lookup",),
                 cost_millis=50,
-            ),
-            OperatorDescriptor(
-                name="repo.edit",
-                description="Create, replace, or edit repository source files.",
-                kind="tool",
-                tags=("repo", "edit", "patch", "replace", "write", "create"),
-                requires=("repo",),
-                provides=("repo.changed",),
-                cost_millis=10,
-            ),
-            OperatorDescriptor(
-                name="repo.command",
-                description="Execute a repository-scoped terminal command.",
-                kind="tool",
-                tags=("repo", "terminal", "shell", "command", "execute"),
-                requires=("repo",),
-                provides=("command.result",),
-                cost_millis=100,
             ),
         ]
     )
@@ -200,9 +190,6 @@ def classify_tool_call(
     name = function_name.strip().lower()
     command = str(arguments.get("command") or "").strip()
     editor_command = str(arguments.get("command") or "").strip().lower()
-
-    if name == "finish":
-        return None, "finish task", ArgumentKind.ACTION
 
     if name in {"str_replace_editor", "editor", "read_file", "write_file"}:
         if editor_command in {"view", "read"} or name == "read_file":
@@ -321,11 +308,7 @@ def convert_atif_record(record: dict[str, Any]) -> dict[str, Any] | None:
             function_name = str(call.get("function_name") or "tool")
             arguments = _as_dict(call.get("arguments"))
             call_id = str(call.get("tool_call_id") or "")
-            operator_ref, query, argument_kind = classify_tool_call(
-                function_name, arguments
-            )
-
-            if operator_ref is None:
+            if function_name.strip().lower() == "finish":
                 parent = builder.add(
                     Operation.ACCEPT,
                     ArgumentKind.ACTION,
@@ -338,14 +321,8 @@ def convert_atif_record(record: dict[str, Any]) -> dict[str, Any] | None:
                 accepted = True
                 continue
 
-            query_id = builder.add(
-                Operation.QUERY,
-                ArgumentKind.CAPABILITY,
-                query,
-                grounding=message or query,
-                retrieval_query=f"{operator_ref} {query}",
-                operator_ref=operator_ref,
-                parents=(parent,) if parent else (),
+            semantic_action, query, argument_kind = classify_tool_call(
+                function_name, arguments
             )
             exact_argument = _tool_argument(function_name, arguments)
             environment = {
@@ -354,19 +331,38 @@ def convert_atif_record(record: dict[str, Any]) -> dict[str, Any] | None:
                 "tool_name": function_name,
                 "tool_call_id": call_id,
                 "tool_arguments": arguments,
+                "semantic_action": semantic_action,
                 "output": observations.get(call_id, "")[-8000:],
             }
             if "command" in arguments:
                 environment["command"] = str(arguments.get("command") or "")[-4000:]
+
+            if semantic_action in _RETRIEVABLE_OPERATORS:
+                query_id = builder.add(
+                    Operation.QUERY,
+                    ArgumentKind.CAPABILITY,
+                    query,
+                    grounding=message or query,
+                    retrieval_query=f"{semantic_action} {query}",
+                    operator_ref=semantic_action,
+                    parents=(parent,) if parent else (),
+                )
+                execute_parent = query_id
+                execute_operator_ref = semantic_action
+                execute_query = f"{semantic_action} {query}"
+            else:
+                execute_parent = parent
+                execute_operator_ref = None
+                execute_query = query
 
             execute_id = builder.add(
                 Operation.EXECUTE,
                 argument_kind,
                 exact_argument,
                 grounding=exact_argument,
-                retrieval_query=f"{operator_ref} {query}",
-                operator_ref=operator_ref,
-                parents=(query_id,),
+                retrieval_query=execute_query,
+                operator_ref=execute_operator_ref,
+                parents=(execute_parent,) if execute_parent else (),
                 environment=environment,
             )
             tool_events += 1
@@ -378,7 +374,7 @@ def convert_atif_record(record: dict[str, Any]) -> dict[str, Any] | None:
                     ArgumentKind.TEXT,
                     output[-4000:],
                     grounding=output,
-                    retrieval_query=f"record evidence from {operator_ref}",
+                    retrieval_query=f"record evidence from {semantic_action}",
                     parents=(execute_id,),
                     confidence_permille=1000,
                 )
