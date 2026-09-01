@@ -238,3 +238,18 @@ python3 -m unittest discover -s python -p 'test_*.py'
 ```
 
 The root suite covers deterministic runtime behavior, message routing, seeded entropy, provenance validation and stress, fork/merge causal closure, replica divergence, protocol traces and workflows, CFG parsing/stress, model-evaluation records, and formal-population behavior.
+
+## Hosted Harbor evaluation
+
+Starlings includes a first-party ACP integration for controlled Hosted Harbor
+evaluations under [`integrations/harbor`](integrations/harbor/README.md).
+
+It exposes three conditions from one pinned repository revision:
+
+- **A — baseline:** a conventional terminal agent using a Harbor-selected hosted model;
+- **B — Starlings:** the same model, prompt, terminal executor, history, and budgets
+  routed through the actual Zig `Population` / `Agent` runtime;
+- **C — deterministic Starlings:** the same Starlings runtime with no neural model.
+
+The integration is intended to measure architectural capability lift while
+holding learned weights fixed.
