@@ -18,36 +18,95 @@ def split_for_repo(repository_identity: str, eval_fraction: float) -> str:
     return "eval" if bucket < eval_fraction else "train"
 
 
-def _summary(event: dict[str, Any]) -> str:
+def _clip_middle(value: str, limit: int) -> str:
+    if limit <= 0:
+        return ""
+    if len(value) <= limit:
+        return value
+    marker = "...[truncated]..."
+    if limit <= len(marker):
+        return value[:limit]
+    remaining = limit - len(marker)
+    head = remaining // 2
+    tail = remaining - head
+    return value[:head] + marker + value[-tail:]
+
+
+def _summary(event: dict[str, Any], *, max_chars: int | None = None) -> str:
+    """Render a bounded event summary while keeping its pointer identity visible."""
+
     frame = event["frame"]
-    argument = str(frame.get("argument") or "")[-800:]
-    lines = [
-        f"{event['id']} {frame['operation']} operator={frame.get('operator_ref')} argument={argument}"
-    ]
+    argument = _clip_middle(str(frame.get("argument") or ""), 800)
+    identity = (
+        f"{event['id']} {frame['operation']} "
+        f"operator={frame.get('operator_ref')} argument={argument}"
+    )
+    lines = [identity]
     env = event.get("environment") or {}
+
     argv = env.get("argv")
     if isinstance(argv, list) and argv:
-        lines.append(
-            f"ARGV[{event['id']}]: "
-            + json.dumps([str(item) for item in argv], separators=(",", ":"))
+        rendered_argv = json.dumps(
+            [str(item) for item in argv],
+            separators=(",", ":"),
         )
+        lines.append(
+            f"ARGV[{event['id']}]: {_clip_middle(rendered_argv, 1200)}"
+        )
+
     tool_name = env.get("tool_name")
     tool_arguments = env.get("tool_arguments")
     if isinstance(tool_name, str) and tool_name:
+        rendered_arguments = json.dumps(
+            tool_arguments or {},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         lines.append(
             f"TOOL[{event['id']}]: {tool_name} "
-            + json.dumps(tool_arguments or {}, sort_keys=True, separators=(",", ":"))
+            + _clip_middle(rendered_arguments, 1600)
         )
+
     semantic_action = env.get("semantic_action")
     if isinstance(semantic_action, str) and semantic_action:
         lines.append(f"SEMANTIC_ACTION[{event['id']}]: {semantic_action}")
+
     command = env.get("command")
     if isinstance(command, str) and command:
-        lines.append(f"COMMAND[{event['id']}]: {command[-1200:]}")
+        lines.append(
+            f"COMMAND[{event['id']}]: {_clip_middle(command, 1200)}"
+        )
+
     output = env.get("output")
     if isinstance(output, str) and output:
-        lines.append(f"RESULT[{event['id']}]: {output[-1600:]}")
-    return "\n".join(lines)
+        lines.append(
+            f"RESULT[{event['id']}]: {_clip_middle(output, 1600)}"
+        )
+
+    summary = "\n".join(lines)
+    if max_chars is None or len(summary) <= max_chars:
+        return summary
+
+    # A direct parent only needs to remain unambiguously addressable for the
+    # structured parent-pointer target. Never truncate the event id itself.
+    minimum_identity = (
+        f"{event['id']} {frame['operation']} operator={frame.get('operator_ref')}"
+    )
+    if max_chars < len(minimum_identity):
+        raise ValueError(
+            "max_context_chars cannot preserve direct-parent event identifier"
+        )
+
+    remaining = max_chars - len(minimum_identity)
+    if remaining <= 1:
+        return minimum_identity
+
+    payload = "\n".join(lines[1:])
+    if not payload:
+        compact_argument = _clip_middle(argument, remaining - 1)
+        return minimum_identity + "\n" + compact_argument
+
+    return minimum_identity + "\n" + _clip_middle(payload, remaining - 1)
 
 
 def _render_context(
@@ -58,14 +117,20 @@ def _render_context(
 ) -> str:
     event = episode["events"][event_index]
     repository = episode["repository"]
+    task_limit = min(4000, max(256, max_context_chars // 3))
+    grounding_limit = min(3000, max(256, max_context_chars // 4))
+    query_limit = min(1000, max(128, max_context_chars // 12))
     header = [
-        f"TASK: {episode['task']}",
+        f"TASK: {_clip_middle(str(episode['task']), task_limit)}",
         (
             "REPOSITORY: "
             f"{repository['name']} commit={repository['commit']} "
             f"license={repository['license']} identity={repository['identity']}"
         ),
-        f"RETRIEVAL_QUERY: {event['retrieval_query']}",
+        (
+            "RETRIEVAL_QUERY: "
+            f"{_clip_middle(str(event['retrieval_query']), query_limit)}"
+        ),
         "<CAPABILITY>",
     ]
     for name in event.get("candidates", []):
@@ -88,12 +153,29 @@ def _render_context(
             selected_ids.add(parent_id)
 
     fixed_tail = [
-        f"OBSERVED_INPUT: {event['grounding'][-4000:]}",
+        (
+            "OBSERVED_INPUT: "
+            f"{_clip_middle(str(event['grounding']), grounding_limit)}"
+        ),
         "</STATE>",
     ]
     fixed_chars = len("\n".join(header + fixed_tail))
     budget = max(0, max_context_chars - fixed_chars)
-    used = sum(len(_summary(item)) + 1 for item in selected)
+
+    # Direct parents are mandatory pointer targets. Give them the available
+    # state budget first and compact their payloads as needed; recent context
+    # is strictly opportunistic.
+    parent_summaries: dict[str, str] = {}
+    if selected:
+        separators = len(selected)
+        parent_budget = max(0, budget - separators)
+        per_parent_budget = parent_budget // len(selected)
+        for item in selected:
+            parent_summaries[item["id"]] = _summary(
+                item,
+                max_chars=per_parent_budget,
+            )
+    used = sum(len(parent_summaries[item["id"]]) + 1 for item in selected)
 
     recent: list[dict[str, Any]] = []
     for previous in reversed(prior):
@@ -108,15 +190,17 @@ def _render_context(
     selected.extend(reversed(recent))
     selected.sort(key=lambda item: order[item["id"]])
 
-    context = "\n".join(header + [_summary(item) for item in selected] + fixed_tail)
+    rendered_selected = [
+        (
+            parent_summaries[item["id"]]
+            if item["id"] in parent_summaries
+            else _summary(item)
+        )
+        for item in selected
+    ]
+    context = "\n".join(header + rendered_selected + fixed_tail)
     if len(context) > max_context_chars:
-        # Keep the current grounding and direct-parent summaries; if even those
-        # cannot fit, reject rather than create unsupervisable pointer labels.
-        parent_text = "\n".join(_summary(by_id[parent_id]) for parent_id in parent_ids)
-        compact = "\n".join(header + [parent_text] + fixed_tail)
-        if len(compact) > max_context_chars:
-            raise ValueError("direct-parent context exceeds max_context_chars")
-        context = compact
+        raise ValueError("bounded context rendering exceeded max_context_chars")
     return context
 
 
