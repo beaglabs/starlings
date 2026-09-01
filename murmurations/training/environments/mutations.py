@@ -8,7 +8,7 @@ from pathlib import Path
 import random
 import shutil
 import subprocess
-from typing import Sequence
+from typing import Iterable, Sequence
 
 from murmurations.utils.canonical import canonical_id
 
@@ -52,6 +52,27 @@ def mutation_fingerprint(
             "mutated": mutated_line,
         }
     )
+
+
+@dataclass(frozen=True)
+class MutationCandidate:
+    relative_path: str
+    line_number: int
+    kind: str
+    original_line: str
+    mutated_line: str
+    source: str = "deterministic"
+    targeted_test_argv: tuple[str, ...] = ()
+
+    @property
+    def fingerprint(self) -> str:
+        return mutation_fingerprint(
+            self.relative_path,
+            self.line_number,
+            self.kind,
+            self.original_line,
+            self.mutated_line,
+        )
 
 
 @dataclass(frozen=True)
@@ -128,12 +149,13 @@ def verify(root: str | Path, argv: Sequence[str], timeout_seconds: int) -> Verif
     )
 
 
-def _candidate_mutations(root: Path) -> list[tuple[Path, int, str, str, str]]:
-    out: list[tuple[Path, int, str, str, str]] = []
-    for path in root.rglob("*"):
+def enumerate_mutation_candidates(root: str | Path) -> list[MutationCandidate]:
+    root_path = Path(root).resolve()
+    out: list[MutationCandidate] = []
+    for path in root_path.rglob("*"):
         if not path.is_file() or path.suffix.lower() not in _SOURCE_EXTENSIONS:
             continue
-        relative_parts = path.relative_to(root).parts
+        relative_parts = path.relative_to(root_path).parts
         if any(part in _SKIP_DIRS for part in relative_parts):
             continue
         try:
@@ -149,8 +171,33 @@ def _candidate_mutations(root: Path) -> list[tuple[Path, int, str, str, str]]:
                     continue
                 mutated = line.replace(before, after, 1)
                 if mutated != line:
-                    out.append((path, index, mutated, line, kind))
+                    out.append(
+                        MutationCandidate(
+                            relative_path=str(path.relative_to(root_path)),
+                            line_number=index + 1,
+                            kind=kind,
+                            original_line=line,
+                            mutated_line=mutated,
+                        )
+                    )
     return out
+
+
+def partition_mutation_candidates(
+    candidates: Iterable[MutationCandidate],
+    *,
+    partition_id: int = 0,
+    partition_count: int = 1,
+) -> list[MutationCandidate]:
+    if partition_count <= 0:
+        raise ValueError("partition_count must be positive")
+    if partition_id < 0 or partition_id >= partition_count:
+        raise ValueError("partition_id must be in [0, partition_count)")
+    return [
+        candidate
+        for candidate in candidates
+        if int(candidate.fingerprint[:16], 16) % partition_count == partition_id
+    ]
 
 
 def inject_verified_mutation(
@@ -163,6 +210,11 @@ def inject_verified_mutation(
     max_attempts: int = 64,
     excluded_fingerprints: set[str] | None = None,
     verify_runner=None,
+    clean_verification: Verification | None = None,
+    candidates: Sequence[MutationCandidate] | None = None,
+    partition_id: int = 0,
+    partition_count: int = 1,
+    triage_runner=None,
 ) -> Mutation:
     """Copy a clean repo and retain a unique mutation caught by its verifier."""
 
@@ -179,48 +231,69 @@ def inject_verified_mutation(
     )
 
     run_verify = verify if verify_runner is None else verify_runner
-    clean = run_verify(workspace, verifier_argv, timeout_seconds)
+    clean = clean_verification
+    if clean is None:
+        clean = run_verify(workspace, verifier_argv, timeout_seconds)
     if not clean.passed:
         raise RuntimeError(
             "source repository verifier does not pass; cannot establish mutation ground truth"
         )
 
     excluded = excluded_fingerprints or set()
-    candidates = _candidate_mutations(workspace)
-    random.Random(seed).shuffle(candidates)
+    candidate_pool = (
+        list(candidates)
+        if candidates is not None
+        else enumerate_mutation_candidates(workspace)
+    )
+    candidate_pool = partition_mutation_candidates(
+        candidate_pool,
+        partition_id=partition_id,
+        partition_count=partition_count,
+    )
+    random.Random(seed).shuffle(candidate_pool)
     attempted = 0
-    for path, index, mutated_line, original_line, kind in candidates:
-        relative_path = str(path.relative_to(workspace))
-        fingerprint = mutation_fingerprint(
-            relative_path,
-            index + 1,
-            kind,
-            original_line,
-            mutated_line,
-        )
+    for candidate in candidate_pool:
+        fingerprint = candidate.fingerprint
         if fingerprint in excluded:
             continue
         if attempted >= max_attempts:
             break
         attempted += 1
 
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-        if index >= len(lines) or lines[index] != original_line:
+        path = workspace / candidate.relative_path
+        index = candidate.line_number - 1
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        except (OSError, UnicodeDecodeError):
             continue
-        lines[index] = mutated_line
+        if index >= len(lines) or lines[index] != candidate.original_line:
+            continue
+        lines[index] = candidate.mutated_line
         path.write_text("".join(lines), encoding="utf-8")
+
+        if candidate.targeted_test_argv and triage_runner is not None:
+            triage = triage_runner(
+                workspace,
+                candidate.targeted_test_argv,
+                timeout_seconds,
+            )
+            if triage.passed:
+                lines[index] = candidate.original_line
+                path.write_text("".join(lines), encoding="utf-8")
+                continue
+
         broken = run_verify(workspace, verifier_argv, timeout_seconds)
         if not broken.passed:
             return Mutation(
-                relative_path=relative_path,
-                line_number=index + 1,
-                kind=kind,
-                original_line=original_line,
-                mutated_line=mutated_line,
+                relative_path=candidate.relative_path,
+                line_number=candidate.line_number,
+                kind=candidate.kind,
+                original_line=candidate.original_line,
+                mutated_line=candidate.mutated_line,
                 clean_verification=clean,
                 broken_verification=broken,
             )
-        lines[index] = original_line
+        lines[index] = candidate.original_line
         path.write_text("".join(lines), encoding="utf-8")
 
     raise RuntimeError(
