@@ -1,161 +1,170 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-import subprocess
-import sys
 import tempfile
 import unittest
 
-from murmurations.training.environments.episodes import make_oracle_bootstrap_episode
-from murmurations.training.environments.mutations import inject_verified_mutation, verify
-from murmurations.training.environments.repositories import RepoRecord
-from murmurations.training.materialize import materialize_episode
-from murmurations.training.operators import default_operator_registry
+from murmurations.training.data import (
+    ProtocolCollator,
+    ProtocolDataset,
+    TokenBudgetBatchSampler,
+)
 
 
-class DataPipelineTests(unittest.TestCase):
-    def test_verify_does_not_reuse_stale_python_bytecode(self) -> None:
+class _Backend:
+    def to_str(self) -> str:
+        return "fake-byte-tokenizer-v1"
+
+
+class _Tokenizer:
+    def __init__(self) -> None:
+        self.backend_tokenizer = _Backend()
+        self.eos_token_id = 2
+        self.pad_token_id = 0
+        self.calls = 0
+
+    def __call__(
+        self,
+        text: str,
+        *,
+        add_special_tokens: bool,
+        return_offsets_mapping: bool,
+    ) -> dict[str, object]:
+        del add_special_tokens
+        self.calls += 1
+        return {
+            "input_ids": [10 + (ord(char) % 200) for char in text],
+            "offset_mapping": [
+                (index, index + 1)
+                for index in range(len(text))
+            ] if return_offsets_mapping else None,
+        }
+
+    def encode(self, text: str, *, add_special_tokens: bool) -> list[int]:
+        del add_special_tokens
+        self.calls += 1
+        if text == "<ACT>":
+            return [999]
+        return [10 + (ord(char) % 200) for char in text]
+
+
+def _row(context: str, target: str = "") -> dict[str, object]:
+    return {
+        "context": context,
+        "language_target": target,
+        "operation": "NOOP",
+        "argument": {
+            "kind": "NONE",
+            "text": None,
+            "operator": None,
+            "parents": [],
+            "confidence_permille": 1000,
+        },
+    }
+
+
+class ProtocolDataPipelineTests(unittest.TestCase):
+    def test_pretokenized_cache_avoids_tokenization_on_reuse(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "src").mkdir()
-            (root / "tests").mkdir()
-            (root / "src" / "__init__.py").write_text("", encoding="utf-8")
-            source = root / "src" / "logic.py"
+            source = root / "rows.jsonl"
             source.write_text(
-                "def same(a, b):\n    return a == b\n", encoding="utf-8"
-            )
-            (root / "tests" / "test_logic.py").write_text(
-                "import unittest\n"
-                "from src.logic import same\n\n"
-                "class T(unittest.TestCase):\n"
-                "    def test_same(self):\n"
-                "        self.assertTrue(same(3, 3))\n"
-                "        self.assertFalse(same(3, 4))\n",
+                json.dumps(_row("alpha", "beta")) + "\n"
+                + json.dumps(_row("gamma", "delta")) + "\n",
                 encoding="utf-8",
             )
-            verifier = [
-                sys.executable,
-                "-m",
-                "unittest",
-                "discover",
-                "-s",
-                "tests",
-            ]
+            cache = root / "tokens.pt"
 
-            original_stat = source.stat()
-            warmed = subprocess.run(
-                verifier,
-                cwd=root,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(warmed.returncode, 0, warmed.stdout)
-            self.assertTrue(any(root.rglob("*.pyc")))
-
-            # Same-size mutation + restored mtime makes timestamp/size pyc
-            # validation accept the stale clean bytecode unless verify purges it.
-            source.write_text(
-                "def same(a, b):\n    return a != b\n", encoding="utf-8"
-            )
-            os.utime(
+            first_tokenizer = _Tokenizer()
+            first = ProtocolDataset(
                 source,
-                ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+                first_tokenizer,
+                128,
+                pretokenize=True,
+                cache_path=cache,
             )
+            self.assertEqual(len(first), 2)
+            self.assertIsNotNone(first.lengths)
+            self.assertGreater(first_tokenizer.calls, 0)
+            calls_after_build = first_tokenizer.calls
+            _ = first[0]
+            self.assertEqual(first_tokenizer.calls, calls_after_build)
+            self.assertTrue(cache.exists())
 
-            broken = verify(root, verifier, timeout_seconds=20)
-            self.assertFalse(broken.passed)
-            self.assertFalse(any(root.rglob("*.pyc")))
+            second_tokenizer = _Tokenizer()
+            second = ProtocolDataset(
+                source,
+                second_tokenizer,
+                128,
+                pretokenize=True,
+                cache_path=cache,
+            )
+            self.assertEqual(len(second), 2)
+            self.assertEqual(second_tokenizer.calls, 0)
+            _ = second[1]
+            self.assertEqual(second_tokenizer.calls, 0)
+            self.assertEqual(first.lengths, second.lengths)
 
-    def test_verified_mutation_episode_materializes_operator_supervision(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "clean"
-            root.mkdir()
-            (root / "src").mkdir()
-            (root / "tests").mkdir()
-            (root / "src" / "logic.py").write_text(
-                "def same(a, b):\n    return a == b\n", encoding="utf-8"
-            )
-            (root / "tests" / "test_logic.py").write_text(
-                "import unittest\n"
-                "from src.logic import same\n\n"
-                "class T(unittest.TestCase):\n"
-                "    def test_same(self):\n"
-                "        self.assertTrue(same(3, 3))\n"
-                "        self.assertFalse(same(3, 4))\n",
-                encoding="utf-8",
-            )
-            (root / "src" / "__init__.py").write_text("", encoding="utf-8")
-            (root / "pyproject.toml").write_text(
-                "[project]\nname = \"fixture\"\nversion = \"1.0.0\"\n",
-                encoding="utf-8",
-            )
+    def test_token_budget_batches_bound_padded_compute(self) -> None:
+        lengths = [100, 110, 120, 800, 810, 820, 1600, 1700]
+        sampler = TokenBudgetBatchSampler(
+            lengths,
+            max_tokens=2048,
+            max_examples=8,
+            bucket_size=len(lengths),
+            shuffle=False,
+        )
 
-            verifier = ["python3", "-m", "unittest", "discover", "-s", "tests"]
-            workspace = Path(tmp) / "work"
-            mutation = inject_verified_mutation(
-                root, workspace, verifier, seed=2, timeout_seconds=20
-            )
-            self.assertFalse(mutation.broken_verification.passed)
+        flattened: list[int] = []
+        for batch in sampler:
+            flattened.extend(batch)
+            padded_tokens = len(batch) * max(lengths[index] for index in batch)
+            self.assertLessEqual(padded_tokens, 2048)
 
-            repo = RepoRecord(
-                name="fixture",
-                commit="fixture-v1",
-                license="MIT",
-                path=str(root),
-                language="python",
-            )
-            registry = default_operator_registry(workspace)
-            # unittest-only fixtures have no pyproject; register tests explicitly
-            if "repo.tests" not in [d.name for d in registry.descriptors()]:
-                from murmurations.training.operator_retrieval import OperatorDescriptor
-                registry.register(
-                    OperatorDescriptor(
-                        "repo.tests",
-                        "Run repository tests",
-                        "subprocess",
-                        tags=("test", "verify"),
-                        requires=("repo",),
-                    )
-                )
+        self.assertEqual(sorted(flattened), list(range(len(lengths))))
+        stats = sampler.stats()
+        self.assertEqual(stats["examples"], len(lengths))
+        self.assertLessEqual(stats["max_batch_examples"], 8)
+        self.assertGreater(stats["padding_efficiency"], 0.9)
 
-            # make_oracle_bootstrap_episode uses execute_operator, whose detector
-            # recognizes the tests/ fallback added by the training adapter.
-            episode = make_oracle_bootstrap_episode(
-                repo,
-                workspace,
-                mutation,
-                registry,
-                episode_seed=17,
-                enrichment_operators=("package.metadata",),
-                max_enrichment_calls=1,
-            )
-            rows = materialize_episode(episode.record())
-            execute_rows = [row for row in rows if row["operation"] == "EXECUTE"]
-            self.assertTrue(execute_rows)
-            self.assertTrue(any(row["argument"]["operator"] == "repo.tests" for row in execute_rows))
-            self.assertTrue(
-                any(
-                    row["argument"]["operator"] == "package.metadata"
-                    for row in execute_rows
-                )
-            )
-            for row in execute_rows:
-                operator = row["argument"]["operator"]
-                if operator is not None:
-                    self.assertIn(f"<OPERATOR>{operator}</OPERATOR>", row["context"])
+    def test_collator_reports_real_sequence_lengths(self) -> None:
+        collator = ProtocolCollator(pad_token_id=0)
+        rows = [
+            {
+                "input_ids": [1, 2, 3],
+                "language_labels": [-100, 2, 3],
+                "control_position": 0,
+                "operation_label": 0,
+                "argument_kind_label": 0,
+                "argument_start_label": -100,
+                "argument_end_label": -100,
+                "operator_pointer_label": -100,
+                "parent_pointer_labels": [-100, -100, -100, -100],
+                "parent_count_label": 0,
+                "confidence_target": 1.0,
+                "confidence_mask": False,
+            },
+            {
+                "input_ids": [4, 5],
+                "language_labels": [-100, 5],
+                "control_position": 0,
+                "operation_label": 0,
+                "argument_kind_label": 0,
+                "argument_start_label": -100,
+                "argument_end_label": -100,
+                "operator_pointer_label": -100,
+                "parent_pointer_labels": [-100, -100, -100, -100],
+                "parent_count_label": 0,
+                "confidence_target": 1.0,
+                "confidence_mask": False,
+            },
+        ]
 
-            # Terminal-backed semantic operators also expose their concrete argv
-            # to subsequent state, so the language stream can learn command
-            # implementations without coupling operator identity to one backend.
-            self.assertTrue(
-                any("ARGV[" in row["context"] for row in rows),
-                "expected concrete terminal argv evidence in materialized state",
-            )
+        batch = collator(rows)
+
+        self.assertEqual(batch["input_ids"].shape, (2, 3))
+        self.assertEqual(batch["sequence_lengths"].tolist(), [3, 2])
 
 
 if __name__ == "__main__":
