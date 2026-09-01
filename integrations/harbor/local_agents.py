@@ -78,11 +78,18 @@ class _CommonAgent(BaseAgent):
             # Build once on the Molab host, not in every Daytona task sandbox.
             await ensure_bridge_built()
 
-        http_servers = [
-            server
+        unsupported = [
+            f"{server.name}:{server.transport}"
             for server in self.mcp_servers
-            if server.transport == "streamable-http" and server.url
+            if server.transport != "streamable-http" or not server.url
         ]
+        if unsupported:
+            raise RuntimeError(
+                "Starlings Harbor adapter does not yet support these MCP bindings: "
+                + ", ".join(unsupported)
+            )
+
+        http_servers = list(self.mcp_servers)
         if not http_servers:
             return
 
