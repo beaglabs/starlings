@@ -20,8 +20,11 @@ import yaml
 from murmurations.training.daytona import DaytonaCorpusRunner
 from murmurations.training.environments.episodes import make_oracle_bootstrap_episode
 from murmurations.training.environments.mutations import (
+    MutationCandidate,
+    enumerate_mutation_candidates,
     inject_verified_mutation,
     mutation_fingerprint,
+    reset_mutation_workspace,
 )
 from murmurations.training.environments.repositories import (
     RepoCatalog,
@@ -187,6 +190,9 @@ def _generate_repo_burst(
     sandbox_runner,
     signature: str,
     prune_checkouts: bool,
+    partition_id: int = 0,
+    partition_count: int = 1,
+    semantic_candidates: tuple[MutationCandidate, ...] = (),
 ) -> list[_GenerationOutcome]:
     source: Path | None = None
     outcomes: list[_GenerationOutcome] = []
@@ -196,32 +202,40 @@ def _generate_repo_burst(
         if hasattr(sandbox_runner, "worker")
         else sandbox_runner
     )
+    workspace = work_root / _safe(repo.name) / f"partition-{partition_id:03d}"
     try:
         source = checkout_repository(repo, cache_dir)
         verifier = detect_test_command(source)
         if verifier is None:
             raise RuntimeError("no supported repository test command detected")
 
-        for local_index, global_index in slots:
-            last_error: Exception | None = None
-            for retry in range(max(1, generation_retries)):
-                attempt_seed = (
-                    seed
-                    + repo_index * 1_000_003
-                    + local_index * 101
-                    + retry
+        deterministic = enumerate_mutation_candidates(source)
+        candidate_pool = tuple(deterministic) + tuple(semantic_candidates)
+        if not candidate_pool:
+            raise RuntimeError("repository has no mutation candidates")
+
+        reset_mutation_workspace(source, workspace)
+        with worker_runner.workspace(
+            workspace,
+            repo,
+            plan_root=source,
+        ) as remote:
+            clean = remote.verify(workspace, verifier, timeout_seconds)
+            if not clean.passed:
+                raise RuntimeError(
+                    "source repository verifier does not pass in persistent worker"
                 )
-                workspace = (
-                    work_root
-                    / _safe(repo.name)
-                    / f"episode-{local_index:06d}"
-                )
-                try:
-                    with worker_runner.workspace(
-                        workspace,
-                        repo,
-                        plan_root=source,
-                    ) as remote:
+
+            for local_index, global_index in slots:
+                last_error: Exception | None = None
+                for retry in range(max(1, generation_retries)):
+                    attempt_seed = (
+                        seed
+                        + repo_index * 1_000_003
+                        + local_index * 101
+                        + retry
+                    )
+                    try:
                         mutation = inject_verified_mutation(
                             source,
                             workspace,
@@ -231,6 +245,11 @@ def _generate_repo_burst(
                             max_attempts=max_attempts,
                             excluded_fingerprints=local_used,
                             verify_runner=remote.verify,
+                            clean_verification=clean,
+                            candidates=candidate_pool,
+                            partition_id=partition_id,
+                            partition_count=partition_count,
+                            triage_runner=remote.verify,
                         )
                         registry = default_operator_registry(workspace)
                         episode = make_oracle_bootstrap_episode(
@@ -244,48 +263,51 @@ def _generate_repo_burst(
                             max_enrichment_calls=max_enrichment_calls,
                             command_runner=remote.run_operator,
                         )
-                    record = episode.record()
-                    raw_fingerprint = mutation.fingerprint
-                    record["mutation"]["fingerprint"] = canonical_id(
-                        {
-                            "repository_identity": repo.identity,
-                            "mutation": raw_fingerprint,
+                        record = episode.record()
+                        raw_fingerprint = mutation.fingerprint
+                        record["mutation"]["fingerprint"] = canonical_id(
+                            {
+                                "repository_identity": repo.identity,
+                                "mutation": raw_fingerprint,
+                            }
+                        )
+                        record["generation"] = {
+                            "signature": signature,
+                            "seed": attempt_seed,
+                            "repo_episode_index": local_index,
+                            "global_episode_index": global_index,
+                            "raw_mutation_fingerprint": raw_fingerprint,
+                            "candidate_partition": partition_id,
+                            "candidate_partitions": partition_count,
                         }
-                    )
-                    record["generation"] = {
-                        "signature": signature,
-                        "seed": attempt_seed,
-                        "repo_episode_index": local_index,
-                        "global_episode_index": global_index,
-                        "raw_mutation_fingerprint": raw_fingerprint,
-                    }
-                    local_used.add(raw_fingerprint)
+                        local_used.add(raw_fingerprint)
+                        outcomes.append(
+                            _GenerationOutcome(
+                                repository=repo,
+                                local_index=local_index,
+                                global_index=global_index,
+                                record=record,
+                                raw_fingerprint=raw_fingerprint,
+                            )
+                        )
+                        break
+                    except Exception as exc:
+                        last_error = exc
+                else:
+                    assert last_error is not None
                     outcomes.append(
                         _GenerationOutcome(
                             repository=repo,
                             local_index=local_index,
                             global_index=global_index,
-                            record=record,
-                            raw_fingerprint=raw_fingerprint,
+                            error=str(last_error),
                         )
                     )
-                    break
-                except Exception as exc:
-                    last_error = exc
-                finally:
-                    shutil.rmtree(workspace, ignore_errors=True)
-            else:
-                assert last_error is not None
-                outcomes.append(
-                    _GenerationOutcome(
-                        repository=repo,
-                        local_index=local_index,
-                        global_index=global_index,
-                        error=str(last_error),
-                    )
-                )
     except Exception as exc:
+        completed = {(item.local_index, item.global_index) for item in outcomes}
         for local_index, global_index in slots:
+            if (local_index, global_index) in completed:
+                continue
             outcomes.append(
                 _GenerationOutcome(
                     repository=repo,
@@ -295,6 +317,7 @@ def _generate_repo_burst(
                 )
             )
     finally:
+        shutil.rmtree(workspace, ignore_errors=True)
         if (
             prune_checkouts
             and source is not None
