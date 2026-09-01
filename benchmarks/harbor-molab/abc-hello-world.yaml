@@ -25,5 +25,4 @@ agents:
       max_turns: 12
 
 tasks:
-  - name: harbor/hello-world
-    ref: latest
+  - path: benchmarks/harbor-molab/tasks/hello-world
