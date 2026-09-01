@@ -281,6 +281,16 @@ def build_shard(
                 )
             ),
             target_rows=target_rows,
+            min_episodes=(
+                1
+                if limit_repositories is not None
+                else int(quality.get("min_unique_mutations", 500))
+            ),
+            min_repositories=(
+                1
+                if limit_repositories is not None
+                else int(quality.get("min_dynamic_repositories", 20))
+            ),
             max_episodes=max_episodes,
             exclude_repositories={
                 record.name
