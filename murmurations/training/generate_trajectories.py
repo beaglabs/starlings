@@ -570,6 +570,10 @@ def generate_trajectory_corpus(
     max_enrichment_calls: int = 0,
     sandbox_runner=None,
     prune_checkouts: bool = False,
+    concurrency: int | None = None,
+    max_concurrency: int = 125,
+    budget_usd: float | None = None,
+    budget_safety_fraction: float = 0.90,
 ) -> dict[str, Any]:
     if sandbox_runner is None:
         raise RuntimeError(
@@ -581,6 +585,10 @@ def generate_trajectory_corpus(
         raise ValueError("per-repository generation caps must be positive")
     if burst_per_repo <= 0:
         raise ValueError("burst_per_repo must be positive")
+    if concurrency is not None and concurrency <= 0:
+        raise ValueError("concurrency must be positive")
+    if max_concurrency <= 0:
+        raise ValueError("max_concurrency must be positive")
 
     catalog = RepoCatalog.from_jsonl(catalog_path)
     output = Path(output_path)
@@ -656,6 +664,56 @@ def generate_trajectory_corpus(
         repo_stats[repo.name]["failed"] += 1
         metrics["requested"] += 1
         metrics["failed"] += 1
+
+    def apply_outcome(
+        episode_handle,
+        failure_handle,
+        outcome: _GenerationOutcome,
+    ) -> None:
+        repo = outcome.repository
+        if outcome.record is None:
+            row = {
+                "generation_signature": signature,
+                "repository": repo.name,
+                "repo_episode_index": outcome.local_index,
+                "global_episode_index": outcome.global_index,
+                "error": str(outcome.error or "generation failed"),
+            }
+            _append_jsonl(failure_handle, row)
+            processed.add((repo.name, outcome.local_index))
+            next_local[repo.name] = max(
+                next_local[repo.name], outcome.local_index + 1
+            )
+            repo_stats[repo.name]["requested"] += 1
+            repo_stats[repo.name]["failed"] += 1
+            metrics["requested"] += 1
+            metrics["failed"] += 1
+            return
+
+        _append_jsonl(episode_handle, outcome.record)
+        processed.add((repo.name, outcome.local_index))
+        next_local[repo.name] = max(
+            next_local[repo.name], outcome.local_index + 1
+        )
+        if outcome.raw_fingerprint:
+            used[repo.name].add(outcome.raw_fingerprint)
+        repo_stats[repo.name]["requested"] += 1
+        repo_stats[repo.name]["written"] += 1
+        metrics["requested"] += 1
+        metrics["written"] += 1
+        metrics["dynamic_repositories"].add(repo.name)
+        metrics["dynamic_languages"].add(repo.language or "unknown")
+        episode_metrics = _episode_metrics(outcome.record)
+        metrics["trajectory_rows"] += int(episode_metrics["trajectory_rows"])
+        metrics["terminal_operator_events"] += int(
+            episode_metrics["terminal_operator_events"]
+        )
+        metrics["terminal_operator_types"].update(
+            episode_metrics["terminal_operator_types"]
+        )
+        metrics["terminal_argv_events"] += int(
+            episode_metrics["terminal_argv_events"]
+        )
 
     def generate_slot(
         episode_handle,
@@ -811,90 +869,142 @@ def generate_trajectory_corpus(
                     ):
                         shutil.rmtree(source, ignore_errors=True)
         else:
-            maximum_requested = (
+            configured_requested = (
                 len(catalog.records) * max_requests_per_repo
                 if max_requested_episodes is None
                 else max_requested_episodes
             )
-            if maximum_requested <= 0:
+            if configured_requested <= 0:
                 raise ValueError("max_requested_episodes must be positive")
+            budget_plan = _daytona_budget_plan(
+                sandbox_runner,
+                requested_limit=configured_requested,
+                generation_retries=generation_retries,
+                budget_usd=budget_usd,
+                budget_safety_fraction=budget_safety_fraction,
+            )
+            maximum_requested = int(budget_plan["requested_limit"])
+            requested_workers = min(
+                len(catalog.records),
+                concurrency if concurrency is not None else max_concurrency,
+            )
+            if hasattr(sandbox_runner, "concurrency_capacity"):
+                capacity = sandbox_runner.concurrency_capacity(requested_workers)
+                worker_count = int(capacity["workers"])
+            else:
+                capacity = {
+                    "source": "configured_max",
+                    "requested_max_workers": requested_workers,
+                    "workers": requested_workers,
+                }
+                worker_count = requested_workers
+            worker_count = max(1, min(worker_count, len(catalog.records)))
+            print(
+                f"[generation] concurrency workers={worker_count} "
+                f"source={capacity.get('source')} "
+                f"budget_ceiling_usd={budget_plan['theoretical_max_spend_usd']:.2f}",
+                flush=True,
+            )
+
             order = _balanced_repositories(catalog)
             required_languages = {
                 str(language)
                 for language in (targets.get("required_dynamic_languages") or [])
             }
-            while (
-                not _targets_met(metrics, targets)
-                and int(metrics["requested"]) < maximum_requested
-            ):
-                progressed = False
-                prioritized = _prioritized_repositories(
-                    order,
-                    required_languages=required_languages,
-                    present_languages=metrics["dynamic_languages"],
-                )
-                for repo in prioritized:
-                    if _targets_met(metrics, targets):
-                        break
-                    stats = repo_stats[repo.name]
-                    if stats["requested"] >= max_requests_per_repo:
-                        continue
-                    if stats["written"] >= max_successes_per_repo:
-                        continue
+            scheduled_requests = int(metrics["requested"])
+            in_flight_repos: set[str] = set()
+            futures: dict[Any, RepoRecord] = {}
 
-                    source: Path | None = None
-                    try:
-                        source = checkout_repository(repo, cache_dir)
-                        verifier = detect_test_command(source)
-                        if verifier is None:
-                            raise RuntimeError(
-                                "no supported repository test command detected"
-                            )
-                        for _ in range(burst_per_repo):
-                            if _targets_met(metrics, targets):
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                while futures or (
+                    not _targets_met(metrics, targets)
+                    and scheduled_requests < maximum_requested
+                ):
+                    if not _targets_met(metrics, targets):
+                        prioritized = _prioritized_repositories(
+                            order,
+                            required_languages=required_languages,
+                            present_languages=metrics["dynamic_languages"],
+                        )
+                        for repo in prioritized:
+                            if len(futures) >= worker_count:
                                 break
+                            if scheduled_requests >= maximum_requested:
+                                break
+                            if repo.name in in_flight_repos:
+                                continue
                             stats = repo_stats[repo.name]
                             if stats["requested"] >= max_requests_per_repo:
-                                break
+                                continue
                             if stats["written"] >= max_successes_per_repo:
-                                break
-                            if int(metrics["requested"]) >= maximum_requested:
-                                break
-                            local_index = next_local[repo.name]
-                            global_index = next_global
-                            next_global += 1
-                            generate_slot(
+                                continue
+
+                            remaining_requests = (
+                                max_requests_per_repo - stats["requested"]
+                            )
+                            remaining_successes = (
+                                max_successes_per_repo - stats["written"]
+                            )
+                            slot_count = min(
+                                burst_per_repo,
+                                remaining_requests,
+                                remaining_successes,
+                                maximum_requested - scheduled_requests,
+                            )
+                            if slot_count <= 0:
+                                continue
+                            slots: list[tuple[int, int]] = []
+                            for _ in range(slot_count):
+                                local_index = next_local[repo.name]
+                                global_index = next_global
+                                next_local[repo.name] += 1
+                                next_global += 1
+                                scheduled_requests += 1
+                                slots.append((local_index, global_index))
+                            future = executor.submit(
+                                _generate_repo_burst,
+                                repo=repo,
+                                slots=slots,
+                                excluded_fingerprints=set(used[repo.name]),
+                                cache_dir=cache_dir,
+                                work_root=work_root,
+                                repo_index=repo_index[repo.name],
+                                seed=seed,
+                                timeout_seconds=timeout_seconds,
+                                max_attempts=max_attempts,
+                                generation_retries=generation_retries,
+                                enrichment_operators=enrichment_operators,
+                                max_enrichment_calls=max_enrichment_calls,
+                                sandbox_runner=sandbox_runner,
+                                signature=signature,
+                                prune_checkouts=prune_checkouts,
+                            )
+                            futures[future] = repo
+                            in_flight_repos.add(repo.name)
+
+                    if not futures:
+                        break
+
+                    done, _ = wait(futures, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        repo = futures.pop(future)
+                        in_flight_repos.discard(repo.name)
+                        outcomes = future.result()
+                        for outcome in outcomes:
+                            apply_outcome(
                                 episode_handle,
                                 failure_handle,
-                                repo,
-                                source,
-                                verifier,
-                                local_index=local_index,
-                                global_index=global_index,
+                                outcome,
                             )
-                            progressed = True
-                    except Exception as exc:
-                        local_index = next_local[repo.name]
-                        global_index = next_global
-                        next_global += 1
-                        record_failure(
-                            failure_handle,
-                            repo,
-                            local_index=local_index,
-                            global_index=global_index,
-                            error=exc,
+                        print(
+                            f"[generation] checkpoint requested={metrics['requested']} "
+                            f"written={metrics['written']} "
+                            f"rows={metrics['trajectory_rows']} "
+                            f"repos={len(metrics['dynamic_repositories'])} "
+                            f"languages={len(metrics['dynamic_languages'])} "
+                            f"in_flight={len(futures)}",
+                            flush=True,
                         )
-                        progressed = True
-                    finally:
-                        if (
-                            prune_checkouts
-                            and source is not None
-                            and repo.path is None
-                            and source.exists()
-                        ):
-                            shutil.rmtree(source, ignore_errors=True)
-                if not progressed:
-                    break
 
     requested = int(metrics["requested"])
     written = int(metrics["written"])
@@ -917,6 +1027,11 @@ def generate_trajectory_corpus(
         "output": str(output),
     }
     if targets is not None:
+        result["concurrency"] = {
+            "workers": worker_count,
+            "capacity": capacity,
+        }
+        result["budget"] = budget_plan
         result["targets"] = targets
         result["target_status"] = _target_status(metrics, targets)
         result["targets_met"] = all(result["target_status"].values())
