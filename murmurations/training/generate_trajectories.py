@@ -999,8 +999,9 @@ def generate_trajectory_corpus(
                 budget_safety_fraction=budget_safety_fraction,
             )
             maximum_requested = int(budget_plan["requested_limit"])
+            maximum_partition_workers = len(catalog.records) * partitions_per_repo
             requested_workers = min(
-                len(catalog.records),
+                maximum_partition_workers,
                 concurrency if concurrency is not None else max_concurrency,
             )
             if hasattr(sandbox_runner, "concurrency_capacity"):
@@ -1024,11 +1025,12 @@ def generate_trajectory_corpus(
                 min(
                     worker_count,
                     int(host_capacity["workers"]),
-                    len(catalog.records),
+                    maximum_partition_workers,
                 ),
             )
             print(
                 f"[generation] concurrency workers={worker_count} "
+                f"partitions_per_repo={partitions_per_repo} "
                 f"daytona_source={capacity.get('source')} "
                 f"host_free_gib={host_capacity['free_gib']:.2f} "
                 f"budget_ceiling_usd={budget_plan['theoretical_max_spend_usd']:.2f}",
@@ -1040,100 +1042,135 @@ def generate_trajectory_corpus(
                 str(language)
                 for language in (targets.get("required_dynamic_languages") or [])
             }
-            scheduled_requests = int(metrics["requested"])
-            in_flight_repos: set[str] = set()
-            futures: dict[Any, RepoRecord] = {}
 
-            with ThreadPoolExecutor(max_workers=worker_count) as executor:
-                while futures or (
-                    not _targets_met(metrics, targets)
-                    and scheduled_requests < maximum_requested
-                ):
-                    if not _targets_met(metrics, targets):
-                        prioritized = _prioritized_repositories(
-                            order,
-                            required_languages=required_languages,
-                            present_languages=metrics["dynamic_languages"],
-                        )
-                        for repo in prioritized:
-                            if len(futures) >= worker_count:
-                                break
-                            if scheduled_requests >= maximum_requested:
-                                break
-                            if repo.name in in_flight_repos:
-                                continue
-                            stats = repo_stats[repo.name]
-                            if stats["requested"] >= max_requests_per_repo:
-                                continue
-                            if stats["written"] >= max_successes_per_repo:
-                                continue
+            source_roots: dict[str, Path] = {}
+            try:
+                for repo in order:
+                    source_roots[repo.name] = checkout_repository(repo, cache_dir)
 
-                            remaining_requests = (
-                                max_requests_per_repo - stats["requested"]
-                            )
-                            remaining_successes = (
-                                max_successes_per_repo - stats["written"]
-                            )
-                            slot_count = min(
-                                burst_per_repo,
-                                remaining_requests,
-                                remaining_successes,
-                                maximum_requested - scheduled_requests,
-                            )
-                            if slot_count <= 0:
-                                continue
-                            slots: list[tuple[int, int]] = []
-                            for _ in range(slot_count):
-                                local_index = next_local[repo.name]
-                                global_index = next_global
-                                next_local[repo.name] += 1
-                                next_global += 1
-                                scheduled_requests += 1
-                                slots.append((local_index, global_index))
-                            future = executor.submit(
-                                _generate_repo_burst,
-                                repo=repo,
-                                slots=slots,
-                                excluded_fingerprints=set(used[repo.name]),
-                                cache_dir=cache_dir,
-                                work_root=work_root,
-                                repo_index=repo_index[repo.name],
-                                seed=seed,
-                                timeout_seconds=timeout_seconds,
-                                max_attempts=max_attempts,
-                                generation_retries=generation_retries,
-                                enrichment_operators=enrichment_operators,
-                                max_enrichment_calls=max_enrichment_calls,
-                                sandbox_runner=sandbox_runner,
-                                signature=signature,
-                                prune_checkouts=prune_checkouts,
-                            )
-                            futures[future] = repo
-                            in_flight_repos.add(repo.name)
+                scheduled_requests = int(metrics["requested"])
+                reserved_requests: dict[str, int] = defaultdict(int)
+                in_flight_keys: set[tuple[str, int]] = set()
+                futures: dict[Any, tuple[RepoRecord, int, int]] = {}
 
-                    if not futures:
-                        break
-
-                    done, _ = wait(futures, return_when=FIRST_COMPLETED)
-                    for future in done:
-                        repo = futures.pop(future)
-                        in_flight_repos.discard(repo.name)
-                        outcomes = future.result()
-                        for outcome in outcomes:
-                            apply_outcome(
-                                episode_handle,
-                                failure_handle,
-                                outcome,
+                with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                    while futures or (
+                        not _targets_met(metrics, targets)
+                        and scheduled_requests < maximum_requested
+                    ):
+                        if not _targets_met(metrics, targets):
+                            prioritized = _prioritized_repositories(
+                                order,
+                                required_languages=required_languages,
+                                present_languages=metrics["dynamic_languages"],
                             )
-                        print(
-                            f"[generation] checkpoint requested={metrics['requested']} "
-                            f"written={metrics['written']} "
-                            f"rows={metrics['trajectory_rows']} "
-                            f"repos={len(metrics['dynamic_repositories'])} "
-                            f"languages={len(metrics['dynamic_languages'])} "
-                            f"in_flight={len(futures)}",
-                            flush=True,
-                        )
+                            for repo in prioritized:
+                                if len(futures) >= worker_count:
+                                    break
+                                stats = repo_stats[repo.name]
+                                for partition_id in range(partitions_per_repo):
+                                    if len(futures) >= worker_count:
+                                        break
+                                    if scheduled_requests >= maximum_requested:
+                                        break
+                                    key = (repo.name, partition_id)
+                                    if key in in_flight_keys:
+                                        continue
+
+                                    effective_requested = (
+                                        stats["requested"] + reserved_requests[repo.name]
+                                    )
+                                    effective_successes = (
+                                        stats["written"] + reserved_requests[repo.name]
+                                    )
+                                    remaining_requests = (
+                                        max_requests_per_repo - effective_requested
+                                    )
+                                    remaining_successes = (
+                                        max_successes_per_repo - effective_successes
+                                    )
+                                    slot_count = min(
+                                        burst_per_repo,
+                                        remaining_requests,
+                                        remaining_successes,
+                                        maximum_requested - scheduled_requests,
+                                    )
+                                    if slot_count <= 0:
+                                        continue
+
+                                    slots: list[tuple[int, int]] = []
+                                    for _ in range(slot_count):
+                                        local_index = next_local[repo.name]
+                                        global_index = next_global
+                                        next_local[repo.name] += 1
+                                        next_global += 1
+                                        scheduled_requests += 1
+                                        reserved_requests[repo.name] += 1
+                                        slots.append((local_index, global_index))
+
+                                    future = executor.submit(
+                                        _generate_repo_burst,
+                                        repo=repo,
+                                        slots=slots,
+                                        excluded_fingerprints=set(used[repo.name]),
+                                        source=source_roots[repo.name],
+                                        work_root=work_root,
+                                        repo_index=repo_index[repo.name],
+                                        seed=seed,
+                                        timeout_seconds=timeout_seconds,
+                                        max_attempts=max_attempts,
+                                        generation_retries=generation_retries,
+                                        enrichment_operators=enrichment_operators,
+                                        max_enrichment_calls=max_enrichment_calls,
+                                        sandbox_runner=sandbox_runner,
+                                        signature=signature,
+                                        partition_id=partition_id,
+                                        partition_count=partitions_per_repo,
+                                        semantic_candidates=semantic_candidates.get(
+                                            repo.name, ()
+                                        ),
+                                    )
+                                    futures[future] = (
+                                        repo,
+                                        partition_id,
+                                        slot_count,
+                                    )
+                                    in_flight_keys.add(key)
+
+                        if not futures:
+                            break
+
+                        done, _ = wait(futures, return_when=FIRST_COMPLETED)
+                        for future in done:
+                            repo, partition_id, slot_count = futures.pop(future)
+                            in_flight_keys.discard((repo.name, partition_id))
+                            reserved_requests[repo.name] -= slot_count
+                            outcomes = future.result()
+                            for outcome in outcomes:
+                                apply_outcome(
+                                    episode_handle,
+                                    failure_handle,
+                                    outcome,
+                                )
+                            print(
+                                f"[generation] checkpoint requested={metrics['requested']} "
+                                f"written={metrics['written']} "
+                                f"rows={metrics['trajectory_rows']} "
+                                f"repos={len(metrics['dynamic_repositories'])} "
+                                f"languages={len(metrics['dynamic_languages'])} "
+                                f"in_flight={len(futures)}",
+                                flush=True,
+                            )
+            finally:
+                if prune_checkouts:
+                    for repo in order:
+                        source = source_roots.get(repo.name)
+                        if (
+                            source is not None
+                            and repo.path is None
+                            and source.exists()
+                        ):
+                            shutil.rmtree(source, ignore_errors=True)
 
     requested = int(metrics["requested"])
     written = int(metrics["written"])
