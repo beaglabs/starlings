@@ -232,6 +232,12 @@ def build_shard(
         budget_safety_fraction=float(
             generation_config.get("budget_safety_fraction", 0.90)
         ),
+        host_disk_reserve_gib=float(
+            generation_config.get("host_disk_reserve_gib", 2.0)
+        ),
+        host_disk_per_worker_gib=float(
+            generation_config.get("host_disk_per_worker_gib", 0.5)
+        ),
     )
 
     _log(
