@@ -49,6 +49,16 @@ quality:
   min_eligible_repositories: 20
   min_generation_success_rate: 0.50
   min_dynamic_repositories: 20
+  required_dynamic_languages:
+    - C
+    - C++
+    - Go
+    - Java
+    - JavaScript
+    - Python
+    - Rust
+    - TypeScript
+    - Zig
   min_unique_mutations: 500
   min_code_rows: 10000
   min_trajectory_rows: 10000
