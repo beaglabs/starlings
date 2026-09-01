@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from dataclasses import dataclass
 import hashlib
 from collections import defaultdict, deque
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -30,6 +33,21 @@ from murmurations.utils.canonical import canonical_id
 
 
 _TERMINAL_OPERATORS = {"type.check", "package.metadata", "docs.lookup"}
+
+
+_DAYTONA_VCPU_USD_PER_HOUR = 0.0504
+_DAYTONA_MEMORY_USD_PER_GIB_HOUR = 0.0162
+_DAYTONA_STORAGE_USD_PER_GIB_HOUR = 0.000108
+
+
+@dataclass(frozen=True)
+class _GenerationOutcome:
+    repository: RepoRecord
+    local_index: int
+    global_index: int
+    record: dict[str, Any] | None = None
+    raw_fingerprint: str | None = None
+    error: str | None = None
 
 
 def _safe(value: str) -> str:
@@ -65,6 +83,195 @@ def _prioritized_repositories(
         *[repo for repo in order if (repo.language or "unknown") in missing],
         *[repo for repo in order if (repo.language or "unknown") not in missing],
     ]
+
+
+def _daytona_budget_plan(
+    sandbox_runner,
+    *,
+    requested_limit: int,
+    generation_retries: int,
+    budget_usd: float | None,
+    budget_safety_fraction: float,
+) -> dict[str, Any]:
+    provenance = sandbox_runner.provenance()
+    snapshot = dict(provenance.get("snapshot_info") or {})
+    cpu = float(snapshot.get("cpu") or 0)
+    memory = float(snapshot.get("memory_gib") or 0)
+    disk = float(snapshot.get("disk_gib") or 0)
+    ttl_minutes = int(provenance.get("ttl_minutes") or 45)
+    hourly = (
+        cpu * _DAYTONA_VCPU_USD_PER_HOUR
+        + memory * _DAYTONA_MEMORY_USD_PER_GIB_HOUR
+        + disk * _DAYTONA_STORAGE_USD_PER_GIB_HOUR
+    )
+    attempt_ceiling = hourly * ttl_minutes / 60.0
+    request_ceiling = attempt_ceiling * max(1, generation_retries)
+    plan: dict[str, Any] = {
+        "budget_usd": budget_usd,
+        "budget_safety_fraction": budget_safety_fraction,
+        "sandbox_hourly_usd_ceiling": hourly,
+        "attempt_usd_ceiling": attempt_ceiling,
+        "request_usd_ceiling": request_ceiling,
+        "configured_requested_limit": requested_limit,
+        "requested_limit": requested_limit,
+    }
+    if budget_usd is None:
+        plan["theoretical_max_spend_usd"] = requested_limit * request_ceiling
+        return plan
+    if budget_usd <= 0:
+        raise ValueError("budget_usd must be positive")
+    if not 0 < budget_safety_fraction <= 1:
+        raise ValueError("budget_safety_fraction must be in (0, 1]")
+    usable_budget = budget_usd * budget_safety_fraction
+    budget_limit = (
+        math.floor(usable_budget / request_ceiling)
+        if request_ceiling > 0
+        else requested_limit
+    )
+    plan["usable_budget_usd"] = usable_budget
+    plan["budget_requested_limit"] = budget_limit
+    plan["requested_limit"] = min(requested_limit, budget_limit)
+    plan["theoretical_max_spend_usd"] = (
+        plan["requested_limit"] * request_ceiling
+    )
+    if int(plan["requested_limit"]) <= 0:
+        raise RuntimeError("Daytona budget cannot fund one worst-case generation request")
+    return plan
+
+
+def _generate_repo_burst(
+    *,
+    repo: RepoRecord,
+    slots: list[tuple[int, int]],
+    excluded_fingerprints: set[str],
+    cache_dir: str | Path,
+    work_root: Path,
+    repo_index: int,
+    seed: int,
+    timeout_seconds: int,
+    max_attempts: int,
+    generation_retries: int,
+    enrichment_operators: tuple[str, ...],
+    max_enrichment_calls: int,
+    sandbox_runner,
+    signature: str,
+    prune_checkouts: bool,
+) -> list[_GenerationOutcome]:
+    source: Path | None = None
+    outcomes: list[_GenerationOutcome] = []
+    local_used = set(excluded_fingerprints)
+    worker_runner = (
+        sandbox_runner.worker()
+        if hasattr(sandbox_runner, "worker")
+        else sandbox_runner
+    )
+    try:
+        source = checkout_repository(repo, cache_dir)
+        verifier = detect_test_command(source)
+        if verifier is None:
+            raise RuntimeError("no supported repository test command detected")
+
+        for local_index, global_index in slots:
+            last_error: Exception | None = None
+            for retry in range(max(1, generation_retries)):
+                attempt_seed = (
+                    seed
+                    + repo_index * 1_000_003
+                    + local_index * 101
+                    + retry
+                )
+                workspace = (
+                    work_root
+                    / _safe(repo.name)
+                    / f"episode-{local_index:06d}"
+                )
+                try:
+                    with worker_runner.workspace(
+                        workspace,
+                        repo,
+                        plan_root=source,
+                    ) as remote:
+                        mutation = inject_verified_mutation(
+                            source,
+                            workspace,
+                            verifier,
+                            seed=attempt_seed,
+                            timeout_seconds=timeout_seconds,
+                            max_attempts=max_attempts,
+                            excluded_fingerprints=local_used,
+                            verify_runner=remote.verify,
+                        )
+                        registry = default_operator_registry(workspace)
+                        episode = make_oracle_bootstrap_episode(
+                            repo,
+                            workspace,
+                            mutation,
+                            registry,
+                            timeout_seconds=timeout_seconds,
+                            episode_seed=attempt_seed,
+                            enrichment_operators=enrichment_operators,
+                            max_enrichment_calls=max_enrichment_calls,
+                            command_runner=remote.run_operator,
+                        )
+                    record = episode.record()
+                    raw_fingerprint = mutation.fingerprint
+                    record["mutation"]["fingerprint"] = canonical_id(
+                        {
+                            "repository_identity": repo.identity,
+                            "mutation": raw_fingerprint,
+                        }
+                    )
+                    record["generation"] = {
+                        "signature": signature,
+                        "seed": attempt_seed,
+                        "repo_episode_index": local_index,
+                        "global_episode_index": global_index,
+                        "raw_mutation_fingerprint": raw_fingerprint,
+                    }
+                    local_used.add(raw_fingerprint)
+                    outcomes.append(
+                        _GenerationOutcome(
+                            repository=repo,
+                            local_index=local_index,
+                            global_index=global_index,
+                            record=record,
+                            raw_fingerprint=raw_fingerprint,
+                        )
+                    )
+                    break
+                except Exception as exc:
+                    last_error = exc
+                finally:
+                    shutil.rmtree(workspace, ignore_errors=True)
+            else:
+                assert last_error is not None
+                outcomes.append(
+                    _GenerationOutcome(
+                        repository=repo,
+                        local_index=local_index,
+                        global_index=global_index,
+                        error=str(last_error),
+                    )
+                )
+    except Exception as exc:
+        for local_index, global_index in slots:
+            outcomes.append(
+                _GenerationOutcome(
+                    repository=repo,
+                    local_index=local_index,
+                    global_index=global_index,
+                    error=str(exc),
+                )
+            )
+    finally:
+        if (
+            prune_checkouts
+            and source is not None
+            and repo.path is None
+            and source.exists()
+        ):
+            shutil.rmtree(source, ignore_errors=True)
+    return outcomes
 
 
 def _schedule(
