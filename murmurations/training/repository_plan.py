@@ -101,40 +101,90 @@ def _python_bin(_root: Path) -> str:
     return ".murmurations-venv/bin/python3"
 
 
-def _package_manager(root: Path) -> str:
+def _package_payload(root: Path) -> dict[str, Any]:
     package = root / "package.json"
     if not package.exists():
-        return "npm"
+        return {}
     try:
-        payload = json.loads(package.read_text(encoding="utf-8"))
+        return json.loads(package.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        payload = {}
+        return {}
+
+
+def _package_manager(root: Path) -> str:
+    payload = _package_payload(root)
     declared = str(payload.get("packageManager") or "")
     if declared.startswith("pnpm@") or (root / "pnpm-lock.yaml").exists():
         return "pnpm"
     return "npm"
 
 
+def _package_manager_prefix(root: Path) -> list[str]:
+    if _package_manager(root) != "pnpm":
+        return ["npm"]
+    declared = str(_package_payload(root).get("packageManager") or "")
+    if declared.startswith("pnpm@") and len(declared) > len("pnpm@"):
+        return ["npx", "--yes", declared]
+    return ["pnpm"]
+
+
+def _minimum_zig_version(root: Path) -> str | None:
+    zon = root / "build.zig.zon"
+    if not zon.exists():
+        return None
+    try:
+        text = zon.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    match = __import__("re").search(
+        r'\.minimum_zig_version\s*=\s*"([^"]+)"',
+        text,
+    )
+    return match.group(1) if match else None
+
+
+def _zig_bin(root: Path) -> str:
+    version = _minimum_zig_version(root)
+    return f"/opt/zig/{version}/zig" if version else "zig"
+
+
+_CMAKE_VERIFY_CODE = (
+    "import subprocess,sys;"
+    "cmds=[['cmake','--build','.murmurations-build','--parallel','2'],"
+    "['ctest','--test-dir','.murmurations-build','--output-on-failure']];"
+    "\nfor cmd in cmds:"
+    "\n p=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True);"
+    "\n sys.stdout.write(p.stdout or '');"
+    "\n if p.returncode: sys.exit(p.returncode)"
+)
+
+
+def _cmake_configure_command(root: Path) -> list[str]:
+    command = [
+        "cmake", "-S", ".", "-B", ".murmurations-build", "-G", "Ninja",
+        "-DBUILD_TESTING=ON", "-DCMAKE_BUILD_TYPE=Debug",
+    ]
+    try:
+        text = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        text = ""
+    if "LIBUV_BUILD_TESTS" in text:
+        command.extend([
+            "-DLIBUV_BUILD_TESTS=ON",
+            "-DLIBUV_BUILD_BENCH=OFF",
+            "-DENABLE_CLANG_TIDY=OFF",
+        ])
+    if "DISABLE_TESTS" in text:
+        command.append("-DDISABLE_TESTS=OFF")
+    return command
+
+
 def detect_test_command(root: str | Path) -> list[str] | None:
     root = Path(root)
     if (root / "build.zig").exists():
-        return ["zig", "build", "test"]
+        return [_zig_bin(root), "build", "test"]
     if (root / "CMakeLists.txt").exists():
-        return [
-            "ctest",
-            "--build-and-test",
-            ".",
-            ".murmurations-build",
-            "--build-generator",
-            "Ninja",
-            "--build-noclean",
-            "--build-options",
-            "-DBUILD_TESTING=ON",
-            "-DCMAKE_BUILD_TYPE=Debug",
-            "--test-command",
-            "ctest",
-            "--output-on-failure",
-        ]
+        return ["python3", "-c", _CMAKE_VERIFY_CODE]
     if (root / "Cargo.toml").exists():
         primary = _cargo_primary_package(root)
         if primary:
@@ -164,13 +214,18 @@ def detect_test_command(root: str | Path) -> list[str] | None:
         return ["mvn", "test", "-q"]
     package = root / "package.json"
     if package.exists():
-        try:
-            payload = json.loads(package.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            payload = {}
-        if "test" in payload.get("scripts", {}):
-            manager = _package_manager(root)
-            return [manager, "test"] if manager == "pnpm" else ["npm", "test", "--silent"]
+        payload = _package_payload(root)
+        scripts = dict(payload.get("scripts") or {})
+        if _package_manager(root) == "pnpm":
+            prefix = _package_manager_prefix(root)
+            if "test:unit" in scripts:
+                return prefix + ["run", "test:unit"]
+            if "test-unit" in scripts:
+                return prefix + ["run", "test-unit"]
+            if "test" in scripts:
+                return prefix + ["run", "test"]
+        elif "test" in scripts:
+            return ["npm", "test", "--silent"]
     return None
 
 
@@ -182,11 +237,14 @@ def detect_prepare_commands(root: str | Path) -> list[list[str]]:
     if (root / ".gitmodules").exists():
         commands.append(["git", "submodule", "update", "--init", "--recursive"])
 
-    if (root / "CMakeLists.txt").exists():
+    if (root / "CMakeLists.txt").exists() and not (root / "build.zig").exists():
+        commands.append(_cmake_configure_command(root))
         commands.append([
-            "cmake", "-S", ".", "-B", ".murmurations-build", "-G", "Ninja",
-            "-DBUILD_TESTING=ON", "-DCMAKE_BUILD_TYPE=Debug",
+            "cmake", "--build", ".murmurations-build", "--parallel", "2",
         ])
+
+    if (root / "build.zig").exists():
+        commands.append([_zig_bin(root), "build", "--fetch"])
 
     if (root / "Cargo.toml").exists():
         command = ["cargo", "fetch"]
@@ -201,7 +259,10 @@ def detect_prepare_commands(root: str | Path) -> list[list[str]]:
     if package.exists():
         manager = _package_manager(root)
         if manager == "pnpm":
-            commands.append(["pnpm", "install", "--frozen-lockfile"])
+            commands.append(
+                _package_manager_prefix(root)
+                + ["install", "--frozen-lockfile"]
+            )
         elif (root / "package-lock.json").exists() or (root / "npm-shrinkwrap.json").exists():
             commands.append(["npm", "ci", "--no-audit", "--no-fund"])
         else:
@@ -226,7 +287,7 @@ def detect_prepare_commands(root: str | Path) -> list[list[str]]:
 def detect_check_command(root: str | Path) -> list[str] | None:
     root = Path(root)
     if (root / "build.zig").exists():
-        return ["zig", "build"]
+        return [_zig_bin(root), "build"]
     if (root / "CMakeLists.txt").exists():
         return ["cmake", "--build", ".murmurations-build", "--parallel", "2"]
     if (root / "Cargo.toml").exists():
@@ -252,7 +313,7 @@ def detect_check_command(root: str | Path) -> list[str] | None:
         if "typescript" in dependencies or (root / "tsconfig.json").exists():
             manager = _package_manager(root)
             if manager == "pnpm":
-                return ["pnpm", "exec", "tsc", "--noEmit"]
+                return _package_manager_prefix(root) + ["exec", "tsc", "--noEmit"]
             return ["npx", "--no-install", "tsc", "--noEmit"]
     return None
 
