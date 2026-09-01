@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from murmurations.training.daytona import DaytonaCorpusRunner
 from murmurations.training.environments.repositories import RepoRecord
@@ -59,6 +62,7 @@ class _Sandbox:
 
 class _Snapshot:
     id = "snapshot-123"
+    organization_id = "org-123"
     name = "murmurations-corpus-v1"
     state = "active"
     cpu = 4
@@ -210,6 +214,60 @@ class DaytonaCorpusRunnerTests(unittest.TestCase):
                 for _, remote_path in client.sandbox.fs.uploads
             )
         )
+
+    def test_concurrency_capacity_uses_live_region_quota(self) -> None:
+        class _UsageResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "regionUsage": [
+                            {
+                                "regionId": "us",
+                                "totalCpuQuota": 100,
+                                "currentCpuUsage": 0,
+                                "totalMemoryQuota": 200,
+                                "currentMemoryUsage": 0,
+                                "totalDiskQuota": 300,
+                                "currentDiskUsage": 0,
+                            }
+                        ]
+                    }
+                ).encode("utf-8")
+
+        runner = DaytonaCorpusRunner(
+            snapshot="murmurations-corpus-v1",
+            target="us",
+            client=_Client(),
+            sandbox_params_factory=_params_factory,
+        )
+        runner.validate_environment()
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "DAYTONA_API_KEY": "test-key",
+                    "DAYTONA_API_URL": "https://example.invalid/api",
+                },
+                clear=False,
+            ),
+            patch(
+                "murmurations.training.daytona.urllib.request.urlopen",
+                return_value=_UsageResponse(),
+            ),
+        ):
+            capacity = runner.concurrency_capacity(125)
+
+        self.assertEqual(capacity["workers"], 25)
+        self.assertEqual(capacity["source"], "organization_usage")
+        self.assertEqual(capacity["available_cpu"], 100)
+        self.assertEqual(capacity["available_memory_gib"], 200)
+        self.assertEqual(capacity["available_disk_gib"], 300)
 
     def test_config_preserves_target_region(self) -> None:
         runner = DaytonaCorpusRunner.from_config(
