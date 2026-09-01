@@ -160,7 +160,11 @@ def _episode_metrics(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def _execution_identity(sandbox_runner) -> dict[str, Any]:
-    provenance = sandbox_runner.provenance()
+    provenance = (
+        sandbox_runner.provenance()
+        if hasattr(sandbox_runner, "provenance")
+        else {"runtime": type(sandbox_runner).__name__}
+    )
     snapshot_info = dict(provenance.get("snapshot_info") or {})
     planner = Path(__file__).with_name("repository_plan.py")
     return {
