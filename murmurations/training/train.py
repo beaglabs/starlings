@@ -16,7 +16,11 @@ from torch.utils.data import DataLoader
 from transformers import PreTrainedTokenizerFast
 import yaml
 
-from murmurations.training.data import ProtocolCollator, ProtocolDataset
+from murmurations.training.data import (
+    ProtocolCollator,
+    ProtocolDataset,
+    TokenBudgetBatchSampler,
+)
 from murmurations.training.losses import compute_losses
 from murmurations.training.model import MurmurationConfig, MurmurationModel
 
@@ -93,22 +97,71 @@ def main() -> None:
         )
     model = MurmurationModel(model_cfg)
 
-    train_set = ProtocolDataset(train_cfg["train_data"], tokenizer, model_cfg.max_seq_len)
-    eval_set = ProtocolDataset(train_cfg["eval_data"], tokenizer, model_cfg.max_seq_len)
-    collator = ProtocolCollator(tokenizer.pad_token_id)
-    train_loader = DataLoader(
-        train_set,
-        batch_size=int(train_cfg["micro_batch_size"]),
-        shuffle=True,
-        collate_fn=collator,
-        num_workers=int(train_cfg.get("num_workers", 0)),
+    max_tokens_per_batch = int(train_cfg.get("max_tokens_per_batch", 0) or 0)
+    pretokenize = bool(train_cfg.get("pretokenize", False)) or max_tokens_per_batch > 0
+    train_set = ProtocolDataset(
+        train_cfg["train_data"],
+        tokenizer,
+        model_cfg.max_seq_len,
+        pretokenize=pretokenize,
+        cache_path=train_cfg.get("train_token_cache"),
     )
+    eval_set = ProtocolDataset(
+        train_cfg["eval_data"],
+        tokenizer,
+        model_cfg.max_seq_len,
+        pretokenize=pretokenize,
+        cache_path=train_cfg.get("eval_token_cache"),
+    )
+    collator = ProtocolCollator(tokenizer.pad_token_id)
+    num_workers = int(train_cfg.get("num_workers", 0))
+
+    train_batch_sampler = None
+    if max_tokens_per_batch > 0:
+        if train_set.lengths is None:
+            raise ValueError(
+                "token-budget batching requires pretokenized sequence lengths"
+            )
+        train_batch_sampler = TokenBudgetBatchSampler(
+            train_set.lengths,
+            max_tokens=max_tokens_per_batch,
+            max_examples=int(train_cfg.get("max_examples_per_batch", 16)),
+            bucket_size=int(train_cfg.get("length_bucket_size", 2048)),
+            shuffle=True,
+            seed=int(train_cfg.get("seed", 17)),
+        )
+        if accelerator.is_main_process:
+            print(
+                json.dumps(
+                    {
+                        "data_pipeline": "pretokenized_token_budget",
+                        **train_batch_sampler.stats(),
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+        train_loader = DataLoader(
+            train_set,
+            batch_sampler=train_batch_sampler,
+            collate_fn=collator,
+            num_workers=num_workers,
+        )
+    else:
+        train_loader = DataLoader(
+            train_set,
+            batch_size=int(train_cfg["micro_batch_size"]),
+            shuffle=True,
+            collate_fn=collator,
+            num_workers=num_workers,
+        )
+
     eval_loader = DataLoader(
         eval_set,
         batch_size=int(train_cfg.get("eval_batch_size", train_cfg["micro_batch_size"])),
         shuffle=False,
         collate_fn=collator,
-        num_workers=int(train_cfg.get("num_workers", 0)),
+        num_workers=num_workers,
     )
 
     optimizer = AdamW(
@@ -139,8 +192,21 @@ def main() -> None:
 
     model.train()
     step = 0
+    examples_seen = 0
+    real_tokens_seen = 0
+    padded_tokens_seen = 0
+    accumulated_examples = 0
+    accumulated_real_tokens = 0
+    accumulated_padded_tokens = 0
     while step < max_steps:
         for batch in train_loader:
+            batch_examples = int(batch["input_ids"].shape[0])
+            batch_real_tokens = int(batch["sequence_lengths"].sum().item())
+            batch_padded_tokens = int(batch["input_ids"].numel())
+            accumulated_examples += batch_examples
+            accumulated_real_tokens += batch_real_tokens
+            accumulated_padded_tokens += batch_padded_tokens
+
             with accelerator.accumulate(model):
                 outputs = model(batch["input_ids"], batch["control_positions"])
                 losses = compute_losses(outputs, batch, loss_weights)
@@ -154,10 +220,25 @@ def main() -> None:
 
             if accelerator.sync_gradients:
                 step += 1
+                examples_seen += accumulated_examples
+                real_tokens_seen += accumulated_real_tokens
+                padded_tokens_seen += accumulated_padded_tokens
                 if accelerator.is_main_process and step % log_every == 0:
                     values = {name: float(value.detach().item()) for name, value in losses.items()}
                     values["lr"] = scheduler.get_last_lr()[0]
+                    values["examples_in_step"] = accumulated_examples
+                    values["real_tokens_in_step"] = accumulated_real_tokens
+                    values["padded_tokens_in_step"] = accumulated_padded_tokens
+                    values["padding_efficiency"] = (
+                        accumulated_real_tokens / max(1, accumulated_padded_tokens)
+                    )
+                    values["examples_seen"] = examples_seen
+                    values["real_tokens_seen"] = real_tokens_seen
                     print(json.dumps({"step": step, **values}, sort_keys=True))
+
+                accumulated_examples = 0
+                accumulated_real_tokens = 0
+                accumulated_padded_tokens = 0
 
                 if step % eval_every == 0:
                     score = evaluate(accelerator, model, eval_loader, loss_weights)
