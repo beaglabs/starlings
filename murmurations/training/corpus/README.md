@@ -20,14 +20,16 @@ Language composition:
 - Zig: 5
 - Java: 6
 
-The build recipe requests 20 unique verifier-caught mutations per eligible
-repository (1,200 episodes maximum before eligibility filtering). Each episode
-can retrieve up to two terminal-backed evidence operators from
-`type.check`, `package.metadata`, and `docs.lookup`; the subset and order
-are seeded per episode rather than fixed. Repositories that cannot run a
-supported clean verifier are excluded from dynamic generation and recorded in
-the probe report. The shard is accepted only if the QA gates in
-`shard-000.yaml` pass, including terminal-evidence coverage.
+The full build is target-driven. Each eligible repository is bounded to 80
+requests and 50 accepted mutations, while generation stops as soon as all shard
+targets are satisfied. Each episode can retrieve up to two terminal-backed
+evidence operators from `type.check`, `package.metadata`, and `docs.lookup`;
+the subset and order are seeded per episode rather than fixed. Repositories that
+cannot run a supported clean verifier are excluded from dynamic generation and
+recorded in the probe report. The shard is accepted only if the QA gates in
+`shard-000.yaml` pass, including all-language dynamic coverage, terminal
+evidence, at least 500 unique mutations, at least 10,000 trajectory rows, and at
+least 100 verifier-accepted LLM semantic mutations.
 
 Run a small remote dynamic probe from the local corpus builder first:
 
@@ -84,7 +86,9 @@ Prepare the pinned snapshot once:
 python3 -m pip install -r murmurations/requirements.txt
 export DAYTONA_API_KEY=...
 export DAYTONA_API_URL=https://app.daytona.io/api
-python3 -m murmurations.training.prepare_daytona --replace
+python3 -m murmurations.training.prepare_daytona \
+  --name murmurations-corpus-v1-2cpu \
+  --cpu 2 --memory-gib 4 --disk-gib 10
 ```
 
 The snapshot is built remotely from `corpus/daytona/Dockerfile` and includes
@@ -99,11 +103,14 @@ with one independent Daytona client/sandbox lifecycle per worker and durable
 checkpointing after each completed repository. Eligibility planning is executed
 inside the Daytona sandbox using the same portable repository-plan module as
 full generation, so the host does not clone or cache repositories during a
-probe. Shard-000 targets Daytona's US region. Each probe or repair attempt gets
-one ephemeral sandbox. The remote sandbox clones
-the pinned commit, runs deterministic dependency preparation, and then remains
-the execution target through clean verification, mutation evidence, semantic
-terminal operators, repair, and final verification.
+probe. Shard-000 targets Daytona's US region. Eligibility probes remain one sandbox
+per repository. Full generation instead uses persistent partition workers: each
+worker clones the pinned commit, prepares dependencies once, establishes a clean
+verifier once, and evaluates a burst of fingerprint-partitioned mutation
+candidates in the same sandbox. Four partitions per eligible repository expose
+up to 128 independent lanes; the configured 2-vCPU/4-GiB snapshot lets a Tier-3
+250-vCPU pool reach roughly 125 simultaneous workers when host capacity also
+permits it.
 
 The model sees the stable semantic operator plus exact logical argv, exit code,
 and output. Daytona API details are provenance only and are not a learned tool
