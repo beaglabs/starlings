@@ -260,9 +260,8 @@ class ImportedShardBuildTests(unittest.TestCase):
 
             config = {
                 "name": "import-smoke",
-                "catalog": str(catalog),
+                "exclude_catalog": str(catalog),
                 "output_dir": str(root / "out"),
-                "cache_dir": str(root / "cache"),
                 "seed": 17,
                 "eval_fraction": 0.0,
                 "generation": {
@@ -275,37 +274,42 @@ class ImportedShardBuildTests(unittest.TestCase):
                         "smoke_max_episodes": 1,
                     },
                 },
-                "code_chunk_chars": 1000,
-                "max_files_per_repo": 10,
                 "max_context_chars": 12000,
                 "quality": {
-                    "min_catalog_repositories": 1,
-                    "min_eligible_repositories": 1,
                     "min_generation_success_rate": 1.0,
+                    "min_episodes": 1,
                     "min_dynamic_repositories": 1,
                     "required_dynamic_languages": ["Python"],
-                    "min_unique_mutations": 1,
-                    "min_code_rows": 1,
+                    "required_operator_refs": ["repo.search", "repo.tests"],
                     "min_trajectory_rows": 1,
                     "min_external_execution_events": 1,
-                    "require_daytona_terminal_execution": False,
                 },
             }
             config_path = root / "config.yaml"
             config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
 
-            with patch(
-                "murmurations.training.build_shard.DaytonaCorpusRunner.from_config",
-                side_effect=AssertionError("Daytona must not be constructed"),
+            with (
+                patch(
+                    "murmurations.training.build_shard.DaytonaCorpusRunner.from_config",
+                    side_effect=AssertionError("Daytona must not be constructed"),
+                ),
+                patch(
+                    "murmurations.training.build_shard.materialize_repository_code",
+                    side_effect=AssertionError(
+                        "import mode must not materialize static repository code"
+                    ),
+                ),
             ):
-                manifest = build_shard(
-                    config_path,
-                    limit_repositories=1,
-                )
+                manifest = build_shard(config_path, smoke=True)
 
             self.assertTrue(manifest["qa"]["passed"])
+            self.assertEqual(manifest["mode"], "import")
             self.assertIsNone(manifest["sandbox"])
+            self.assertIsNone(manifest["code"])
             self.assertEqual(manifest["generation"]["mode"], "import")
+            self.assertNotIn("code_rows", manifest["qa"]["gates"])
+            self.assertFalse((root / "out" / "code-train.jsonl").exists())
+            self.assertFalse((root / "out" / "code-eval.jsonl").exists())
             self.assertGreater(
                 manifest["qa"]["episodes"]["external_execution_events"],
                 0,
