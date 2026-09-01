@@ -24,8 +24,9 @@ class RepositoryPlanTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            commands = detect_prepare_commands(root)
             self.assertEqual(
-                detect_prepare_commands(root)[0],
+                commands[0],
                 [
                     "cmake",
                     "-S",
@@ -39,23 +40,13 @@ class RepositoryPlanTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(
-                detect_test_command(root),
-                [
-                    "ctest",
-                    "--build-and-test",
-                    ".",
-                    ".murmurations-build",
-                    "--build-generator",
-                    "Ninja",
-                    "--build-noclean",
-                    "--build-options",
-                    "-DBUILD_TESTING=ON",
-                    "-DCMAKE_BUILD_TYPE=Debug",
-                    "--test-command",
-                    "ctest",
-                    "--output-on-failure",
-                ],
+                commands[1],
+                ["cmake", "--build", ".murmurations-build", "--parallel", "2"],
             )
+            verifier = detect_test_command(root)
+            self.assertEqual(verifier[:2], ["python3", "-c"])
+            self.assertIn("cmake", verifier[2])
+            self.assertIn("ctest", verifier[2])
             self.assertEqual(
                 detect_check_command(root),
                 ["cmake", "--build", ".murmurations-build", "--parallel", "2"],
@@ -208,10 +199,108 @@ class RepositoryPlanTests(unittest.TestCase):
             )
             (root / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
             self.assertIn(
-                ["pnpm", "install", "--frozen-lockfile"],
+                [
+                    "npx", "--yes", "pnpm@10.34.5",
+                    "install", "--frozen-lockfile",
+                ],
                 detect_prepare_commands(root),
             )
-            self.assertEqual(detect_test_command(root), ["pnpm", "test"])
+            self.assertEqual(
+                detect_test_command(root),
+                ["npx", "--yes", "pnpm@10.34.5", "run", "test"],
+            )
+
+    def test_pnpm_prefers_focused_unit_test_script(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "package.json").write_text(
+                '{"name":"vite-like","packageManager":"pnpm@10.34.5",'
+                '"scripts":{"test":"pnpm test-unit && pnpm test-build",'
+                '"test-unit":"vitest run"}}',
+                encoding="utf-8",
+            )
+            (root / "pnpm-lock.yaml").write_text(
+                "lockfileVersion: '9.0'\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                detect_test_command(root),
+                ["npx", "--yes", "pnpm@10.34.5", "run", "test-unit"],
+            )
+
+    def test_pnpm_uses_repository_declared_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "package.json").write_text(
+                '{"name":"vitest-like","packageManager":"pnpm@11.24.0",'
+                '"scripts":{"test":"pnpm --filter test-unit test:threads"}}',
+                encoding="utf-8",
+            )
+            (root / "pnpm-lock.yaml").write_text(
+                "lockfileVersion: '9.0'\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                detect_prepare_commands(root)[0],
+                [
+                    "npx", "--yes", "pnpm@11.24.0",
+                    "install", "--frozen-lockfile",
+                ],
+            )
+            self.assertEqual(
+                detect_test_command(root),
+                ["npx", "--yes", "pnpm@11.24.0", "run", "test"],
+            )
+
+    def test_zig_repository_uses_minimum_toolchain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "build.zig").write_text(
+                "pub fn build(_: anytype) void {}\n",
+                encoding="utf-8",
+            )
+            (root / "build.zig.zon").write_text(
+                '.{ .name = .example, .minimum_zig_version = "0.16.0" }\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                detect_prepare_commands(root),
+                [["/opt/zig/0.16.0/zig", "build", "--fetch"]],
+            )
+            self.assertEqual(
+                detect_test_command(root),
+                ["/opt/zig/0.16.0/zig", "build", "test"],
+            )
+            self.assertEqual(
+                detect_check_command(root),
+                ["/opt/zig/0.16.0/zig", "build"],
+            )
+
+    def test_zig_project_does_not_take_cmake_prepare_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "build.zig").write_text(
+                "pub fn build(_: anytype) void {}\n",
+                encoding="utf-8",
+            )
+            (root / "build.zig.zon").write_text(
+                '.{ .name = .example, .minimum_zig_version = '
+                '"0.17.0-dev.292+fc1c83a36" }\n',
+                encoding="utf-8",
+            )
+            (root / "CMakeLists.txt").write_text(
+                "project(example)\n",
+                encoding="utf-8",
+            )
+            commands = detect_prepare_commands(root)
+            self.assertEqual(
+                commands,
+                [[
+                    "/opt/zig/0.17.0-dev.292+fc1c83a36/zig",
+                    "build",
+                    "--fetch",
+                ]],
+            )
 
 
 if __name__ == "__main__":
