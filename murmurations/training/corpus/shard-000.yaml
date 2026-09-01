@@ -14,7 +14,13 @@ generation:
   fixed_episodes_per_repo: 2
   max_requests_per_repo: 80
   max_successes_per_repo: 50
-  burst_per_repo: 4
+  # Each partition keeps one prepared sandbox alive across a burst. Twelve
+  # requests amortize clone/install/build while still bounding overshoot.
+  burst_per_repo: 12
+  partitions_per_repo: 4
+  # Optional verifier-untrusted semantic proposals produced by Molab/another
+  # LLM proposer. When present, its content hash is part of generation identity.
+  semantic_candidates: data/murmurations/shard-000-semantic-candidates.jsonl
   # Use one concurrent burst per eligible repository, capped by Daytona's
   # live organization quota. The current serious catalog has 32 eligible repos.
   concurrency: auto
