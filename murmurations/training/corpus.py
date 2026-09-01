@@ -191,6 +191,19 @@ def validate_corpus_shard(
         if int(episodes["operator_refs"].get(name, 0)) > 0
     )
 
+    required_dynamic_languages = {
+        str(language)
+        for language in (quality.get("required_dynamic_languages") or [])
+    }
+    present_dynamic_languages = {
+        str(language)
+        for language, count in episodes["languages"].items()
+        if int(count) > 0
+    }
+    missing_dynamic_languages = sorted(
+        required_dynamic_languages - present_dynamic_languages
+    )
+
     gates = {
         "catalog_repositories": len(catalog.records)
         >= int(quality.get("min_catalog_repositories", 1)),
@@ -202,6 +215,7 @@ def validate_corpus_shard(
         >= int(quality.get("min_eligible_repositories", 1)),
         "dynamic_repositories": len(episodes["repositories"])
         >= int(quality.get("min_dynamic_repositories", 1)),
+        "required_dynamic_languages": not missing_dynamic_languages,
         "unique_mutations": int(episodes["unique_mutations"])
         >= int(quality.get("min_unique_mutations", 1)),
         "code_rows": int(code_stats["rows"])
@@ -243,6 +257,11 @@ def validate_corpus_shard(
             "types_present": terminal_operator_types,
             "argv_events": int(episodes["terminal_argv_events"]),
             "sandbox_backends": episodes["sandbox_backends"],
+        },
+        "dynamic_language_coverage": {
+            "required": sorted(required_dynamic_languages),
+            "present": sorted(present_dynamic_languages),
+            "missing": missing_dynamic_languages,
         },
         "rows": {
             "train": train,
