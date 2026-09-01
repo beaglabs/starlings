@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import shutil
 from typing import Iterable
 
 from murmurations.training.environments.repositories import RepoCatalog, checkout_repository
@@ -61,6 +62,7 @@ def materialize_repository_code(
     eval_fraction: float = 0.1,
     chunk_chars: int = 6000,
     max_files_per_repo: int = 2000,
+    prune_checkouts: bool = False,
 ) -> dict[str, object]:
     catalog = RepoCatalog.from_jsonl(catalog_path)
     counts = {"train": 0, "eval": 0}
@@ -137,6 +139,12 @@ def materialize_repository_code(
                     counts[split] += 1
                     produced += 1
             repo_counts[record.name] = produced
+            if (
+                prune_checkouts
+                and record.path is None
+                and root.exists()
+            ):
+                shutil.rmtree(root, ignore_errors=True)
 
     return {
         "train_rows": counts["train"],
@@ -167,6 +175,7 @@ def main() -> None:
         eval_fraction=args.eval_fraction,
         chunk_chars=args.chunk_chars,
         max_files_per_repo=args.max_files_per_repo,
+        prune_checkouts=True,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
 
