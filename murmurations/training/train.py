@@ -158,6 +158,14 @@ def main() -> None:
 
     if bool(train_cfg.get("torch_compile", False)):
         compile_mode = str(train_cfg.get("torch_compile_mode", "default"))
+        functorch_config = getattr(torch, "_functorch", None)
+        if functorch_config is not None:
+            compile_config = getattr(functorch_config, "config", None)
+            if (
+                compile_config is not None
+                and hasattr(compile_config, "backward_pass_autocast")
+            ):
+                compile_config.backward_pass_autocast = "off"
         model = torch.compile(
             model,
             mode=compile_mode,
