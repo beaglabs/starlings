@@ -67,8 +67,11 @@ Semantic operator mapping includes:
 - compiler/type/lint commands → `type.check`
 - package/dependency inspection → `package.metadata`
 - local documentation commands → `docs.lookup`
-- file edits → `repo.edit`
-- other repository-scoped commands → `repo.command`
+
+File edits and otherwise-unclassified repository commands are preserved as
+direct `EXECUTE` events with exact tool-call provenance, but do not receive
+an operator pointer because those capabilities are not exposed by the runtime
+Operator Retrieval registry.
 
 Imported EXECUTE events retain the exact source tool name, arguments, terminal
 command when present, and observation. They are marked
