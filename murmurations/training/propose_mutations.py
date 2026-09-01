@@ -60,6 +60,8 @@ def _source_files(
             continue
         lower_parts = {part.lower() for part in relative.parts}
         is_test = bool({"test", "tests"} & lower_parts) or path.stem.lower().startswith("test")
+        if is_test:
+            continue
         try:
             size = path.stat().st_size
         except OSError:
@@ -76,7 +78,7 @@ def _source_files(
         )
         rows.append(
             (
-                1 if is_test else 0,
+                0,
                 -len(candidate_lines),
                 relative_text,
                 path,
@@ -264,7 +266,14 @@ def _validated_candidates(
         if index < 0 or index >= len(source_lines):
             continue
         original = source_lines[index]
-        if "\n" in mutated_text or "\r" in mutated_text:
+        stripped = original.lstrip()
+        if stripped.startswith(("#", "//", "/*", "*", "import ", "from ", "package ")):
+            continue
+        if "\n" in mutated_text or "\r" in mutated_text or not mutated_text.strip():
+            continue
+        original_indent = original[: len(original) - len(original.lstrip())]
+        mutated_indent = mutated_text[: len(mutated_text) - len(mutated_text.lstrip())]
+        if mutated_indent != original_indent:
             continue
         newline = "\n" if original.endswith("\n") else ""
         mutated = mutated_text + newline
