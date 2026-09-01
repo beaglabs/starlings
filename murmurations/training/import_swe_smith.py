@@ -13,6 +13,9 @@ import json
 from pathlib import Path
 import re
 from typing import Any, Iterable
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from murmurations.training.environments.episodes import Episode, EpisodeBuilder
 from murmurations.training.operator_retrieval import OperatorDescriptor, OperatorRegistry
@@ -460,32 +463,54 @@ def _iter_huggingface(
     split: str,
     revision: str,
 ) -> Iterable[dict[str, Any]]:
-    try:
-        from datasets import load_dataset
-        from huggingface_hub import hf_hub_url
-    except ImportError as exc:
-        raise RuntimeError(
-            "datasets is required for streamed trajectory import; "
-            "install murmurations/requirements.txt"
-        ) from exc
+    """Stream the pinned JSONL file directly from Hugging Face.
+
+    Avoid `datasets.load_dataset(..., streaming=True)` here: for a single large
+    JSONL artifact it performs dataset-builder/Xet initialization before yielding
+    the first record, which can look like a hang and is unnecessary for this
+    importer. Hugging Face's resolve endpoint supports ordinary HTTP streaming
+    and redirects to the backing object store as needed.
+    """
 
     if split != "std":
-        raise ValueError("SWE-smith importer currently requires the standardized std split")
-    source_url = hf_hub_url(
-        repo_id=dataset,
-        filename=f"{config}/full_std.jsonl",
-        repo_type="dataset",
-        revision=revision,
+        raise ValueError(
+            "SWE-smith importer currently requires the standardized std split"
+        )
+
+    encoded_dataset = urllib.parse.quote(dataset, safe="/")
+    encoded_revision = urllib.parse.quote(revision, safe="")
+    encoded_path = urllib.parse.quote(f"{config}/full_std.jsonl", safe="/")
+    source_url = (
+        f"https://huggingface.co/datasets/{encoded_dataset}/resolve/"
+        f"{encoded_revision}/{encoded_path}?download=true"
     )
-    stream = load_dataset(
-        "json",
-        data_files={"train": source_url},
-        split="train",
-        streaming=True,
+    request = urllib.request.Request(
+        source_url,
+        headers={
+            "User-Agent": "starlings-murmurations/0.1",
+            "Accept-Encoding": "identity",
+        },
     )
-    for row in stream:
-        if isinstance(row, dict):
-            yield row
+
+    try:
+        response = urllib.request.urlopen(request, timeout=60)
+    except (OSError, urllib.error.URLError) as exc:
+        raise RuntimeError(
+            f"failed to open SWE-smith trajectory stream: {source_url}: {exc}"
+        ) from exc
+
+    with response:
+        for line_no, raw_line in enumerate(response, 1):
+            if not raw_line.strip():
+                continue
+            try:
+                row = json.loads(raw_line.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    f"SWE-smith stream line {line_no}: invalid JSONL"
+                ) from exc
+            if isinstance(row, dict):
+                yield row
 
 
 def import_swe_smith(
@@ -536,6 +561,12 @@ def import_swe_smith(
     with output.open("w", encoding="utf-8") as handle:
         for raw_record in source:
             scanned += 1
+            if scanned == 1 or scanned % 250 == 0:
+                print(
+                    f"[swe-smith] scanned={scanned} accepted={written} "
+                    f"events={trajectory_rows} repos={len(repositories)}",
+                    flush=True,
+                )
             episode = convert_atif_record(raw_record)
             if episode is None:
                 skipped += 1
