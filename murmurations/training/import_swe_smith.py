@@ -141,45 +141,140 @@ def _as_list(value: Any) -> list[Any]:
 
 
 _FUNCTION_CALL_RE = re.compile(
-    r"<function=([^>\s]+)>\s*(.*?)</function>",
+    r"<function=([^>\\s]+)>\\s*(.*?)</function>",
     re.IGNORECASE | re.DOTALL,
 )
 _PARAMETER_RE = re.compile(
     r"<parameter=([^>]+)>(.*?)</parameter>",
     re.IGNORECASE | re.DOTALL,
 )
+_BACKTICK_ACTION_RE = re.compile(
+    r"```(?:bash|sh|shell)?\\s*\\n?(.*?)```",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
-def _parse_raw_tool_call(
+def _message_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                text = item.get("text", item.get("content", ""))
+                if text:
+                    parts.append(str(text))
+            elif item is not None:
+                parts.append(str(item))
+        return "\\n".join(parts)
+    return "" if value is None else str(value)
+
+
+def _normalize_tool_name(name: str) -> str:
+    lowered = name.strip().lower()
+    if lowered in {"bash", "shell"}:
+        return "terminal"
+    if lowered in {"submit", "finalize"}:
+        return "finish"
+    return name.strip()
+
+
+def _xml_tool_calls(
     content: str,
     *,
-    call_id: str,
-) -> tuple[str, dict[str, Any], str] | None:
-    """Parse one SWE-smith XML tool call from an assistant message."""
+    step_id: int,
+) -> tuple[list[dict[str, Any]], str]:
+    calls: list[dict[str, Any]] = []
+    spans: list[tuple[int, int]] = []
+    for offset, match in enumerate(_FUNCTION_CALL_RE.finditer(content)):
+        function_name = _normalize_tool_name(match.group(1))
+        arguments = {
+            name.strip(): value.strip("\\n")
+            for name, value in _PARAMETER_RE.findall(match.group(2))
+            if name.strip()
+        }
+        calls.append(
+            {
+                "tool_call_id": f"raw_call_{step_id}_{offset}",
+                "function_name": function_name,
+                "arguments": arguments,
+            }
+        )
+        spans.append(match.span())
 
-    match = _FUNCTION_CALL_RE.search(content)
-    if match is None:
-        return None
-    function_name = match.group(1).strip()
-    body = match.group(2)
-    arguments = {
-        name.strip(): value
-        for name, value in _PARAMETER_RE.findall(body)
-        if name.strip()
-    }
+    if not calls:
+        return [], content.strip()
+
+    chunks: list[str] = []
+    cursor = 0
+    for span_start, span_end in spans:
+        chunks.append(content[cursor:span_start])
+        cursor = span_end
+    chunks.append(content[cursor:])
+    return calls, "".join(chunks).strip()
+
+
+def _structured_tool_calls(
+    message: dict[str, Any],
+    *,
+    step_id: int,
+) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+    raw_calls = message.get("tool_calls")
+    if not isinstance(raw_calls, list):
+        return calls
+    for offset, raw_call in enumerate(raw_calls):
+        if not isinstance(raw_call, dict):
+            continue
+        function = _as_dict(raw_call.get("function"))
+        name = str(
+            function.get("name")
+            or raw_call.get("function_name")
+            or raw_call.get("name")
+            or ""
+        ).strip()
+        if not name:
+            continue
+        raw_arguments = function.get("arguments", raw_call.get("arguments", {}))
+        arguments = _as_dict(raw_arguments)
+        calls.append(
+            {
+                "tool_call_id": str(
+                    raw_call.get("id")
+                    or raw_call.get("tool_call_id")
+                    or f"raw_call_{step_id}_{offset}"
+                ),
+                "function_name": _normalize_tool_name(name),
+                "arguments": arguments,
+            }
+        )
+    return calls
+
+
+def _backtick_tool_call(
+    content: str,
+    *,
+    step_id: int,
+) -> tuple[list[dict[str, Any]], str]:
+    matches = list(_BACKTICK_ACTION_RE.finditer(content))
+    if not matches:
+        return [], content.strip()
+    match = matches[-1]
+    command = match.group(1).strip()
+    if not command:
+        return [], content.strip()
     message = (content[: match.start()] + content[match.end() :]).strip()
-
-    normalized_name = function_name.lower()
-    if normalized_name == "bash":
-        function_name = "terminal"
-    elif normalized_name == "submit":
-        function_name = "finish"
-
-    return function_name, arguments, message
+    return [
+        {
+            "tool_call_id": f"raw_call_{step_id}_0",
+            "function_name": "terminal",
+            "arguments": {"command": command},
+        }
+    ], message
 
 
 def _raw_to_atif_record(record: dict[str, Any]) -> dict[str, Any] | None:
-    """Normalize original SWE-smith messages into the importer ATIF subset."""
+    """Normalize original SWE-smith tool/xml/ticks messages for import."""
 
     messages = _as_list(record.get("messages"))
     if not messages:
@@ -195,7 +290,10 @@ def _raw_to_atif_record(record: dict[str, Any]) -> dict[str, Any] | None:
             continue
 
         role = str(raw_message.get("role") or "").strip().lower()
-        content = str(raw_message.get("content") or "")
+        content = _message_text(raw_message.get("content"))
+
+        if role == "tool":
+            continue
         if role not in {"system", "user", "assistant"}:
             continue
 
@@ -211,66 +309,90 @@ def _raw_to_atif_record(record: dict[str, Any]) -> dict[str, Any] | None:
             )
             continue
 
-        call_id = f"raw_call_{step_id}"
-        parsed = _parse_raw_tool_call(content, call_id=call_id)
-        if parsed is None:
+        calls = _structured_tool_calls(raw_message, step_id=step_id)
+        message = _message_text(
+            raw_message.get("thought")
+            if raw_message.get("thought") is not None
+            else raw_message.get("content")
+        ).strip()
+
+        if not calls:
+            calls, message = _xml_tool_calls(content, step_id=step_id)
+        if not calls:
+            calls, message = _backtick_tool_call(content, step_id=step_id)
+
+        if not calls:
             steps.append(
                 {"step_id": step_id, "source": "agent", "message": content}
             )
             continue
 
-        function_name, arguments, message = parsed
         step: dict[str, Any] = {
             "step_id": step_id,
             "source": "agent",
             "message": message,
-            "tool_calls": [
-                {
-                    "tool_call_id": call_id,
-                    "function_name": function_name,
-                    "arguments": arguments,
-                }
-            ],
+            "tool_calls": calls,
         }
 
-        # SWE-smith raw trajectories put the environment/tool observation in
-        # the immediately following user turn. Consume it into this tool step
-        # instead of treating it as a second task/user instruction.
-        if index < len(messages):
-            candidate = messages[index]
-            if (
-                isinstance(candidate, dict)
-                and str(candidate.get("role") or "").strip().lower() == "user"
-            ):
-                observation = str(candidate.get("content") or "")
-                step["observation"] = {
-                    "results": [
-                        {
-                            "source_call_id": call_id,
-                            "content": observation,
-                        }
-                    ]
-                }
-                index += 1
+        results: list[dict[str, Any]] = []
+        call_ids = [str(call["tool_call_id"]) for call in calls]
+        call_id_set = set(call_ids)
+        ordered_unmatched = list(call_ids)
 
+        while index < len(messages) and ordered_unmatched:
+            candidate = messages[index]
+            if not isinstance(candidate, dict):
+                break
+            candidate_role = str(candidate.get("role") or "").strip().lower()
+            if candidate_role not in {"tool", "user"}:
+                break
+
+            explicit_id = str(
+                candidate.get("tool_call_id")
+                or candidate.get("source_call_id")
+                or ""
+            )
+            if explicit_id and explicit_id in call_id_set:
+                source_call_id = explicit_id
+                if source_call_id in ordered_unmatched:
+                    ordered_unmatched.remove(source_call_id)
+            else:
+                source_call_id = ordered_unmatched.pop(0)
+
+            results.append(
+                {
+                    "source_call_id": source_call_id,
+                    "content": _message_text(candidate.get("content")),
+                }
+            )
+            index += 1
+
+            # XML/backtick style has one user observation per action. Native
+            # tool-call style can have one role=tool result for each call.
+            if candidate_role == "user" and len(calls) == 1:
+                break
+
+        if results:
+            step["observation"] = {"results": results}
         steps.append(step)
 
     resolved = record.get("resolved")
-    raw = {
-        "instance_id": record.get("instance_id"),
-        "resolved": resolved,
-        "model": record.get("model"),
-        "traj_id": record.get("traj_id"),
-        "patch": record.get("patch", ""),
-    }
     trajectory_id = str(record.get("traj_id") or record.get("id") or "").strip()
-    if not trajectory_id:
+    instance_id = str(record.get("instance_id") or trajectory_id).strip()
+    if not trajectory_id or not instance_id:
         return None
+
     return {
         "id": trajectory_id,
         "steps": steps,
         "extra": {
-            "raw": raw,
+            "raw": {
+                "instance_id": instance_id,
+                "resolved": resolved,
+                "model": record.get("model"),
+                "traj_id": trajectory_id,
+                "patch": record.get("patch", ""),
+            },
             "source_dataset": "swe-smith",
             "source_format": "raw",
         },
@@ -346,7 +468,7 @@ def classify_tool_call(
     command = str(arguments.get("command") or "").strip()
     editor_command = str(arguments.get("command") or "").strip().lower()
 
-    if name in {"str_replace_editor", "editor", "read_file", "write_file"}:
+    if name in {"str_replace_editor", "file_editor", "editor", "read_file", "write_file"}:
         if editor_command in {"view", "read"} or name == "read_file":
             path = str(arguments.get("path") or arguments.get("file_path") or "")
             return "repo.search", f"inspect repository file {path}".strip(), ArgumentKind.ARTIFACT
@@ -699,6 +821,8 @@ def import_swe_smith(
     written = 0
     trajectory_rows = 0
     skipped = 0
+    duplicate_trajectories = 0
+    seen_trajectory_ids: set[str] = set()
     repositories: set[str] = set()
     operators: Counter[str] = Counter()
     external_execution_events = 0
@@ -716,10 +840,19 @@ def import_swe_smith(
             if episode is None:
                 skipped += 1
                 continue
+            trajectory_id = str(
+                (episode.get("generation") or {}).get("trajectory_id") or ""
+            )
+            if trajectory_id and trajectory_id in seen_trajectory_ids:
+                duplicate_trajectories += 1
+                skipped += 1
+                continue
             if str(episode["repository"]["name"]) in excluded:
                 skipped += 1
                 continue
             handle.write(json.dumps(episode, sort_keys=True) + "\n")
+            if trajectory_id:
+                seen_trajectory_ids.add(trajectory_id)
             written += 1
             repositories.add(str(episode["repository"]["name"]))
             trajectory_rows += len(episode["events"])
@@ -755,6 +888,7 @@ def import_swe_smith(
         "min_repositories": min_repositories,
         "source_scanned": scanned,
         "source_skipped": skipped,
+        "duplicate_trajectories_skipped": duplicate_trajectories,
         "requested": written,
         "written": written,
         "failed": 0,
