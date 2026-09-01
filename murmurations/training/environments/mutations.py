@@ -84,6 +84,7 @@ class Mutation:
     mutated_line: str
     clean_verification: Verification
     broken_verification: Verification
+    candidate_source: str = "deterministic"
 
     @property
     def fingerprint(self) -> str:
@@ -301,6 +302,7 @@ def inject_verified_mutation(
                 mutated_line=candidate.mutated_line,
                 clean_verification=clean,
                 broken_verification=broken,
+                candidate_source=candidate.source,
             )
         lines[index] = candidate.original_line
         path.write_text("".join(lines), encoding="utf-8")
