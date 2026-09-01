@@ -38,7 +38,7 @@ jobs:
             murmurations.training.test_import_swe_smith \
             murmurations.training.test_corpus
 
-  hosted-harbor:
+  harbor-integration:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +49,18 @@ jobs:
         run: python3 -m pip install "uv>=0.8,<1"
       - name: Sync locked ACP runtime
         run: uv sync --frozen --project integrations/harbor
-      - name: Hosted Harbor contract tests
+      - name: Harbor contract tests
         run: |
           uv run --project integrations/harbor \
             python -m unittest discover -s integrations/harbor/tests
+      - name: Import normal Harbor agents
+        run: |
+          python3 -m pip install "harbor==0.22.0"
+          python3 -c "from integrations.harbor.local_agents import BaselineAgent, StarlingsAgent, DeterministicStarlingsAgent; print(BaselineAgent.name(), StarlingsAgent.name(), DeterministicStarlingsAgent.name())"
+      - name: Compile local integration modules
+        run: |
+          python3 -m py_compile \
+            integrations/harbor/local_agents.py \
+            integrations/harbor/mcp_bridge.py \
+            integrations/harbor/starlings_harbor/inference.py \
+            integrations/harbor/starlings_harbor/bridge.py
