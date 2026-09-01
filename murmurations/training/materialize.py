@@ -132,6 +132,14 @@ def _summary(event: dict[str, Any], *, max_chars: int | None = None) -> str:
     return minimum_identity + "\n" + _clip_middle(payload, remaining - 1)
 
 
+def _parent_identity(event: dict[str, Any]) -> str:
+    frame = event["frame"]
+    return (
+        f"{event['id']} {frame['operation']} "
+        f"operator={frame.get('operator_ref')}"
+    )
+
+
 def _render_context(
     episode: dict[str, Any],
     event_index: int,
@@ -139,108 +147,185 @@ def _render_context(
     max_context_chars: int,
     argument_text_override: str | None = None,
 ) -> str:
+    """Render context with structured pointer targets taking budget priority."""
+
     event = episode["events"][event_index]
     repository = episode["repository"]
-    task_limit = min(4000, max(256, max_context_chars // 3))
-    grounding_limit = min(3000, max(256, max_context_chars // 4))
-    query_limit = min(1000, max(128, max_context_chars // 12))
-    header = [
-        f"TASK: {_clip_middle(str(episode['task']), task_limit)}",
-        (
-            "REPOSITORY: "
-            f"{repository['name']} commit={repository['commit']} "
-            f"license={repository['license']} identity={repository['identity']}"
-        ),
-        (
-            "RETRIEVAL_QUERY: "
-            f"{_clip_middle(str(event['retrieval_query']), query_limit)}"
-        ),
-        "<CAPABILITY>",
-    ]
-    for name in event.get("candidates", []):
-        header.append(f"<OPERATOR>{name}</OPERATOR>")
-    header.extend(["</CAPABILITY>", "<STATE>"])
-
+    frame = event.get("frame") or {}
     prior = episode["events"][:event_index]
     order = {item["id"]: index for index, item in enumerate(prior)}
     by_id = {item["id"]: item for item in prior}
-    parent_ids = list((event.get("frame") or {}).get("parents", []))
-    selected: list[dict[str, Any]] = []
-    selected_ids: set[str] = set()
 
+    parent_ids = list(frame.get("parents", []))
+    parents: list[dict[str, Any]] = []
+    seen_parent_ids: set[str] = set()
     for parent_id in parent_ids:
         parent = by_id.get(parent_id)
         if parent is None:
             raise ValueError(f"materialization lost direct parent {parent_id}")
-        if parent_id not in selected_ids:
-            selected.append(parent)
-            selected_ids.add(parent_id)
+        if parent_id not in seen_parent_ids:
+            parents.append(parent)
+            seen_parent_ids.add(parent_id)
 
-    frame = event.get("frame") or {}
     argument_text = (
         argument_text_override
         if argument_text_override is not None
         else frame.get("argument")
     )
-    grounding_text = str(event.get("grounding") or "")
     if argument_text is not None:
         argument_text = str(argument_text)
-        # Argument start/end supervision is a pointer into the raw context.
-        # Never truncate or rewrite the current structured argument.
-        fixed_tail = [f"OBSERVED_INPUT: {argument_text}"]
-        if grounding_text and grounding_text != argument_text:
-            fixed_tail.append(
-                "SOURCE_GROUNDING: "
-                + _clip_middle(grounding_text, min(1000, grounding_limit))
-            )
-    else:
-        fixed_tail = [
-            "OBSERVED_INPUT: "
-            + _clip_middle(grounding_text, grounding_limit)
-        ]
-    fixed_tail.append("</STATE>")
-    fixed_chars = len("\n".join(header + fixed_tail))
-    budget = max(0, max_context_chars - fixed_chars)
 
-    # Direct parents are mandatory pointer targets. Give them the available
-    # state budget first and compact their payloads as needed; recent context
-    # is strictly opportunistic.
-    parent_summaries: dict[str, str] = {}
-    if selected:
-        separators = len(selected)
-        parent_budget = max(0, budget - separators)
-        per_parent_budget = parent_budget // len(selected)
-        for item in selected:
-            parent_summaries[item["id"]] = _summary(
-                item,
-                max_chars=per_parent_budget,
-            )
-    used = sum(len(parent_summaries[item["id"]]) + 1 for item in selected)
+    operator_ref = frame.get("operator_ref")
+    candidate_names = [
+        str(name)
+        for name in event.get("candidates", [])
+        if isinstance(name, str) and name
+    ]
+    capability_lines: list[str] = []
+    if operator_ref is not None:
+        capability_lines.append(f"<OPERATOR>{operator_ref}</OPERATOR>")
 
-    recent: list[dict[str, Any]] = []
+    repository_line = (
+        "REPOSITORY: "
+        f"{repository['name']} commit={repository['commit']} "
+        f"license={repository['license']} identity={repository['identity']}"
+    )
+    parent_lines = [_parent_identity(parent) for parent in parents]
+    observed_line = (
+        f"OBSERVED_INPUT: {argument_text}"
+        if argument_text is not None
+        else "OBSERVED_INPUT:"
+    )
+
+    def render(
+        *,
+        task_line: str | None = None,
+        query_line: str | None = None,
+        extra_capabilities: list[str] | None = None,
+        rendered_parents: list[str] | None = None,
+        recent_lines: list[str] | None = None,
+        grounding_line: str | None = None,
+    ) -> str:
+        parts: list[str] = []
+        if task_line:
+            parts.append(task_line)
+        parts.append(repository_line)
+        if query_line:
+            parts.append(query_line)
+        parts.append("<CAPABILITY>")
+        parts.extend(capability_lines)
+        parts.extend(extra_capabilities or [])
+        parts.extend(["</CAPABILITY>", "<STATE>"])
+        parts.extend(rendered_parents if rendered_parents is not None else parent_lines)
+        parts.extend(recent_lines or [])
+        parts.append(observed_line)
+        if grounding_line:
+            parts.append(grounding_line)
+        parts.append("</STATE>")
+        return "\n".join(parts)
+
+    # These fields are the irreducible supervision contract: exact current
+    # argument span, every direct-parent id, the selected operator reference,
+    # and repository identity. Optional prose/history may be dropped.
+    context = render()
+    if len(context) > max_context_chars:
+        raise ValueError(
+            "mandatory structured trajectory context exceeds max_context_chars"
+        )
+
+    remaining = max_context_chars - len(context)
+
+    def optional_line(label: str, value: str, cap: int) -> str | None:
+        nonlocal remaining
+        if not value or remaining <= len(label) + 2:
+            return None
+        value_budget = min(cap, remaining - len(label) - 2)
+        if value_budget <= 0:
+            return None
+        line = f"{label}{_clip_middle(value, value_budget)}"
+        cost = len(line) + 1
+        if cost > remaining:
+            return None
+        remaining -= cost
+        return line
+
+    # Enrich direct parents before adding free-form prose. Their payload is
+    # more useful for structured next-action prediction than distant history.
+    rendered_parents = list(parent_lines)
+    if parents and remaining > 0:
+        per_parent_extra = min(900, remaining // len(parents))
+        for index, parent in enumerate(parents):
+            target_size = len(parent_lines[index]) + per_parent_extra
+            try:
+                richer = _summary(parent, max_chars=target_size)
+            except ValueError:
+                continue
+            extra = len(richer) - len(parent_lines[index])
+            if extra > 0 and extra <= remaining:
+                rendered_parents[index] = richer
+                remaining -= extra
+
+    task_line = optional_line("TASK: ", str(episode.get("task") or ""), 700)
+    query_line = optional_line(
+        "RETRIEVAL_QUERY: ",
+        str(event.get("retrieval_query") or ""),
+        400,
+    )
+
+    extra_capabilities: list[str] = []
+    for name in candidate_names:
+        if operator_ref is not None and name == str(operator_ref):
+            continue
+        line = f"<OPERATOR>{name}</OPERATOR>"
+        cost = len(line) + 1
+        if cost <= remaining:
+            extra_capabilities.append(line)
+            remaining -= cost
+
+    grounding_text = str(event.get("grounding") or "")
+    grounding_line = None
+    if argument_text is None or grounding_text != argument_text:
+        grounding_line = optional_line(
+            "SOURCE_GROUNDING: ",
+            grounding_text,
+            400,
+        )
+
+    selected_ids = set(seen_parent_ids)
+    recent_lines: list[str] = []
     for previous in reversed(prior):
         if previous["id"] in selected_ids:
             continue
-        size = len(_summary(previous)) + 1
-        if used + size > budget:
+        summary = _summary(previous)
+        cost = len(summary) + 1
+        if cost > remaining:
             continue
-        recent.append(previous)
+        recent_lines.append(summary)
         selected_ids.add(previous["id"])
-        used += size
-    selected.extend(reversed(recent))
-    selected.sort(key=lambda item: order[item["id"]])
+        remaining -= cost
+    recent_lines.reverse()
 
-    rendered_selected = [
-        (
-            parent_summaries[item["id"]]
-            if item["id"] in parent_summaries
-            else _summary(item)
-        )
-        for item in selected
-    ]
-    context = "\n".join(header + rendered_selected + fixed_tail)
+    context = render(
+        task_line=task_line,
+        query_line=query_line,
+        extra_capabilities=extra_capabilities,
+        rendered_parents=rendered_parents,
+        recent_lines=recent_lines,
+        grounding_line=grounding_line,
+    )
     if len(context) > max_context_chars:
         raise ValueError("bounded context rendering exceeded max_context_chars")
+
+    # Preserve chronological order among all selected prior events. Parent
+    # enrichment above cannot disturb ids or pointer targets.
+    if recent_lines and parents:
+        selected = parents + [
+            item
+            for item in prior
+            if item["id"] in selected_ids and item["id"] not in seen_parent_ids
+        ]
+        selected.sort(key=lambda item: order[item["id"]])
+
     return context
 
 
