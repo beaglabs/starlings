@@ -16,7 +16,7 @@ generation:
   source:
     dataset: neulab/agent-data-collection
     config: swe-smith
-    split: std
+    split: raw
     revision: 17f755bd6c6588d98a91ae6512576d9772919ab2
     target_rows: 12000
     max_episodes: 1200
