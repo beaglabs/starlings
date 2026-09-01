@@ -83,6 +83,25 @@ def _catalog_for_run(
     return path
 
 
+def _copy_artifact(source: Path, target: Path) -> None:
+    if source.resolve() == target.resolve():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
+
+
+def _full_generation_targets(quality: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "unique_mutations": int(quality.get("min_unique_mutations", 0)),
+        "trajectory_rows": int(quality.get("min_trajectory_rows", 0)),
+        "dynamic_repositories": int(quality.get("min_dynamic_repositories", 0)),
+        "terminal_operator_events": int(quality.get("min_terminal_operator_events", 0)),
+        "terminal_operator_types": int(quality.get("min_terminal_operator_types", 0)),
+        "terminal_argv_events": int(quality.get("min_terminal_argv_events", 0)),
+        "success_rate": float(quality.get("min_generation_success_rate", 0.0)),
+    }
+
+
 def build_shard(
     config_path: str | Path,
     *,
