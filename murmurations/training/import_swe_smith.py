@@ -821,6 +821,9 @@ def import_swe_smith(
     written = 0
     trajectory_rows = 0
     skipped = 0
+    converted = 0
+    rejected_records = 0
+    excluded_records = 0
     duplicate_trajectories = 0
     seen_trajectory_ids: set[str] = set()
     repositories: set[str] = set()
@@ -832,14 +835,18 @@ def import_swe_smith(
             scanned += 1
             if scanned == 1 or scanned % 250 == 0:
                 print(
-                    f"[swe-smith] scanned={scanned} accepted={written} "
-                    f"events={trajectory_rows} repos={len(repositories)}",
+                    f"[swe-smith] scanned={scanned} converted={converted} "
+                    f"accepted={written} excluded={excluded_records} "
+                    f"rejected={rejected_records} events={trajectory_rows} "
+                    f"repos={len(repositories)}",
                     flush=True,
                 )
             episode = convert_atif_record(raw_record)
             if episode is None:
+                rejected_records += 1
                 skipped += 1
                 continue
+            converted += 1
             trajectory_id = str(
                 (episode.get("generation") or {}).get("trajectory_id") or ""
             )
@@ -848,6 +855,7 @@ def import_swe_smith(
                 skipped += 1
                 continue
             if str(episode["repository"]["name"]) in excluded:
+                excluded_records += 1
                 skipped += 1
                 continue
             handle.write(json.dumps(episode, sort_keys=True) + "\n")
@@ -888,6 +896,9 @@ def import_swe_smith(
         "min_repositories": min_repositories,
         "source_scanned": scanned,
         "source_skipped": skipped,
+        "source_converted": converted,
+        "source_rejected": rejected_records,
+        "source_excluded": excluded_records,
         "duplicate_trajectories_skipped": duplicate_trajectories,
         "requested": written,
         "written": written,
