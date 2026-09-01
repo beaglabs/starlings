@@ -60,7 +60,7 @@ git clone https://github.com/beaglabs/starlings.git
 cd starlings
 git switch feat/hosted-harbor-agents
 
-python3 -m pip install -U "harbor[daytona]" "ziglang==0.16.0"
+python3 -m pip install -U "harbor[daytona]==0.22.0" "ziglang==0.16.0"
 
 export DAYTONA_API_KEY='...'
 export OPENAI_API_KEY='...'
@@ -124,7 +124,7 @@ Condition C produces zero model usage.
 ## Local checks
 
 ```sh
-python3 -m pip install -U harbor "ziglang==0.16.0"
+python3 -m pip install -U "harbor==0.22.0" "ziglang==0.16.0"
 python3 -m unittest discover -s integrations/harbor/tests
 python3 -m ziglang build test
 ```
