@@ -128,7 +128,191 @@ def _record(
     }
 
 
+
+def _raw_record(
+    *,
+    traj_id: str = "external__repo.abc123.func_basic__one.trace",
+    resolved: bool = True,
+    style: str = "xml",
+) -> dict:
+    instance_id = "external__repo.abc123.func_basic__one"
+    system = {"role": "system", "content": "You are a coding agent."}
+    user = {
+        "role": "user",
+        "content": "Fix the broken cache behavior and make the tests pass.",
+    }
+
+    if style == "xml":
+        inspect = {
+            "role": "assistant",
+            "content": (
+                "I will inspect the cache.\n\n"
+                "<function=bash>\n"
+                "<parameter=command>cd /testbed && rg cache src tests</parameter>\n"
+                "</function>"
+            ),
+        }
+        test = {
+            "role": "assistant",
+            "content": (
+                "Now verify the repair.\n\n"
+                "<function=bash>\n"
+                "<parameter=command>cd /testbed && pytest -q</parameter>\n"
+                "</function>"
+            ),
+        }
+        finish = {
+            "role": "assistant",
+            "content": "<function=submit>\n</function>",
+        }
+        inspect_observation = {
+            "role": "user",
+            "content": "OBSERVATION:\nsrc/cache.py:10:def get_cached_value(...):",
+        }
+        test_observation = {
+            "role": "user",
+            "content": "OBSERVATION:\n42 passed in 1.21s",
+        }
+    elif style == "ticks":
+        inspect = {
+            "role": "assistant",
+            "content": (
+                "I will inspect the cache.\n\n"
+                "\x60\x60\x60\ncd /testbed && rg cache src tests\n\x60\x60\x60"
+            ),
+        }
+        test = {
+            "role": "assistant",
+            "content": (
+                "Now verify the repair.\n\n"
+                "\x60\x60\x60bash\ncd /testbed && pytest -q\n\x60\x60\x60"
+            ),
+        }
+        finish = {
+            "role": "assistant",
+            "content": "<function=submit>\n</function>",
+        }
+        inspect_observation = {
+            "role": "user",
+            "content": "OBSERVATION:\nsrc/cache.py:10:def get_cached_value(...):",
+        }
+        test_observation = {
+            "role": "user",
+            "content": "OBSERVATION:\n42 passed in 1.21s",
+        }
+    elif style == "tool":
+        inspect = {
+            "role": "assistant",
+            "content": "I will inspect the cache.",
+            "thought": "I will inspect the cache.",
+            "tool_calls": [
+                {
+                    "id": "tool_1",
+                    "function": {
+                        "name": "bash",
+                        "arguments": json.dumps(
+                            {"command": "cd /testbed && rg cache src tests"}
+                        ),
+                    },
+                }
+            ],
+        }
+        test = {
+            "role": "assistant",
+            "content": "Now verify the repair.",
+            "thought": "Now verify the repair.",
+            "tool_calls": [
+                {
+                    "id": "tool_2",
+                    "function": {
+                        "name": "bash",
+                        "arguments": json.dumps(
+                            {"command": "cd /testbed && pytest -q"}
+                        ),
+                    },
+                }
+            ],
+        }
+        finish = {
+            "role": "assistant",
+            "content": "",
+            "thought": "",
+            "tool_calls": [
+                {
+                    "id": "tool_3",
+                    "function": {"name": "submit", "arguments": "{}"},
+                }
+            ],
+        }
+        inspect_observation = {
+            "role": "tool",
+            "tool_call_id": "tool_1",
+            "content": [
+                {"type": "text", "text": "src/cache.py:10:def get_cached_value(...)"}
+            ],
+        }
+        test_observation = {
+            "role": "tool",
+            "tool_call_id": "tool_2",
+            "content": [{"type": "text", "text": "42 passed in 1.21s"}],
+        }
+    else:
+        raise ValueError(style)
+
+    return {
+        "messages": [
+            system,
+            user,
+            inspect,
+            inspect_observation,
+            test,
+            test_observation,
+            finish,
+        ],
+        "instance_id": instance_id,
+        "resolved": resolved,
+        "model": "fixture-model",
+        "traj_id": traj_id,
+        "patch": "",
+    }
+
+
 class SweSmithImportTests(unittest.TestCase):
+    def test_raw_swe_smith_styles_convert_to_grounded_episode(self) -> None:
+        for style in ("xml", "tool", "ticks"):
+            with self.subTest(style=style):
+                episode = convert_atif_record(_raw_record(style=style))
+                self.assertIsNotNone(episode)
+                assert episode is not None
+                self.assertEqual(episode["repository"]["name"], "external/repo")
+                self.assertEqual(episode["repository"]["commit"], "abc123")
+                self.assertTrue(episode["generation"]["resolved"])
+
+                execute_events = [
+                    event
+                    for event in episode["events"]
+                    if event["frame"]["operation"] == "EXECUTE"
+                ]
+                self.assertGreaterEqual(len(execute_events), 2)
+                operator_refs = [
+                    event["frame"].get("operator_ref") for event in execute_events
+                ]
+                self.assertIn("repo.search", operator_refs)
+                self.assertIn("repo.tests", operator_refs)
+                self.assertTrue(
+                    any(
+                        "42 passed" in str(event["environment"].get("output") or "")
+                        for event in execute_events
+                    )
+                )
+                self.assertEqual(
+                    episode["events"][-1]["frame"]["operation"],
+                    "ACCEPT",
+                )
+
+    def test_raw_unresolved_records_are_rejected(self) -> None:
+        self.assertIsNone(convert_atif_record(_raw_record(resolved=False)))
+
     def test_terminal_commands_map_to_semantic_operators(self) -> None:
         operator, _, kind = classify_tool_call(
             "terminal", {"command": "cd /testbed && pytest -q"}
@@ -254,6 +438,40 @@ class SweSmithImportTests(unittest.TestCase):
 
     def test_unresolved_records_are_rejected(self) -> None:
         self.assertIsNone(convert_atif_record(_record(resolved=False)))
+
+    def test_raw_import_deduplicates_trajectory_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "raw.jsonl"
+            first = _raw_record(traj_id="same.trace", style="xml")
+            second = _raw_record(traj_id="same.trace", style="tool")
+            input_path.write_text(
+                json.dumps(first) + "\n" + json.dumps(second) + "\n",
+                encoding="utf-8",
+            )
+            output = root / "episodes.jsonl"
+
+            report = import_swe_smith(
+                output,
+                input_jsonl=input_path,
+                target_rows=1,
+                min_episodes=1,
+                min_repositories=1,
+                max_episodes=2,
+            )
+
+            self.assertEqual(report["written"], 1)
+            self.assertEqual(report["duplicate_trajectories_skipped"], 1)
+            self.assertEqual(
+                len(
+                    [
+                        line
+                        for line in output.read_text(encoding="utf-8").splitlines()
+                        if line
+                    ]
+                ),
+                1,
+            )
 
     def test_stream_import_stops_at_target_and_excludes_static_repositories(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
