@@ -37,3 +37,19 @@ jobs:
           python3 -m unittest \
             murmurations.training.test_import_swe_smith \
             murmurations.training.test_corpus
+
+  hosted-harbor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: python3 -m pip install "uv>=0.8,<1"
+      - name: Sync locked ACP runtime
+        run: uv sync --frozen --project integrations/harbor
+      - name: Hosted Harbor contract tests
+        run: |
+          uv run --project integrations/harbor \
+            python -m unittest discover -s integrations/harbor/tests
