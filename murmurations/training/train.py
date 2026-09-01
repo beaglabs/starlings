@@ -160,7 +160,18 @@ def main() -> None:
         model = model.to(device=accelerator.device, dtype=torch.bfloat16)
     float8_report = _configure_float8_backbone(model, train_cfg)
     if accelerator.is_main_process:
-        print(json.dumps({"float8": float8_report}, sort_keys=True), flush=True)
+        first_parameter = next(model.parameters())
+        print(
+            json.dumps(
+                {
+                    "float8": float8_report,
+                    "model_device": str(first_parameter.device),
+                    "model_dtype": str(first_parameter.dtype),
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
 
     if bool(train_cfg.get("torch_compile", False)):
         compile_mode = str(train_cfg.get("torch_compile_mode", "default"))
@@ -270,9 +281,13 @@ def main() -> None:
         lambda step: scheduler_lambda(step, warmup=warmup_steps, total=max_steps),
     )
 
+    if accelerator.is_main_process:
+        print(json.dumps({"phase": "accelerator_prepare_start"}), flush=True)
     model, optimizer, train_loader, eval_loader, scheduler = accelerator.prepare(
         model, optimizer, train_loader, eval_loader, scheduler
     )
+    if accelerator.is_main_process:
+        print(json.dumps({"phase": "accelerator_prepare_done"}), flush=True)
     if args.resume:
         accelerator.load_state(args.resume)
 
