@@ -15,6 +15,14 @@ generation:
   max_requests_per_repo: 80
   max_successes_per_repo: 50
   burst_per_repo: 4
+  # Use one concurrent burst per eligible repository, capped by Daytona's
+  # live organization quota. The current serious catalog has 32 eligible repos.
+  concurrency: auto
+  max_concurrency: 125
+  # Conservative hard planning ceiling. Cost estimation charges the full
+  # snapshot disk allocation and assumes every retry lives for the full TTL.
+  budget_usd: 3000
+  budget_safety_fraction: 0.90
 
 generation_retries: 4
 timeout_seconds: 180
