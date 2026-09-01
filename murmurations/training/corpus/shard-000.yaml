@@ -2,88 +2,46 @@ name: shard-000
 catalog: murmurations/training/corpus/shard-000-repos.jsonl
 output_dir: data/murmurations/shard-000
 cache_dir: .cache/murmurations/repos
-work_dir: .cache/murmurations/shard-000-work
 
 seed: 17001
 eval_fraction: 0.10
 
-# Full serious generation is target-driven and resumable. Limited smoke builds
-# can still override a fixed per-repository count from the CLI.
+# Bulk trajectory supervision is imported from the execution-grounded,
+# standardized SWE-smith ATIF corpus. No Daytona sandbox is used by this path.
 generation:
-  mode: targets
-  fixed_episodes_per_repo: 2
-  max_requests_per_repo: 80
-  max_successes_per_repo: 50
-  # Each partition keeps one prepared sandbox alive across a short burst.
-  # Four requests amortize clone/install/build without dispatching far past
-  # the 500-mutation shard target at ~125-way concurrency.
-  burst_per_repo: 4
-  partitions_per_repo: 4
-  # Required for the full hybrid build: verifier-untrusted semantic proposals
-  # produced by Molab/another LLM proposer. Its content hash is part of
-  # generation identity. Fixed smoke builds do not consume this file.
-  semantic_candidates: data/murmurations/shard-000-semantic-candidates.jsonl
-  # Use one concurrent burst per eligible repository, capped by Daytona's
-  # live organization quota. The current serious catalog has 32 eligible repos.
-  concurrency: auto
-  max_concurrency: 125
-  # Conservative hard planning ceiling. Cost estimation charges the full
-  # snapshot disk allocation and assumes every retry lives for the full TTL.
-  budget_usd: 3000
-  budget_safety_fraction: 0.90
-  # Parallel workers retain one shallow pinned checkout and one mutation
-  # workspace. Preserve headroom on the Mac instead of risking ENOSPC.
-  host_disk_reserve_gib: 2.0
-  host_disk_per_worker_gib: 0.5
-
-generation_retries: 4
-timeout_seconds: 180
-max_mutation_attempts: 48
-probe_concurrency: 8
-probe_cache:
-  report: data/murmurations/shard-000-full-probe.json
-  eligible_catalog: data/murmurations/shard-000-eligible.jsonl
+  mode: import
+  source:
+    dataset: neulab/agent-data-collection
+    config: swe-smith
+    split: std
+    revision: 17f755bd6c6588d98a91ae6512576d9772919ab2
+    target_rows: 12000
+    max_episodes: 1200
+    smoke_target_rows: 200
+    smoke_max_episodes: 20
 
 code_chunk_chars: 6000
 max_files_per_repo: 1500
 max_context_chars: 12000
 
-# Static materialization is local; all dynamic repository execution is remote.
-sandbox:
-  runtime: daytona
-  snapshot: murmurations-corpus-v1-2cpu
-  target: us
-  ttl_minutes: 90
-  block_network_after_prepare: false
-
-terminal_evidence:
-  enabled: true
-  max_calls_per_episode: 2
-  operators:
-    - type.check
-    - package.metadata
-    - docs.lookup
-
 quality:
+  # Static code remains intentionally multilingual across the committed
+  # 60-repository catalog. SWE-smith trajectory supervision is Python-focused.
   min_catalog_repositories: 50
   min_eligible_repositories: 20
-  min_generation_success_rate: 0.50
+  min_generation_success_rate: 1.0
   min_dynamic_repositories: 20
   required_dynamic_languages:
-    - C
-    - C++
-    - Go
-    - Java
-    - JavaScript
     - Python
-    - Rust
-    - TypeScript
-    - Zig
   min_unique_mutations: 500
-  min_semantic_mutations: 100
+  min_semantic_mutations: 0
   min_code_rows: 10000
   min_trajectory_rows: 10000
-  min_terminal_operator_events: 200
-  min_terminal_operator_types: 2
-  min_terminal_argv_events: 200
-  require_daytona_terminal_execution: true
+
+  # Imported EXECUTE events retain exact source tool name, arguments, command,
+  # and observation. They are execution-grounded but are not relabeled Daytona.
+  min_external_execution_events: 1000
+  min_terminal_operator_events: 0
+  min_terminal_operator_types: 0
+  min_terminal_argv_events: 0
+  require_daytona_terminal_execution: false
