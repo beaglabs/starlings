@@ -447,10 +447,27 @@ class SweSmithImportTests(unittest.TestCase):
         )
         episode["events"][evidence_index]["grounding"] = "ground-" + ("G" * 50000)
 
-        rows = materialize_episode(episode, max_context_chars=12000)
+        rows = materialize_episode(
+            episode,
+            max_context_chars=12000,
+            max_example_bytes=4000,
+        )
 
-        self.assertTrue(all(len(row["context"]) <= 12000 for row in rows))
-        self.assertIn(exact_argument, rows[execute_index]["context"])
+        self.assertTrue(
+            all(
+                len(
+                    (row["context"] + row["language_target"]).encode("utf-8")
+                )
+                <= 4000
+                for row in rows
+            )
+        )
+        training_argument = rows[execute_index]["argument"]["text"]
+        self.assertIsNotNone(training_argument)
+        assert training_argument is not None
+        self.assertTrue(exact_argument.endswith(training_argument))
+        self.assertLessEqual(len(training_argument.encode("utf-8")), 1800)
+        self.assertIn(training_argument, rows[execute_index]["context"])
         self.assertIn(execute["id"], rows[evidence_index]["context"])
         self.assertIn("repo.tests", rows[evidence_index]["context"])
 
