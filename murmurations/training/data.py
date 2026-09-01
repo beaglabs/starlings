@@ -134,7 +134,7 @@ class ProtocolDataset(Dataset[dict[str, Any]]):
                 "before language target; pointer-bearing context must be rematerialized"
             )
         if len(target_ids) > available_target_tokens:
-            target_ids = target_ids[-available_target_tokens:] if available_target_tokens else []
+            target_ids = target_ids[:available_target_tokens]
 
         input_ids = control_ids + target_ids + [eos]
         language_labels = [-100] * len(control_ids) + target_ids + [eos]
