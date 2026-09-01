@@ -173,18 +173,23 @@ def build_shard(
         cached_eligible = Path(str(probe_cache.get("eligible_catalog") or ""))
         if cached_report.exists() and cached_eligible.exists():
             _log("validating cached clean-verifier probe")
-            probe = load_probe_artifacts(
-                catalog_path,
-                cached_report,
-                cached_eligible,
-                sandbox_runner=sandbox,
-            )
-            _copy_artifact(cached_report, paths["probe_report"])
-            _copy_artifact(cached_eligible, paths["eligible_catalog"])
-            _log(
-                f"reused probe eligible={probe['eligible']}/{probe['repositories']} "
-                f"rate={probe['eligibility_rate']:.3f}"
-            )
+            try:
+                probe = load_probe_artifacts(
+                    catalog_path,
+                    cached_report,
+                    cached_eligible,
+                    sandbox_runner=sandbox,
+                )
+            except (RuntimeError, ValueError):
+                _log("cached clean-verifier probe is stale; recomputing")
+                probe = None
+            else:
+                _copy_artifact(cached_report, paths["probe_report"])
+                _copy_artifact(cached_eligible, paths["eligible_catalog"])
+                _log(
+                    f"reused probe eligible={probe['eligible']}/{probe['repositories']} "
+                    f"rate={probe['eligibility_rate']:.3f}"
+                )
 
     if probe is None:
         _log("probing clean-verifier eligibility in Daytona")
