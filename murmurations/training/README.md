@@ -49,19 +49,21 @@ python -m murmurations.benchmarking.run replay \
 
 Shard-000 no longer generates its bulk trajectory supervision by synthesizing
 hundreds of new bugs. It imports **resolved SWE-smith agent trajectories** from
-the Agent Data Protocol standardized ATIF corpus and deterministically compiles
+the pinned SWE-smith raw trajectory corpus and deterministically compiles
 their real tool calls and observations into Murmurations event DAGs.
 
 The source is pinned in `shard-000.yaml`:
 
 - dataset: `neulab/agent-data-collection`
 - configuration: `swe-smith`
-- split: `std`
+- split: `raw`
 - revision: `17f755bd6c6588d98a91ae6512576d9772919ab2`
 - source license: MIT
 
-The importer streams the dataset rather than downloading the full multi-GB
-artifact. It accepts only records whose source metadata says `resolved=true`,
+The importer streams `full_raw.jsonl` rather than downloading the full multi-GB
+artifact. The raw split is used deliberately because it preserves SWE-smith's
+`resolved`, `instance_id`, and `traj_id` metadata across ADP schema revisions.
+It accepts only records whose source metadata says `resolved=true`,
 excludes any repository already used by the static 60-repository code catalog,
 and stops only after all configured trajectory-volume and repository-diversity
 targets are met.
@@ -95,8 +97,10 @@ disjoint from separately-managed code pretraining data.
 No Daytona credentials, snapshot, Docker/Lima environment, or LLM endpoint is
 required for the default build.
 
-The compiler preserves source execution evidence without pretending it was
-executed by Murmurations. For every imported tool call it records the original
+The importer handles SWE-smith's native tool-call, XML-function-call, and
+triple-backtick action renderings, deduplicates repeated renderings by `traj_id`,
+and preserves source execution evidence without pretending it was executed by
+Murmurations. For every imported tool call it records the original
 tool name, exact tool arguments, terminal command when present, and linked
 observation. It then maps the action to a stable semantic operator such as
 `repo.search`, `repo.tests`, `type.check`, `package.metadata`,
