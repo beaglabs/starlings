@@ -14,12 +14,8 @@ import yaml
 
 from murmurations.training.corpus import validate_corpus_shard, validate_trajectory_shard
 from murmurations.training.environments.repositories import RepoCatalog, RepoRecord
-from murmurations.training.generate_trajectories import generate_trajectory_corpus
 from murmurations.training.import_swe_smith import import_swe_smith
 from murmurations.training.materialize import materialize_file
-from murmurations.training.materialize_code import materialize_repository_code
-from murmurations.training.probe_repositories import load_probe_artifacts, probe_repository_catalog
-from murmurations.training.daytona import DaytonaCorpusRunner
 
 
 
@@ -263,14 +259,6 @@ def build_shard(
     output_dir.mkdir(parents=True, exist_ok=True)
     generation_config = dict(config.get("generation") or {})
     generation_mode = str(generation_config.get("mode", "targets")).strip().lower()
-    sandbox = None
-    if generation_mode != "import":
-        sandbox_config = dict(config.get("sandbox") or {})
-        if not sandbox_config:
-            raise RuntimeError("native corpus generation requires a Daytona sandbox config")
-        sandbox = DaytonaCorpusRunner.from_config(sandbox_config)
-        _log("validating Daytona snapshot")
-        sandbox.validate_environment()
     if generation_mode == "import":
         return _build_imported_trajectory_shard(
             config,
@@ -279,6 +267,23 @@ def build_shard(
             dict(config.get("quality") or {}),
             smoke=smoke or limit_repositories is not None,
         )
+
+    # Native generation dependencies are deliberately lazy so importing and
+    # building an external trajectory shard does not require Daytona at all.
+    from murmurations.training.daytona import DaytonaCorpusRunner
+    from murmurations.training.generate_trajectories import generate_trajectory_corpus
+    from murmurations.training.materialize_code import materialize_repository_code
+    from murmurations.training.probe_repositories import (
+        load_probe_artifacts,
+        probe_repository_catalog,
+    )
+
+    sandbox_config = dict(config.get("sandbox") or {})
+    if not sandbox_config:
+        raise RuntimeError("native corpus generation requires a Daytona sandbox config")
+    sandbox = DaytonaCorpusRunner.from_config(sandbox_config)
+    _log("validating Daytona snapshot")
+    sandbox.validate_environment()
 
     catalog_path = _catalog_for_run(
         config["catalog"], output_dir, limit_repositories
