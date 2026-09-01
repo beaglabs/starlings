@@ -88,6 +88,62 @@ def _prioritized_repositories(
     ]
 
 
+def _semantic_candidate_identity(path: str | Path | None) -> str | None:
+    if path is None:
+        return None
+    target = Path(path)
+    if not target.exists():
+        raise FileNotFoundError(
+            f"configured semantic candidate file does not exist: {target}"
+        )
+    return hashlib.sha256(target.read_bytes()).hexdigest()
+
+
+def _load_semantic_candidates(
+    path: str | Path | None,
+    *,
+    catalog: RepoCatalog,
+) -> dict[str, tuple[MutationCandidate, ...]]:
+    if path is None:
+        return {}
+    allowed = {record.name: record for record in catalog.records}
+    grouped: dict[str, list[MutationCandidate]] = defaultdict(list)
+    seen: set[tuple[str, str]] = set()
+    for line_no, row in enumerate(_iter_jsonl(Path(path)) or (), 1):
+        repository = str(row.get("repository") or "")
+        if repository not in allowed:
+            raise ValueError(
+                f"{path}:{line_no}: semantic candidate repository is outside catalog: "
+                f"{repository}"
+            )
+        record = allowed[repository]
+        commit = str(row.get("commit") or record.commit)
+        if commit != record.commit:
+            raise ValueError(
+                f"{path}:{line_no}: semantic candidate commit does not match pinned catalog"
+            )
+        candidate = MutationCandidate(
+            relative_path=str(row["path"]),
+            line_number=int(row["line"]),
+            kind=str(row.get("kind") or "llm_semantic"),
+            original_line=str(row["original_line"]),
+            mutated_line=str(row["mutated_line"]),
+            source=str(row.get("source") or "llm"),
+            targeted_test_argv=tuple(
+                str(item) for item in (row.get("targeted_test_argv") or [])
+            ),
+        )
+        key = (repository, candidate.fingerprint)
+        if key in seen:
+            continue
+        seen.add(key)
+        grouped[repository].append(candidate)
+    return {
+        repository: tuple(candidates)
+        for repository, candidates in grouped.items()
+    }
+
+
 def _host_disk_capacity(
     path: str | Path,
     *,
@@ -279,6 +335,7 @@ def _generate_repo_burst(
                             "raw_mutation_fingerprint": raw_fingerprint,
                             "candidate_partition": partition_id,
                             "candidate_partitions": partition_count,
+                            "candidate_source": mutation.candidate_source,
                         }
                         local_used.add(raw_fingerprint)
                         outcomes.append(
@@ -630,6 +687,8 @@ def generate_trajectory_corpus(
     budget_safety_fraction: float = 0.90,
     host_disk_reserve_gib: float = 2.0,
     host_disk_per_worker_gib: float = 0.5,
+    partitions_per_repo: int = 1,
+    semantic_candidates_path: str | Path | None = None,
 ) -> dict[str, Any]:
     if sandbox_runner is None:
         raise RuntimeError(
@@ -645,8 +704,14 @@ def generate_trajectory_corpus(
         raise ValueError("concurrency must be positive")
     if max_concurrency <= 0:
         raise ValueError("max_concurrency must be positive")
+    if partitions_per_repo <= 0:
+        raise ValueError("partitions_per_repo must be positive")
 
     catalog = RepoCatalog.from_jsonl(catalog_path)
+    semantic_candidates = _load_semantic_candidates(
+        semantic_candidates_path,
+        catalog=catalog,
+    )
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     work_root = Path(work_dir)
@@ -664,6 +729,10 @@ def generate_trajectory_corpus(
             "max_requests_per_repo": max_requests_per_repo,
             "max_successes_per_repo": max_successes_per_repo,
             "burst_per_repo": burst_per_repo,
+            "partitions_per_repo": partitions_per_repo,
+            "semantic_candidates_sha256": _semantic_candidate_identity(
+                semantic_candidates_path
+            ),
         }
         if targets is not None
         else {
