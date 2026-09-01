@@ -200,6 +200,24 @@ def partition_mutation_candidates(
     ]
 
 
+def reset_mutation_workspace(
+    source_root: str | Path,
+    workspace_root: str | Path,
+) -> Path:
+    source = Path(source_root).resolve()
+    workspace = Path(workspace_root).resolve()
+    if workspace.exists():
+        shutil.rmtree(workspace)
+    shutil.copytree(
+        source,
+        workspace,
+        ignore=shutil.ignore_patterns(
+            ".git", ".venv", "node_modules", "target", "zig-cache", ".zig-cache"
+        ),
+    )
+    return workspace
+
+
 def inject_verified_mutation(
     source_root: str | Path,
     workspace_root: str | Path,
@@ -219,16 +237,7 @@ def inject_verified_mutation(
     """Copy a clean repo and retain a unique mutation caught by its verifier."""
 
     source = Path(source_root).resolve()
-    workspace = Path(workspace_root).resolve()
-    if workspace.exists():
-        shutil.rmtree(workspace)
-    shutil.copytree(
-        source,
-        workspace,
-        ignore=shutil.ignore_patterns(
-            ".git", ".venv", "node_modules", "target", "zig-cache", ".zig-cache"
-        ),
-    )
+    workspace = reset_mutation_workspace(source, workspace_root)
 
     run_verify = verify if verify_runner is None else verify_runner
     clean = clean_verification
