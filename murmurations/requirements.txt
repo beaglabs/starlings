@@ -6,3 +6,4 @@ PyYAML>=6.0
 blake3>=1.0
 safetensors>=0.4
 daytona==0.207.0
+datasets>=3.2
