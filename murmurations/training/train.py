@@ -57,6 +57,56 @@ def _assert_finite_losses(losses: dict[str, torch.Tensor], *, where: str) -> Non
         )
 
 
+def _configure_float8_backbone(model, train_cfg: dict[str, object]) -> dict[str, object]:
+    if not bool(train_cfg.get("float8_backbone", False)):
+        return {"enabled": False, "converted_linears": 0}
+
+    try:
+        from torchao.float8 import Float8LinearConfig, convert_to_float8_training
+    except ImportError as exc:
+        raise RuntimeError(
+            "float8_backbone requires torchao; install a torchao build compatible "
+            "with the active PyTorch/CUDA environment"
+        ) from exc
+
+    recipe_name = str(train_cfg.get("float8_recipe", "tensorwise"))
+    config = Float8LinearConfig.from_recipe_name(recipe_name)
+    eligible_suffixes = (
+        ".attn.qkv",
+        ".attn.out",
+        ".ffn.gate",
+        ".ffn.up",
+        ".ffn.down",
+    )
+    converted: list[str] = []
+
+    def module_filter_fn(module: torch.nn.Module, fqn: str) -> bool:
+        if not isinstance(module, torch.nn.Linear):
+            return False
+        if not fqn.startswith("blocks.") or not fqn.endswith(eligible_suffixes):
+            return False
+        if module.in_features % 16 or module.out_features % 16:
+            return False
+        converted.append(fqn)
+        return True
+
+    convert_to_float8_training(
+        model,
+        config=config,
+        module_filter_fn=module_filter_fn,
+    )
+    expected = len(model.blocks) * len(eligible_suffixes)
+    if len(converted) != expected:
+        raise RuntimeError(
+            f"expected {expected} FP8 backbone linears but converted {len(converted)}"
+        )
+    return {
+        "enabled": True,
+        "recipe": recipe_name,
+        "converted_linears": len(converted),
+    }
+
+
 def evaluate(accelerator: Accelerator, model, loader, loss_weights) -> float:
     model.eval()
     total = torch.tensor(0.0, device=accelerator.device)
@@ -96,6 +146,29 @@ def main() -> None:
             "train the tokenizer at the configured vocabulary size"
         )
     model = MurmurationModel(model_cfg)
+    float8_report = _configure_float8_backbone(model, train_cfg)
+    if accelerator.is_main_process:
+        print(json.dumps({"float8": float8_report}, sort_keys=True), flush=True)
+
+    if bool(train_cfg.get("torch_compile", False)):
+        compile_mode = str(train_cfg.get("torch_compile_mode", "default"))
+        model = torch.compile(
+            model,
+            mode=compile_mode,
+            dynamic=bool(train_cfg.get("torch_compile_dynamic", True)),
+        )
+        if accelerator.is_main_process:
+            print(
+                json.dumps(
+                    {
+                        "torch_compile": True,
+                        "mode": compile_mode,
+                        "dynamic": bool(train_cfg.get("torch_compile_dynamic", True)),
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
 
     max_tokens_per_batch = int(train_cfg.get("max_tokens_per_batch", 0) or 0)
     pretokenize = bool(train_cfg.get("pretokenize", False)) or max_tokens_per_batch > 0
