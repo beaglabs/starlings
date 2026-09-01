@@ -360,6 +360,19 @@ def probe_repository_catalog(
         report_path=report_path,
         eligible_catalog_path=eligible_catalog_path,
     )
+    failed = [row for row in results if not row.get("passed")]
+    if failed:
+        print(f"[probe] failures={len(failed)}", flush=True)
+        for row in failed:
+            print(
+                f"[probe] failed repo={row.get('repository')} "
+                f"command={row.get('command')} "
+                f"exit={row.get('exit_code')} error={row.get('error')}",
+                flush=True,
+            )
+            tail = str(row.get("output_tail") or "").strip()
+            if tail:
+                print(f"[probe] output tail repo={row.get('repository')}:\n{tail}", flush=True)
     return report
 
 
