@@ -22,3 +22,18 @@ jobs:
         run: zig build test
       - name: Python external-operator conformance
         run: python3 -m unittest discover -s python -p 'test_*.py'
+
+  murmurations-import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Murmurations import-test dependencies
+        run: python3 -m pip install "PyYAML>=6.0" "blake3>=1.0"
+      - name: Murmurations imported-trajectory tests
+        run: |
+          python3 -m unittest \
+            murmurations.training.test_import_swe_smith \
+            murmurations.training.test_corpus
