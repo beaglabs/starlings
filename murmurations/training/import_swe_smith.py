@@ -485,13 +485,19 @@ def import_swe_smith(
     split: str = DEFAULT_SPLIT,
     revision: str = DEFAULT_REVISION,
     target_rows: int = 12000,
+    min_episodes: int = 500,
+    min_repositories: int = 20,
     max_episodes: int = 1200,
     exclude_repositories: set[str] | None = None,
 ) -> dict[str, Any]:
     if target_rows <= 0:
         raise ValueError("target_rows must be positive")
-    if max_episodes <= 0:
-        raise ValueError("max_episodes must be positive")
+    if min_episodes <= 0:
+        raise ValueError("min_episodes must be positive")
+    if min_repositories <= 0:
+        raise ValueError("min_repositories must be positive")
+    if max_episodes < min_episodes:
+        raise ValueError("max_episodes must be >= min_episodes")
 
     source = (
         _iter_local(input_jsonl)
@@ -538,7 +544,13 @@ def import_swe_smith(
                 if environment.get("external_execution"):
                     external_execution_events += 1
 
-            if written >= max_episodes or trajectory_rows >= target_rows:
+            if written >= max_episodes:
+                break
+            if (
+                trajectory_rows >= target_rows
+                and written >= min_episodes
+                and len(repositories) >= min_repositories
+            ):
                 break
 
     if written == 0:
@@ -550,6 +562,9 @@ def import_swe_smith(
         "source_split": split,
         "source_revision": revision,
         "resolved_only": True,
+        "target_rows": target_rows,
+        "min_episodes": min_episodes,
+        "min_repositories": min_repositories,
         "source_scanned": scanned,
         "source_skipped": skipped,
         "requested": written,
@@ -576,6 +591,8 @@ def main() -> None:
     parser.add_argument("--split", default=DEFAULT_SPLIT)
     parser.add_argument("--revision", default=DEFAULT_REVISION)
     parser.add_argument("--target-rows", type=int, default=12000)
+    parser.add_argument("--min-episodes", type=int, default=500)
+    parser.add_argument("--min-repositories", type=int, default=20)
     parser.add_argument("--max-episodes", type=int, default=1200)
     args = parser.parse_args()
     report = import_swe_smith(
@@ -586,6 +603,8 @@ def main() -> None:
         split=args.split,
         revision=args.revision,
         target_rows=args.target_rows,
+        min_episodes=args.min_episodes,
+        min_repositories=args.min_repositories,
         max_episodes=args.max_episodes,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
