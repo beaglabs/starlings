@@ -145,6 +145,13 @@ def _repo_name(instance_id: str) -> str:
     return prefix or "unknown/unknown"
 
 
+def _base_revision(instance_id: str) -> str:
+    parts = instance_id.split(".")
+    if len(parts) >= 2 and parts[1].strip():
+        return parts[1].strip()
+    return "unknown"
+
+
 def _task_text(steps: list[dict[str, Any]]) -> str:
     for step in steps:
         if str(step.get("source") or "").lower() != "user":
@@ -400,8 +407,8 @@ def convert_atif_record(record: dict[str, Any]) -> dict[str, Any] | None:
         producer="swe-smith-atif-import-v1",
         repository={
             "name": repository_name,
-            "commit": instance_id,
-            "license": "MIT",
+            "commit": _base_revision(instance_id),
+            "license": "unknown",
             "identity": repository_identity,
             "language": "Python",
         },
@@ -422,6 +429,7 @@ def convert_atif_record(record: dict[str, Any]) -> dict[str, Any] | None:
     result["generation"] = {
         "candidate_source": "external_execution_trace",
         "source_dataset": "swe-smith",
+        "source_dataset_license": "MIT",
         "source_revision": DEFAULT_REVISION,
         "trajectory_id": trajectory_id,
         "instance_id": instance_id,
