@@ -85,6 +85,37 @@ def _prioritized_repositories(
     ]
 
 
+def _host_disk_capacity(
+    path: str | Path,
+    *,
+    max_workers: int,
+    reserve_gib: float,
+    per_worker_gib: float,
+) -> dict[str, Any]:
+    if reserve_gib < 0:
+        raise ValueError("host_disk_reserve_gib must be non-negative")
+    if per_worker_gib <= 0:
+        raise ValueError("host_disk_per_worker_gib must be positive")
+    root = Path(path).expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    free_bytes = shutil.disk_usage(root).free
+    gib = float(1024 ** 3)
+    usable_gib = max(0.0, free_bytes / gib - reserve_gib)
+    workers = min(max_workers, int(usable_gib // per_worker_gib))
+    if workers <= 0:
+        raise RuntimeError(
+            "insufficient host disk for concurrent corpus generation: "
+            f"free={free_bytes / gib:.2f}GiB reserve={reserve_gib:.2f}GiB "
+            f"per_worker={per_worker_gib:.2f}GiB"
+        )
+    return {
+        "free_gib": free_bytes / gib,
+        "reserve_gib": reserve_gib,
+        "per_worker_gib": per_worker_gib,
+        "workers": workers,
+    }
+
+
 def _daytona_budget_plan(
     sandbox_runner,
     *,
@@ -574,6 +605,8 @@ def generate_trajectory_corpus(
     max_concurrency: int = 125,
     budget_usd: float | None = None,
     budget_safety_fraction: float = 0.90,
+    host_disk_reserve_gib: float = 2.0,
+    host_disk_per_worker_gib: float = 0.5,
 ) -> dict[str, Any]:
     if sandbox_runner is None:
         raise RuntimeError(
@@ -898,10 +931,24 @@ def generate_trajectory_corpus(
                     "workers": requested_workers,
                 }
                 worker_count = requested_workers
-            worker_count = max(1, min(worker_count, len(catalog.records)))
+            host_capacity = _host_disk_capacity(
+                work_root,
+                max_workers=worker_count,
+                reserve_gib=host_disk_reserve_gib,
+                per_worker_gib=host_disk_per_worker_gib,
+            )
+            worker_count = max(
+                1,
+                min(
+                    worker_count,
+                    int(host_capacity["workers"]),
+                    len(catalog.records),
+                ),
+            )
             print(
                 f"[generation] concurrency workers={worker_count} "
-                f"source={capacity.get('source')} "
+                f"daytona_source={capacity.get('source')} "
+                f"host_free_gib={host_capacity['free_gib']:.2f} "
                 f"budget_ceiling_usd={budget_plan['theoretical_max_spend_usd']:.2f}",
                 flush=True,
             )
@@ -1030,6 +1077,7 @@ def generate_trajectory_corpus(
         result["concurrency"] = {
             "workers": worker_count,
             "capacity": capacity,
+            "host_disk": host_capacity,
         }
         result["budget"] = budget_plan
         result["targets"] = targets
