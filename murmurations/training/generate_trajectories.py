@@ -177,6 +177,7 @@ def _empty_metrics() -> dict[str, Any]:
         "terminal_operator_types": set(),
         "terminal_argv_events": 0,
         "dynamic_repositories": set(),
+        "dynamic_languages": set(),
     }
 
 
@@ -242,6 +243,8 @@ def _load_journal(
         metrics["requested"] += 1
         metrics["written"] += 1
         metrics["dynamic_repositories"].add(repository)
+        language = str((record.get("repository") or {}).get("language") or "unknown")
+        metrics["dynamic_languages"].add(language)
         episode_metrics = _episode_metrics(record)
         metrics["trajectory_rows"] += int(episode_metrics["trajectory_rows"])
         metrics["terminal_operator_events"] += int(
@@ -283,6 +286,10 @@ def _target_status(metrics: dict[str, Any], targets: dict[str, Any]) -> dict[str
         >= int(targets.get("trajectory_rows", 0)),
         "dynamic_repositories": len(metrics["dynamic_repositories"])
         >= int(targets.get("dynamic_repositories", 0)),
+        "required_dynamic_languages": set(
+            str(language)
+            for language in (targets.get("required_dynamic_languages") or [])
+        ).issubset(metrics["dynamic_languages"]),
         "terminal_operator_events": int(metrics["terminal_operator_events"])
         >= int(targets.get("terminal_operator_events", 0)),
         "terminal_operator_types": len(metrics["terminal_operator_types"])
@@ -483,6 +490,7 @@ def generate_trajectory_corpus(
                 metrics["requested"] += 1
                 metrics["written"] += 1
                 metrics["dynamic_repositories"].add(repo.name)
+                metrics["dynamic_languages"].add(repo.language or "unknown")
                 episode_metrics = _episode_metrics(record)
                 metrics["trajectory_rows"] += int(episode_metrics["trajectory_rows"])
                 metrics["terminal_operator_events"] += int(
@@ -569,12 +577,24 @@ def generate_trajectory_corpus(
             if maximum_requested <= 0:
                 raise ValueError("max_requested_episodes must be positive")
             order = _balanced_repositories(catalog)
+            required_languages = {
+                str(language)
+                for language in (targets.get("required_dynamic_languages") or [])
+            }
             while (
                 not _targets_met(metrics, targets)
                 and int(metrics["requested"]) < maximum_requested
             ):
                 progressed = False
-                for repo in order:
+                missing_languages = required_languages - metrics["dynamic_languages"]
+                prioritized = sorted(
+                    order,
+                    key=lambda repo: (
+                        0 if (repo.language or "unknown") in missing_languages else 1,
+                        order.index(repo),
+                    ),
+                )
+                for repo in prioritized:
                     if _targets_met(metrics, targets):
                         break
                     stats = repo_stats[repo.name]
@@ -649,6 +669,7 @@ def generate_trajectory_corpus(
         "unique_mutations": written,
         "trajectory_rows": int(metrics["trajectory_rows"]),
         "dynamic_repositories": len(metrics["dynamic_repositories"]),
+        "dynamic_languages": sorted(metrics["dynamic_languages"]),
         "terminal_operator_events": int(metrics["terminal_operator_events"]),
         "terminal_operator_types": len(metrics["terminal_operator_types"]),
         "terminal_argv_events": int(metrics["terminal_argv_events"]),
