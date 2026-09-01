@@ -230,13 +230,19 @@ class RepositoryPlanTests(unittest.TestCase):
             root = Path(tmp)
             (root / "package.json").write_text(
                 '{"name":"vite-like","packageManager":"pnpm@10.34.5",'
-                '"scripts":{"test":"pnpm test-unit && pnpm test-build",'
+                '"devDependencies":{"typescript":"~6.0.2"},'
+                '"scripts":{"build":"pnpm -r run build",'
+                '"test":"pnpm test-unit && pnpm test-build",'
                 '"test-unit":"vitest run"}}',
                 encoding="utf-8",
             )
             (root / "pnpm-lock.yaml").write_text(
                 "lockfileVersion: '9.0'\n",
                 encoding="utf-8",
+            )
+            self.assertIn(
+                ["npx", "--yes", "pnpm@10.34.5", "run", "build"],
+                detect_prepare_commands(root),
             )
             self.assertEqual(
                 detect_test_command(root),
@@ -248,7 +254,10 @@ class RepositoryPlanTests(unittest.TestCase):
             root = Path(tmp)
             (root / "package.json").write_text(
                 '{"name":"vitest-like","packageManager":"pnpm@11.24.0",'
-                '"scripts":{"test":"pnpm --filter test-unit test:threads"}}',
+                '"devDependencies":{"typescript":"^5.9.3"},'
+                '"scripts":{"build":"pnpm -r run build",'
+                '"test":"pnpm --filter test-unit test:threads",'
+                '"test:ci:unit":"pnpm -r --filter test-unit run test"}}',
                 encoding="utf-8",
             )
             (root / "pnpm-lock.yaml").write_text(
@@ -262,9 +271,13 @@ class RepositoryPlanTests(unittest.TestCase):
                     "install", "--frozen-lockfile",
                 ],
             )
+            self.assertIn(
+                ["npx", "--yes", "pnpm@11.24.0", "run", "build"],
+                detect_prepare_commands(root),
+            )
             self.assertEqual(
                 detect_test_command(root),
-                ["npx", "--yes", "pnpm@11.24.0", "run", "test"],
+                ["npx", "--yes", "pnpm@11.24.0", "run", "test:ci:unit"],
             )
 
     def test_zig_repository_uses_minimum_toolchain(self) -> None:
