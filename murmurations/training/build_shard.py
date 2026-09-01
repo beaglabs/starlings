@@ -15,6 +15,7 @@ import yaml
 from murmurations.training.corpus import validate_corpus_shard
 from murmurations.training.environments.repositories import RepoCatalog, RepoRecord
 from murmurations.training.generate_trajectories import generate_trajectory_corpus
+from murmurations.training.import_swe_smith import import_swe_smith
 from murmurations.training.materialize import materialize_file
 from murmurations.training.materialize_code import materialize_repository_code
 from murmurations.training.probe_repositories import load_probe_artifacts, probe_repository_catalog
@@ -116,12 +117,16 @@ def build_shard(
     config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
     output_dir = Path(config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
-    sandbox_config = dict(config.get("sandbox") or {})
-    if not sandbox_config:
-        raise RuntimeError("serious corpus generation requires a Daytona sandbox config")
-    sandbox = DaytonaCorpusRunner.from_config(sandbox_config)
-    _log("validating Daytona snapshot")
-    sandbox.validate_environment()
+    generation_config = dict(config.get("generation") or {})
+    generation_mode = str(generation_config.get("mode", "targets")).strip().lower()
+    sandbox = None
+    if generation_mode != "import":
+        sandbox_config = dict(config.get("sandbox") or {})
+        if not sandbox_config:
+            raise RuntimeError("native corpus generation requires a Daytona sandbox config")
+        sandbox = DaytonaCorpusRunner.from_config(sandbox_config)
+        _log("validating Daytona snapshot")
+        sandbox.validate_environment()
     catalog_path = _catalog_for_run(
         config["catalog"], output_dir, limit_repositories
     )
@@ -145,6 +150,13 @@ def build_shard(
         "qa_report": output_dir / "qa-report.json",
         "manifest": output_dir / "manifest.json",
     }
+
+    if generation_mode == "import":
+        # Import mode reaches the early return after static materialization.
+        # Do not touch Daytona or repository eligibility.
+        probe = None
+    else:
+        assert sandbox is not None
 
     # Dynamic episodes use only repositories whose clean verifier passes inside
     # the pinned Daytona corpus snapshot. Reuse a complete standalone probe only
@@ -226,6 +238,125 @@ def build_shard(
         f"{int(code.get('train_rows', 0)) + int(code.get('eval_rows', 0))}"
     )
 
+    if generation_mode == "import":
+        import_config = dict(generation_config.get("source") or {})
+        target_rows = int(
+            import_config.get(
+                "target_rows",
+                max(1, int(quality.get("min_trajectory_rows", 10000)) + 2000),
+            )
+        )
+        max_episodes = int(import_config.get("max_episodes", 1200))
+        if limit_repositories is not None:
+            max_episodes = min(
+                max_episodes,
+                int(import_config.get("smoke_max_episodes", 20)),
+            )
+            target_rows = min(
+                target_rows,
+                int(import_config.get("smoke_target_rows", 200)),
+            )
+
+        _log(
+            "importing resolved SWE-smith execution trajectories "
+            f"target_rows={target_rows} max_episodes={max_episodes}"
+        )
+        generation = import_swe_smith(
+            paths["episodes"],
+            input_jsonl=import_config.get("input_jsonl"),
+            dataset=str(
+                import_config.get("dataset", "neulab/agent-data-collection")
+            ),
+            config=str(import_config.get("config", "swe-smith")),
+            split=str(import_config.get("split", "std")),
+            revision=str(
+                import_config.get(
+                    "revision",
+                    "17f755bd6c6588d98a91ae6512576d9772919ab2",
+                )
+            ),
+            target_rows=target_rows,
+            max_episodes=max_episodes,
+        )
+        generation["eligible_repositories"] = int(generation["repositories"])
+        generation["catalog_repositories"] = len(RepoCatalog.from_jsonl(catalog_path).records)
+        _write_json(paths["generation_report"], generation)
+        probe = {
+            "mode": "external_import",
+            "source_dataset": generation["source_dataset"],
+            "repositories": int(generation["repositories"]),
+            "eligible": int(generation["repositories"]),
+            "eligibility_rate": 1.0,
+        }
+        _write_json(paths["probe_report"], probe)
+
+        _log(
+            f"trajectory import complete episodes={generation['written']} "
+            f"rows={generation['trajectory_rows']} "
+            f"repos={generation['repositories']}"
+        )
+        _log("materializing trajectory rows")
+        trajectory = materialize_file(
+            paths["episodes"],
+            paths["trajectory_train"],
+            paths["trajectory_eval"],
+            eval_fraction=eval_fraction,
+            max_context_chars=int(config.get("max_context_chars", 12000)),
+        )
+
+        if limit_repositories is not None:
+            quality["min_catalog_repositories"] = min(
+                int(quality.get("min_catalog_repositories", 1)),
+                limit_repositories,
+            )
+            quality["min_eligible_repositories"] = 1
+            quality["min_dynamic_repositories"] = 1
+            quality["min_unique_mutations"] = 1
+            quality["min_code_rows"] = 1
+            quality["min_trajectory_rows"] = 1
+            quality["required_dynamic_languages"] = []
+            quality["min_terminal_operator_events"] = 0
+            quality["min_terminal_operator_types"] = 0
+            quality["min_terminal_argv_events"] = 0
+            quality["min_external_execution_events"] = 1
+            quality["require_daytona_terminal_execution"] = False
+            quality["min_semantic_mutations"] = 0
+
+        _log("running shard QA")
+        qa = validate_corpus_shard(
+            catalog_path=catalog_path,
+            episodes_path=paths["episodes"],
+            code_train_path=paths["code_train"],
+            code_eval_path=paths["code_eval"],
+            trajectory_train_path=paths["trajectory_train"],
+            trajectory_eval_path=paths["trajectory_eval"],
+            generation_report=generation,
+            quality=quality,
+        )
+        _write_json(paths["qa_report"], qa)
+        _log(f"QA complete passed={qa['passed']}")
+
+        manifest = {
+            "version": 1,
+            "name": config.get("name", output_dir.name),
+            "config": config,
+            "sandbox": None,
+            "catalog": str(catalog_path),
+            "eligible_catalog": None,
+            "code": code,
+            "probe": probe,
+            "generation": generation,
+            "trajectory": trajectory,
+            "qa": qa,
+        }
+        _write_json(paths["manifest"], manifest)
+        if not qa["passed"]:
+            failed = [name for name, passed in qa["gates"].items() if not passed]
+            raise RuntimeError(
+                "corpus shard failed QA gates: " + ", ".join(failed)
+            )
+        return manifest
+
     enrichment = dict(config.get("terminal_evidence") or {})
     enrichment_operators = tuple(enrichment.get("operators") or ())
     max_enrichment_calls = (
@@ -233,7 +364,6 @@ def build_shard(
         if bool(enrichment.get("enabled", False))
         else 0
     )
-    generation_config = dict(config.get("generation") or {})
     target_mode = (
         limit_repositories is None
         and episodes_per_repo is None
