@@ -245,6 +245,7 @@ def _build_imported_trajectory_shard(
         paths["trajectory_eval"],
         eval_fraction=float(config.get("eval_fraction", 0.1)),
         max_context_chars=int(config.get("max_context_chars", 12000)),
+        max_example_bytes=int(config.get("max_example_bytes", 4000)),
     )
 
     trajectory_quality = dict(quality)
