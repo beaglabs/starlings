@@ -218,26 +218,6 @@ def build_shard(
         chunk_chars=int(config.get("code_chunk_chars", 6000)),
         max_files_per_repo=int(config.get("max_files_per_repo", 2000)),
         prune_checkouts=True,
-        concurrency=(
-            None
-            if str(generation_config.get("concurrency", "auto")).lower() == "auto"
-            else int(generation_config["concurrency"])
-        ),
-        max_concurrency=int(generation_config.get("max_concurrency", 125)),
-        budget_usd=(
-            float(generation_config["budget_usd"])
-            if generation_config.get("budget_usd") is not None
-            else None
-        ),
-        budget_safety_fraction=float(
-            generation_config.get("budget_safety_fraction", 0.90)
-        ),
-        host_disk_reserve_gib=float(
-            generation_config.get("host_disk_reserve_gib", 2.0)
-        ),
-        host_disk_per_worker_gib=float(
-            generation_config.get("host_disk_per_worker_gib", 0.5)
-        ),
     )
 
     _log(
@@ -303,6 +283,26 @@ def build_shard(
         max_enrichment_calls=max_enrichment_calls,
         sandbox_runner=sandbox,
         prune_checkouts=True,
+        concurrency=(
+            None
+            if str(generation_config.get("concurrency", "auto")).lower() == "auto"
+            else int(generation_config["concurrency"])
+        ),
+        max_concurrency=int(generation_config.get("max_concurrency", 125)),
+        budget_usd=(
+            float(generation_config["budget_usd"])
+            if generation_config.get("budget_usd") is not None
+            else None
+        ),
+        budget_safety_fraction=float(
+            generation_config.get("budget_safety_fraction", 0.90)
+        ),
+        host_disk_reserve_gib=float(
+            generation_config.get("host_disk_reserve_gib", 2.0)
+        ),
+        host_disk_per_worker_gib=float(
+            generation_config.get("host_disk_per_worker_gib", 0.5)
+        ),
     )
     _log(
         f"trajectory generation complete written={generation['written']} "
