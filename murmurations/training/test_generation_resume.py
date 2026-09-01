@@ -5,10 +5,12 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from murmurations.training.environments.repositories import RepoCatalog
+from murmurations.training.environments.repositories import RepoCatalog, RepoRecord
 from murmurations.training.generate_trajectories import (
     _generation_signature,
     _load_journal,
+    _prioritized_repositories,
+    _target_status,
 )
 
 
@@ -52,7 +54,7 @@ class GenerationResumeTests(unittest.TestCase):
             output.write_text(
                 json.dumps(
                     {
-                        "repository": {"name": "example/repo"},
+                        "repository": {"name": "example/repo", "language": "Python"},
                         "mutation": {
                             "path": "sample.py",
                             "line": 1,
@@ -115,6 +117,7 @@ class GenerationResumeTests(unittest.TestCase):
             self.assertEqual(metrics["terminal_operator_types"], {"type.check"})
             self.assertEqual(metrics["terminal_argv_events"], 1)
             self.assertEqual(metrics["dynamic_repositories"], {"example/repo"})
+            self.assertEqual(metrics["dynamic_languages"], {"Python"})
             self.assertEqual(repo_stats["example/repo"], {
                 "requested": 2,
                 "written": 1,
@@ -170,6 +173,65 @@ class GenerationResumeTests(unittest.TestCase):
             self.assertEqual(processed, set())
             self.assertEqual(next_global, 0)
             self.assertEqual(metrics["requested"], 0)
+
+    def test_missing_languages_are_prioritized(self) -> None:
+        order = [
+            RepoRecord("go-a", "a", "MIT", path=".", language="Go"),
+            RepoRecord("py-a", "b", "MIT", path=".", language="Python"),
+            RepoRecord("zig-a", "c", "MIT", path=".", language="Zig"),
+            RepoRecord("rust-a", "d", "MIT", path=".", language="Rust"),
+        ]
+        prioritized = _prioritized_repositories(
+            order,
+            required_languages={"Go", "Python", "Rust", "Zig"},
+            present_languages={"Go", "Python"},
+        )
+        self.assertEqual(
+            [repo.name for repo in prioritized],
+            ["zig-a", "rust-a", "go-a", "py-a"],
+        )
+
+    def test_target_status_requires_all_dynamic_languages(self) -> None:
+        metrics = {
+            "requested": 10,
+            "written": 8,
+            "trajectory_rows": 120,
+            "dynamic_repositories": {"go-a", "py-a"},
+            "dynamic_languages": {"Go", "Python"},
+            "terminal_operator_events": 20,
+            "terminal_operator_types": {"type.check", "docs.lookup"},
+            "terminal_argv_events": 20,
+        }
+        status = _target_status(
+            metrics,
+            {
+                "unique_mutations": 5,
+                "trajectory_rows": 100,
+                "dynamic_repositories": 2,
+                "required_dynamic_languages": ["Go", "Python", "Zig"],
+                "terminal_operator_events": 10,
+                "terminal_operator_types": 2,
+                "terminal_argv_events": 10,
+                "success_rate": 0.5,
+            },
+        )
+        self.assertFalse(status["required_dynamic_languages"])
+        metrics["dynamic_languages"].add("Zig")
+        status = _target_status(
+            metrics,
+            {
+                "unique_mutations": 5,
+                "trajectory_rows": 100,
+                "dynamic_repositories": 2,
+                "required_dynamic_languages": ["Go", "Python", "Zig"],
+                "terminal_operator_events": 10,
+                "terminal_operator_types": 2,
+                "terminal_argv_events": 10,
+                "success_rate": 0.5,
+            },
+        )
+        self.assertTrue(status["required_dynamic_languages"])
+
 
 
 if __name__ == "__main__":
