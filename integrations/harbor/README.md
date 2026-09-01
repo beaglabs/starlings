@@ -1,89 +1,147 @@
-# Hosted Harbor integration
+# Harbor integration
 
-This directory exposes three ACP agents for a controlled Starlings architecture
-evaluation in Hosted Harbor.
+Starlings supports two Harbor integration surfaces:
 
-| Condition | Agent manifest | Model |
+1. **normal open-source Harbor** — the primary evaluation path, including
+   Molab as the Harbor host and Daytona CPU sandboxes as task environments;
+2. **ACP / Hosted Harbor** — optional compatibility for Hosted Harbor access.
+
+Hosted Harbor is not required to evaluate Starlings.
+
+## Primary architecture: Molab + Harbor + Daytona CPU
+
+```text
+Molab
+├── Harbor CLI
+├── A: BaselineAgent
+├── B: StarlingsAgent
+├── C: DeterministicStarlingsAgent
+├── Zig Starlings runtime
+└── A/B model calls → hosted inference provider
+       │
+       └── Harbor environment.exec()
+               ↓
+          Daytona CPU task sandboxes
+```
+
+There is no Daytona GPU controller and no local Docker requirement. Daytona is
+only Harbor's remote task-environment provider.
+
+### Conditions
+
+| Condition | Harbor agent | Model |
 | --- | --- | --- |
-| A | `harbor-agent-baseline.json` | Hosted model selected by Harbor |
-| B | `harbor-agent-starlings.json` | The exact same hosted model |
-| C | `harbor-agent-deterministic.json` | None |
+| A | `integrations.harbor.local_agents:BaselineAgent` | hosted model |
+| B | `integrations.harbor.local_agents:StarlingsAgent` | exact same hosted model |
+| C | `integrations.harbor.local_agents:DeterministicStarlingsAgent` | none |
 
-## Experimental control
+A and B share the same:
 
-A and B share:
+- model name;
+- LiteLLM provider path and credentials;
+- decision prompt and parser;
+- bounded history;
+- shell execution surface;
+- MCP helper surface;
+- turn and command-output budgets.
 
-- the same ACP terminal execution path;
-- the same model-selection contract;
-- the same `HOSTED_INFERENCE_URL` / `HOSTED_INFERENCE_TOKEN`;
-- the same decision prompt and parser;
-- the same bounded observation history;
-- the same turn and terminal-output budgets.
+B differs by routing task/history revisions through the real Zig
+`starlings.Population` / `starlings.Agent` scheduler before the same model
+decision function is activated.
 
-The architectural difference is that A calls the decision function directly,
-while B injects task/history observations into the real Zig
-`starlings.Population` / `starlings.Agent` runtime. The model-backed planner is
-a Starlings external operator and is reactivated by input revision changes.
+C uses the same Zig bridge and deterministic population with zero model calls.
 
-C uses the same Zig runtime and ACP terminal executor but replaces the hosted
-planner with a deterministic external operator. It never reads hosted inference
-credentials and Harbor should launch it without a `model_name`.
+## Molab setup
 
-## Hosted Harbor source configuration
-
-Use the repository root as the source path so the Zig bridge can compile against
-the exact Starlings revision Harbor pins:
-
-```json
-{
-  "name": "acp",
-  "source": {
-    "type": "github",
-    "repo": "beaglabs/starlings",
-    "ref": "<commit-or-branch>",
-    "path": ".",
-    "manifest": "integrations/harbor/harbor-agent-starlings.json"
-  },
-  "model_name": "<provider>/<model>",
-  "secrets": ["<PROVIDER_API_KEY>"]
-}
-```
-
-For A, change the manifest to `harbor-agent-baseline.json`. Keep
-`model_name` and `secrets` identical.
-
-For C:
-
-```json
-{
-  "name": "acp",
-  "source": {
-    "type": "github",
-    "repo": "beaglabs/starlings",
-    "ref": "<same-commit>",
-    "path": ".",
-    "manifest": "integrations/harbor/harbor-agent-deterministic.json"
-  },
-  "secrets": []
-}
-```
-
-## Local contract checks
+From a fresh Molab shell:
 
 ```sh
-uv sync --frozen --project integrations/harbor
-uv run --project integrations/harbor \
-  python -m unittest discover -s integrations/harbor/tests
-zig build test
+git clone https://github.com/beaglabs/starlings.git
+cd starlings
+git switch feat/hosted-harbor-agents
+
+python3 -m pip install -U "harbor[daytona]" "ziglang==0.16.0"
+
+export DAYTONA_API_KEY='...'
+export OPENAI_API_KEY='...'
 ```
 
-`zig build test` also compiles `starlings-harbor-bridge`.
+No Docker daemon is needed in Molab.
+
+### 1. Three-condition hello-world smoke
+
+```sh
+harbor run -c benchmarks/harbor-molab/abc-hello-world.yaml
+```
+
+This creates exactly three Daytona CPU trials: A, B and C.
+
+### 2. One task from each first-suite benchmark
+
+```sh
+harbor run -c benchmarks/harbor-molab/abc-first-suite-smoke.yaml
+```
+
+This creates 12 trials: four matched tasks × three conditions.
+
+### 3. Ten matched SkillsBench tasks
+
+```sh
+harbor run -c benchmarks/harbor-molab/abc-skillsbench-10.yaml
+```
+
+This creates 30 trials concurrently.
+
+To use another model, edit **both** A and B `model_name` entries to the same
+provider/model string. Never change one without the other in a controlled run.
+
+## MCP tasks such as tau3
+
+A and B still expose one architectural action surface: shell execution. When a
+Harbor task declares a `streamable-http` MCP server, setup uploads
+`mcp_bridge.py` into the Daytona sandbox and ensures the Python MCP client is
+available there. The task instruction receives deterministic helper commands:
+
+```text
+python3 /tmp/starlings-harbor-mcp.py list <URL>
+python3 /tmp/starlings-harbor-mcp.py call <URL> TOOL_NAME 'JSON_ARGUMENT_OBJECT'
+```
+
+This matters because service names such as `tau3-runtime` are reachable from
+inside the Daytona task network, not from the Molab host.
+
+Both A and B receive the exact same augmented instruction and MCP surface.
+
+## Model accounting
+
+Normal Harbor mode uses LiteLLM, already a Harbor dependency. Each model call is
+recorded in a per-trial `model-usage.jsonl`; the external agents populate
+Harbor's `AgentContext` with input tokens, output tokens, cache tokens and
+estimated cost.
+
+Condition C produces zero model usage.
+
+## Local checks
+
+```sh
+python3 -m pip install -U harbor "ziglang==0.16.0"
+python3 -m unittest discover -s integrations/harbor/tests
+python3 -m ziglang build test
+```
+
+`zig build test` compiles `starlings-harbor-bridge`.
+
+## Optional Hosted Harbor / ACP compatibility
+
+The three `harbor-agent-*.json` manifests and the
+`starlings_harbor.{baseline,starlings,deterministic}` ACP entrypoints remain
+available for Hosted Harbor users. They are not used by the Molab workflow.
 
 ## Starlings wire boundary
 
-The external operator protocol rejects commas and newlines in text values.
-Arbitrary benchmark instructions, history, shell commands, and answers therefore
-cross that boundary as base64-encoded text variables:
+The canonical external-operator protocol rejects commas and newlines in raw text
+values. Arbitrary benchmark instructions, histories, commands and final answers
+therefore cross the Starlings boundary as base64 text variables:
 
 ```text
 task.b64
@@ -92,5 +150,4 @@ action.b64
 final.b64
 ```
 
-The encoding is transport-only; decoded task/history passed to the model are the
-same strings used by condition A.
+The encoding is transport-only.

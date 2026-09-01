@@ -1,0 +1,28 @@
+job_name: starlings-abc-skillsbench-10
+jobs_dir: jobs
+n_attempts: 1
+n_concurrent_trials: 30
+quiet: false
+
+environment:
+  type: daytona
+  delete: true
+
+agents:
+  - import_path: integrations.harbor.local_agents:BaselineAgent
+    model_name: openai/gpt-5-mini
+    kwargs:
+      max_turns: 50
+
+  - import_path: integrations.harbor.local_agents:StarlingsAgent
+    model_name: openai/gpt-5-mini
+    kwargs:
+      max_turns: 50
+
+  - import_path: integrations.harbor.local_agents:DeterministicStarlingsAgent
+    kwargs:
+      max_turns: 50
+
+datasets:
+  - name: benchflow/skillsbench
+    n_tasks: 10

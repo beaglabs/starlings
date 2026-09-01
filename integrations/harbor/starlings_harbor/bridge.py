@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import os
 import pathlib
+import shutil
 import sys
 from dataclasses import dataclass
 
@@ -16,6 +18,13 @@ BRIDGE_BINARY = REPO_ROOT / "zig-out" / "bin" / "starlings-harbor-bridge"
 _build_lock = asyncio.Lock()
 
 
+def _zig_command() -> list[str]:
+    zig = shutil.which("zig")
+    if zig:
+        return [zig]
+    return [sys.executable, "-m", "ziglang"]
+
+
 async def ensure_bridge_built() -> pathlib.Path:
     if BRIDGE_BINARY.is_file():
         return BRIDGE_BINARY
@@ -24,9 +33,7 @@ async def ensure_bridge_built() -> pathlib.Path:
         if BRIDGE_BINARY.is_file():
             return BRIDGE_BINARY
         process = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-m",
-            "ziglang",
+            *_zig_command(),
             "build",
             "-Doptimize=ReleaseSafe",
             cwd=REPO_ROOT,
@@ -55,13 +62,22 @@ class StarlingsBridge:
         self.process = process
 
     @classmethod
-    async def start(cls, pack: str) -> "StarlingsBridge":
+    async def start(
+        cls,
+        pack: str,
+        *,
+        env: dict[str, str] | None = None,
+    ) -> "StarlingsBridge":
         binary = await ensure_bridge_built()
         pack_path = PROJECT_ROOT / "packs" / pack
+        child_env = os.environ.copy()
+        if env:
+            child_env.update(env)
         process = await asyncio.create_subprocess_exec(
             str(binary),
             str(pack_path),
             cwd=REPO_ROOT,
+            env=child_env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
