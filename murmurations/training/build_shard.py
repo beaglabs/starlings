@@ -151,6 +151,7 @@ def build_shard(
         eval_fraction=eval_fraction,
         chunk_chars=int(config.get("code_chunk_chars", 6000)),
         max_files_per_repo=int(config.get("max_files_per_repo", 2000)),
+        prune_checkouts=True,
     )
 
     _log(
