@@ -303,6 +303,14 @@ def build_shard(
         host_disk_per_worker_gib=float(
             generation_config.get("host_disk_per_worker_gib", 0.5)
         ),
+        partitions_per_repo=int(
+            generation_config.get("partitions_per_repo", 1)
+        ),
+        semantic_candidates_path=(
+            str(generation_config["semantic_candidates"])
+            if generation_config.get("semantic_candidates")
+            else None
+        ),
     )
     _log(
         f"trajectory generation complete written={generation['written']} "
