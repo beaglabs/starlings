@@ -175,6 +175,7 @@ def make_oracle_bootstrap_episode(
     enrichment_operators: tuple[str, ...] = (),
     max_enrichment_calls: int = 0,
     command_runner=None,
+    repair_runner=None,
 ) -> Episode:
     """Create an explicitly labeled bootstrap demonstration from known mutation truth."""
 
@@ -342,7 +343,10 @@ def make_oracle_bootstrap_episode(
         language_target=mutation.repair_text,
     )
 
-    repair_mutation(root, mutation)
+    if repair_runner is None:
+        repair_mutation(root, mutation)
+    else:
+        repair_runner(mutation)
     repaired = execute_operator(
         "repo.tests",
         "",
