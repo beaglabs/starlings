@@ -55,6 +55,29 @@ def _clip_utf8_tail(value: str, max_bytes: int) -> str:
     return value[best:]
 
 
+def _clip_utf8_head(value: str, max_bytes: int) -> str:
+    """Return an exact prefix that fits a UTF-8 byte budget."""
+
+    if max_bytes <= 0:
+        return ""
+    encoded = value.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return value
+
+    low = 0
+    high = len(value)
+    best = 0
+    while low <= high:
+        mid = (low + high) // 2
+        prefix = value[:mid]
+        if len(prefix.encode("utf-8")) <= max_bytes:
+            best = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+    return value[:best]
+
+
 def _summary(event: dict[str, Any], *, max_chars: int | None = None) -> str:
     """Render a bounded event summary while keeping its pointer identity visible."""
 
@@ -374,7 +397,7 @@ def materialize_episode(
             else None
         )
         raw_target = str(event.get("language_target", ""))
-        target = _clip_utf8_tail(raw_target, max_language_target_bytes)
+        target = _clip_utf8_head(raw_target, max_language_target_bytes)
 
         target_bytes = len(target.encode("utf-8"))
         context_budget = max_example_bytes - target_bytes
@@ -402,7 +425,7 @@ def materialize_episode(
             0,
             max_example_bytes - len(context.encode("utf-8")),
         )
-        target = _clip_utf8_tail(target, remaining_target_bytes)
+        target = _clip_utf8_head(target, remaining_target_bytes)
 
         rows.append(
             {
