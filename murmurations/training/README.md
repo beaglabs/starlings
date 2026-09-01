@@ -86,7 +86,11 @@ cat data/murmurations/shard-000/repo-probe.json
 cat data/murmurations/shard-000/qa-report.json
 ```
 
-If the probe passes, remove the probe output and build the full shard:
+For the full shard, keep the configured standalone full-probe cache
+(`data/murmurations/shard-000-full-probe.json` and
+`data/murmurations/shard-000-eligible.jsonl`). The builder validates its exact
+catalog and Daytona snapshot/plan signature before reusing it. A prior limited
+build output directory may be removed without deleting that cache:
 
 ```sh
 rm -rf data/murmurations/shard-000
