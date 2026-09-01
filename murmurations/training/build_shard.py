@@ -200,11 +200,6 @@ def build_shard(
     if int(probe["eligible"]) == 0:
         raise RuntimeError("no repositories passed the clean-verifier eligibility probe")
 
-    requested_per_repo = (
-        episodes_per_repo
-        if episodes_per_repo is not None
-        else int(config.get("episodes_per_repo", 20))
-    )
     enrichment = dict(config.get("terminal_evidence") or {})
     enrichment_operators = tuple(enrichment.get("operators") or ())
     max_enrichment_calls = (
@@ -212,16 +207,48 @@ def build_shard(
         if bool(enrichment.get("enabled", False))
         else 0
     )
-    _log(
-        f"generating repair trajectories repos={probe['eligible']} "
-        f"episodes_per_repo={requested_per_repo}"
+    generation_config = dict(config.get("generation") or {})
+    target_mode = (
+        limit_repositories is None
+        and episodes_per_repo is None
+        and str(generation_config.get("mode", "targets")) == "targets"
     )
+    requested_per_repo = None
+    targets = None
+    if target_mode:
+        targets = _full_generation_targets(quality)
+        _log(
+            "generating repair trajectories to targets "
+            f"mutations>={targets['unique_mutations']} "
+            f"rows>={targets['trajectory_rows']} "
+            f"dynamic_repos>={targets['dynamic_repositories']}"
+        )
+    else:
+        requested_per_repo = (
+            episodes_per_repo
+            if episodes_per_repo is not None
+            else int(generation_config.get("fixed_episodes_per_repo", 2))
+        )
+        _log(
+            f"generating repair trajectories repos={probe['eligible']} "
+            f"episodes_per_repo={requested_per_repo}"
+        )
+
     generation = generate_trajectory_corpus(
         paths["eligible_catalog"],
         paths["episodes"],
         cache_dir=cache_dir,
         work_dir=work_dir,
         episodes_per_repo=requested_per_repo,
+        targets=targets,
+        max_requests_per_repo=int(generation_config.get("max_requests_per_repo", 80)),
+        max_successes_per_repo=int(generation_config.get("max_successes_per_repo", 50)),
+        burst_per_repo=int(generation_config.get("burst_per_repo", 4)),
+        max_requested_episodes=(
+            int(generation_config["max_requested_episodes"])
+            if generation_config.get("max_requested_episodes") is not None
+            else None
+        ),
         seed=int(config.get("seed", 17)),
         timeout_seconds=timeout_seconds,
         max_attempts=int(config.get("max_mutation_attempts", 64)),
@@ -230,6 +257,7 @@ def build_shard(
         enrichment_operators=enrichment_operators,
         max_enrichment_calls=max_enrichment_calls,
         sandbox_runner=sandbox,
+        prune_checkouts=True,
     )
     _log(
         f"trajectory generation complete written={generation['written']} "
