@@ -52,6 +52,21 @@ class RepositoryPlanTests(unittest.TestCase):
                 ["cmake", "--build", ".murmurations-build", "--parallel", "2"],
             )
 
+    def test_libuv_style_cmake_plan_disables_bench_and_tidy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "CMakeLists.txt").write_text(
+                "project(libuv LANGUAGES C)\n"
+                "option(LIBUV_BUILD_TESTS \"tests\" ON)\n"
+                "option(LIBUV_BUILD_BENCH \"bench\" ON)\n"
+                "option(ENABLE_CLANG_TIDY \"tidy\" ON)\n",
+                encoding="utf-8",
+            )
+            configure = detect_prepare_commands(root)[0]
+            self.assertIn("-DLIBUV_BUILD_TESTS=ON", configure)
+            self.assertIn("-DLIBUV_BUILD_BENCH=OFF", configure)
+            self.assertIn("-DENABLE_CLANG_TIDY=OFF", configure)
+
     def test_python_dependency_group_adds_test_preparation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
