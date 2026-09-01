@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import tomllib
 from typing import Any
 
@@ -136,7 +137,7 @@ def _minimum_zig_version(root: Path) -> str | None:
         text = zon.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
-    match = __import__("re").search(
+    match = re.search(
         r'\.minimum_zig_version\s*=\s*"([^"]+)"',
         text,
     )
