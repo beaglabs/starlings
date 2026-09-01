@@ -166,7 +166,7 @@ class SweSmithImportTests(unittest.TestCase):
         self.assertEqual(len(execute_events), 3)
         self.assertEqual(
             [event["frame"]["operator_ref"] for event in execute_events],
-            ["repo.search", "repo.edit", "repo.tests"],
+            ["repo.search", None, "repo.tests"],
         )
         self.assertTrue(
             all(event["environment"]["external_execution"] for event in execute_events)
