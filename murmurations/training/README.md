@@ -95,11 +95,13 @@ python3 -m murmurations.training.build_shard \
   --config murmurations/training/corpus/shard-000.yaml
 ```
 
-The full recipe requests 20 unique verifier-caught mutations per eligible repo,
-with hard QA gates for pinned permissive provenance, clean-verifier eligibility,
-generation yield, unique mutations, static/trajectory row counts, repository
-train/eval isolation, duplicate mutation rejection, and exact static-window
-deduplication. Generated files include SHA-256 digests in the QA report.
+The full recipe is target-driven rather than fixed-count: it round-robins eligible
+repositories until the configured QA-relevant mutation, trajectory-row, dynamic
+repository, terminal-evidence, and generation-yield targets are satisfied, or
+bounded per-repository request/success caps are exhausted. Episode and failure
+JSONL are append-only resumable journals, so interrupted generation resumes exact
+repository/episode slots instead of truncating prior successes. Generated files
+include SHA-256 digests in the QA report.
 
 ### Terminal-backed evidence in shard-000
 
