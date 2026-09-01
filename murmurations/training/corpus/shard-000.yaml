@@ -49,9 +49,9 @@ max_context_chars: 12000
 # Static materialization is local; all dynamic repository execution is remote.
 sandbox:
   runtime: daytona
-  snapshot: murmurations-corpus-v1
+  snapshot: murmurations-corpus-v1-2cpu
   target: us
-  ttl_minutes: 45
+  ttl_minutes: 90
   block_network_after_prepare: false
 
 terminal_evidence:
