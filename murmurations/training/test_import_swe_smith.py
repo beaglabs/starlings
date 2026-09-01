@@ -153,11 +153,14 @@ class SweSmithImportTests(unittest.TestCase):
         assert episode is not None
         self.assertEqual(episode["producer"], "swe-smith-atif-import-v1")
         self.assertEqual(episode["repository"]["name"], "external/repo")
+        self.assertEqual(episode["repository"]["commit"], "abc123")
         self.assertEqual(episode["repository"]["language"], "Python")
+        self.assertEqual(episode["repository"]["license"], "unknown")
         self.assertEqual(
             episode["generation"]["candidate_source"],
             "external_execution_trace",
         )
+        self.assertEqual(episode["generation"]["source_dataset_license"], "MIT")
 
         execute_events = [
             event
