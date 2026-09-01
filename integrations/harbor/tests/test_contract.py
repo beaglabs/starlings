@@ -13,7 +13,7 @@ from starlings_harbor.inference import _parse_decision, history_text
 from starlings_harbor.wire import b64encode_text
 
 
-class HostedHarborContractTests(unittest.TestCase):
+class HarborContractTests(unittest.TestCase):
     def test_manifests_are_three_distinct_acp_conditions(self) -> None:
         expected = {
             "harbor-agent-baseline.json": "starlings_harbor.baseline",
@@ -28,6 +28,38 @@ class HostedHarborContractTests(unittest.TestCase):
             self.assertEqual(manifest["runtime"]["python"], "3.12")
             self.assertEqual(manifest["runtime"]["project"], "integrations/harbor")
             self.assertEqual(manifest["runtime"]["entrypoint"], ["python", "-m", module])
+
+
+    def test_molab_configs_use_daytona_and_matched_ab_model(self) -> None:
+        configs = [
+            PROJECT.parents[1] / "benchmarks/harbor-molab/abc-hello-world.yaml",
+            PROJECT.parents[1] / "benchmarks/harbor-molab/abc-first-suite-smoke.yaml",
+            PROJECT.parents[1] / "benchmarks/harbor-molab/abc-skillsbench-10.yaml",
+        ]
+        for config in configs:
+            text = config.read_text(encoding="utf-8")
+            self.assertIn("type: daytona", text)
+            self.assertIn(
+                "integrations.harbor.local_agents:BaselineAgent",
+                text,
+            )
+            self.assertIn(
+                "integrations.harbor.local_agents:StarlingsAgent",
+                text,
+            )
+            self.assertIn(
+                "integrations.harbor.local_agents:DeterministicStarlingsAgent",
+                text,
+            )
+            self.assertEqual(text.count("model_name: openai/gpt-5-mini"), 2)
+
+    def test_normal_harbor_agents_are_importable_source(self) -> None:
+        source = (PROJECT / "local_agents.py").read_text(encoding="utf-8")
+        self.assertIn("class BaselineAgent(_CommonAgent):", source)
+        self.assertIn("class StarlingsAgent(_CommonAgent):", source)
+        self.assertIn("class DeterministicStarlingsAgent(_CommonAgent):", source)
+        self.assertIn("from harbor.agents.base import BaseAgent", source)
+        self.assertNotIn("DAYTONA_API_KEY", source)
 
     def test_shared_model_decision_parser(self) -> None:
         shell = _parse_decision('{"type":"shell","command":"pytest -q"}')
