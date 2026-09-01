@@ -210,6 +210,59 @@ def _write_outputs(
     return report
 
 
+def load_probe_artifacts(
+    catalog_path: str | Path,
+    report_path: str | Path,
+    eligible_catalog_path: str | Path,
+    *,
+    sandbox_runner,
+) -> dict[str, Any]:
+    """Load a complete probe only when catalog and snapshot identity still match."""
+    catalog = RepoCatalog.from_jsonl(catalog_path)
+    report_target = Path(report_path)
+    eligible_target = Path(eligible_catalog_path)
+    if not report_target.exists() or not eligible_target.exists():
+        raise FileNotFoundError("cached probe artifacts are incomplete")
+
+    report = json.loads(report_target.read_text(encoding="utf-8"))
+    provenance = sandbox_runner.provenance()
+    snapshot_info = dict(provenance.get("snapshot_info") or {})
+    snapshot_identity = (
+        snapshot_info.get("id") or provenance.get("snapshot") or "unknown"
+    )
+    expected_signature = f"v{PROBE_PLAN_VERSION}:{snapshot_identity}"
+    expected_keys = {(record.name, record.commit) for record in catalog.records}
+    rows = list(report.get("results") or [])
+    actual_keys = {
+        (str(row.get("repository") or ""), str(row.get("commit") or ""))
+        for row in rows
+    }
+    if int(report.get("repositories", -1)) != len(catalog.records):
+        raise RuntimeError("cached probe repository count does not match catalog")
+    if int(report.get("completed", len(rows))) != len(catalog.records):
+        raise RuntimeError("cached probe is not complete")
+    if actual_keys != expected_keys:
+        raise RuntimeError("cached probe repositories do not match catalog")
+    if any(
+        str(row.get("probe_signature") or "") != expected_signature
+        for row in rows
+    ):
+        raise RuntimeError("cached probe snapshot/plan signature is stale")
+
+    eligible = RepoCatalog.from_jsonl(eligible_target)
+    passed_keys = {
+        (str(row.get("repository") or ""), str(row.get("commit") or ""))
+        for row in rows
+        if row.get("passed")
+    }
+    eligible_keys = {(record.name, record.commit) for record in eligible.records}
+    if eligible_keys != passed_keys:
+        raise RuntimeError("cached eligible catalog does not match probe results")
+    if int(report.get("eligible", -1)) != len(eligible.records):
+        raise RuntimeError("cached probe eligible count is inconsistent")
+    return report
+
+
 def probe_repository_catalog(
     catalog_path: str | Path,
     *,
