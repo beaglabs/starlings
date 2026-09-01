@@ -294,7 +294,16 @@ def inject_verified_mutation(
         partition_id=partition_id,
         partition_count=partition_count,
     )
-    random.Random(seed).shuffle(candidate_pool)
+    rng = random.Random(seed)
+    semantic = [candidate for candidate in candidate_pool if candidate.source != "deterministic"]
+    deterministic = [candidate for candidate in candidate_pool if candidate.source == "deterministic"]
+    rng.shuffle(semantic)
+    rng.shuffle(deterministic)
+    candidate_pool = (
+        semantic + deterministic
+        if seed % 2 == 0
+        else deterministic + semantic
+    )
     attempted = 0
     for candidate in candidate_pool:
         fingerprint = candidate.fingerprint
