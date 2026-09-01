@@ -179,7 +179,7 @@ def _build_imported_trajectory_shard(
             import_config.get("dataset", "neulab/agent-data-collection")
         ),
         config=str(import_config.get("config", "swe-smith")),
-        split=str(import_config.get("split", "std")),
+        split=str(import_config.get("split", "raw")),
         revision=str(
             import_config.get(
                 "revision",
