@@ -28,6 +28,9 @@ training:
   eval_batch_size: 1
   gradient_accumulation_steps: 64
   num_workers: 2
+  pretokenize: true
+  train_token_cache: data/murmurations/cache/murmuration-1.5b-train-4096.pt
+  eval_token_cache: data/murmurations/cache/murmuration-1.5b-eval-4096.pt
   learning_rate: 0.0001
   betas: [0.9, 0.95]
   weight_decay: 0.1
