@@ -99,13 +99,16 @@ python3 -m murmurations.training.build_shard \
   --config murmurations/training/corpus/shard-000.yaml
 ```
 
-The full recipe is target-driven rather than fixed-count: it round-robins eligible
-repositories until the configured QA-relevant mutation, trajectory-row, dynamic
-repository, terminal-evidence, and generation-yield targets are satisfied, or
-bounded per-repository request/success caps are exhausted. Episode and failure
-JSONL are append-only resumable journals, so interrupted generation resumes exact
-repository/episode slots instead of truncating prior successes. Generated files
-include SHA-256 digests in the QA report.
+The full recipe is target-driven rather than fixed-count. Missing required
+languages are scheduled first, then eligible repositories continue in balanced
+round-robin bursts until the configured mutation, trajectory-row, dynamic
+repository, terminal-evidence, language-coverage, and generation-yield targets
+are satisfied, or bounded per-repository request/success caps are exhausted.
+Shard-000 requires dynamic episodes from C, C++, Go, Java, JavaScript, Python,
+Rust, TypeScript, and Zig. Episode and failure JSONL are append-only resumable
+journals, and their generation signature includes the Daytona snapshot identity
+plus repository-planner digest so verifier changes cannot silently reuse stale
+episodes. Generated files include SHA-256 digests in the QA report.
 
 ### Terminal-backed evidence in shard-000
 
