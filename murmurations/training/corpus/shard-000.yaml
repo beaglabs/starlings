@@ -4,6 +4,7 @@ output_dir: data/murmurations/shard-000
 seed: 17001
 eval_fraction: 0.10
 max_context_chars: 12000
+max_example_bytes: 4000
 
 # Bulk supervision is imported from successful, execution-grounded SWE-smith
 # trajectories. This catalog is read only to keep imported trajectory repos
