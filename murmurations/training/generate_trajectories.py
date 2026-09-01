@@ -520,6 +520,7 @@ def _empty_metrics() -> dict[str, Any]:
         "terminal_argv_events": 0,
         "dynamic_repositories": set(),
         "dynamic_languages": set(),
+        "candidate_sources": {},
     }
 
 
@@ -587,6 +588,10 @@ def _load_journal(
         metrics["dynamic_repositories"].add(repository)
         language = str((record.get("repository") or {}).get("language") or "unknown")
         metrics["dynamic_languages"].add(language)
+        candidate_source = str(generation.get("candidate_source") or "deterministic")
+        metrics["candidate_sources"][candidate_source] = (
+            int(metrics["candidate_sources"].get(candidate_source, 0)) + 1
+        )
         episode_metrics = _episode_metrics(record)
         metrics["trajectory_rows"] += int(episode_metrics["trajectory_rows"])
         metrics["terminal_operator_events"] += int(
@@ -632,6 +637,8 @@ def _target_status(metrics: dict[str, Any], targets: dict[str, Any]) -> dict[str
             str(language)
             for language in (targets.get("required_dynamic_languages") or [])
         ).issubset(metrics["dynamic_languages"]),
+        "semantic_mutations": int(metrics["candidate_sources"].get("llm", 0))
+        >= int(targets.get("semantic_mutations", 0)),
         "terminal_operator_events": int(metrics["terminal_operator_events"])
         >= int(targets.get("terminal_operator_events", 0)),
         "terminal_operator_types": len(metrics["terminal_operator_types"])
@@ -698,9 +705,13 @@ def generate_trajectory_corpus(
         raise ValueError("partitions_per_repo must be positive")
 
     catalog = RepoCatalog.from_jsonl(catalog_path)
-    semantic_candidates = _load_semantic_candidates(
-        semantic_candidates_path,
-        catalog=catalog,
+    semantic_candidates = (
+        _load_semantic_candidates(
+            semantic_candidates_path,
+            catalog=catalog,
+        )
+        if targets is not None
+        else {}
     )
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -818,6 +829,11 @@ def generate_trajectory_corpus(
         metrics["written"] += 1
         metrics["dynamic_repositories"].add(repo.name)
         metrics["dynamic_languages"].add(repo.language or "unknown")
+        generation = dict(outcome.record.get("generation") or {})
+        candidate_source = str(generation.get("candidate_source") or "deterministic")
+        metrics["candidate_sources"][candidate_source] = (
+            int(metrics["candidate_sources"].get(candidate_source, 0)) + 1
+        )
         episode_metrics = _episode_metrics(outcome.record)
         metrics["trajectory_rows"] += int(episode_metrics["trajectory_rows"])
         metrics["terminal_operator_events"] += int(
@@ -1185,6 +1201,7 @@ def generate_trajectory_corpus(
         "trajectory_rows": int(metrics["trajectory_rows"]),
         "dynamic_repositories": len(metrics["dynamic_repositories"]),
         "dynamic_languages": sorted(metrics["dynamic_languages"]),
+        "candidate_sources": dict(sorted(metrics["candidate_sources"].items())),
         "terminal_operator_events": int(metrics["terminal_operator_events"]),
         "terminal_operator_types": len(metrics["terminal_operator_types"]),
         "terminal_argv_events": int(metrics["terminal_argv_events"]),
