@@ -16,6 +16,7 @@ RUN apt-get update \
         golang-go \
         maven \
         meson \
+        minisign \
         ninja-build \
         nodejs \
         npm \
@@ -38,17 +39,30 @@ RUN apt-get update \
          *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
        esac \
     && { \
+         zig_pubkey="RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti+JO/wCYvhbAb/U"; \
          install_zig() { \
            version="$1"; channel="$2"; \
+           filename="zig-${zig_arch}-linux-$version.tar.xz"; \
+           archive="/tmp/$filename"; \
+           signature="$archive.minisig"; \
            mkdir -p "/opt/zig/$version"; \
            if [ "$channel" = stable ]; then \
-             url="https://ziglang.org/download/$version/zig-${zig_arch}-linux-$version.tar.xz"; \
+             primary="https://ziglang.org/download/$version/$filename"; \
            else \
-             url="https://ziglang.org/builds/zig-${zig_arch}-linux-$version.tar.xz"; \
+             primary="https://ziglang.org/builds/$filename"; \
            fi; \
-           mirror="https://mirrors.nektro.net/zig/$version/zig-${zig_arch}-linux-$version.tar.xz"; \
-           (curl -fsSL "$url" || curl -fsSL "$mirror") \
-             | tar -xJ --strip-components=1 -C "/opt/zig/$version"; \
+           mirror="http://mirrors.nektro.net/zig/$version/$filename"; \
+           if ! { \
+             curl -fsSL --retry 3 -o "$archive" "$primary" \
+               && curl -fsSL --retry 3 -o "$signature" "$primary.minisig"; \
+           }; then \
+             rm -f "$archive" "$signature"; \
+             curl -fsSL --retry 3 -o "$archive" "$mirror"; \
+             curl -fsSL --retry 3 -o "$signature" "$mirror.minisig"; \
+           fi; \
+           minisign -Vm "$archive" -P "$zig_pubkey"; \
+           tar -xJf "$archive" --strip-components=1 -C "/opt/zig/$version"; \
+           rm -f "$archive" "$signature"; \
          }; \
          install_zig "$ZIG_DEFAULT_VERSION" stable; \
          install_zig "$ZIG_ZLS_VERSION" builds; \
