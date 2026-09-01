@@ -7,15 +7,22 @@ work_dir: .cache/murmurations/shard-000-work
 seed: 17001
 eval_fraction: 0.10
 
-# First serious shard: 60 repos x 20 requested unique mutations.
-# A successful episode materializes to ~11-17 protocol decision rows depending
-# on terminal evidence availability. The shard gate requires >=10k trajectory
-# rows plus the static code/document stream.
-episodes_per_repo: 20
+# Full serious generation is target-driven and resumable. Limited smoke builds
+# can still override a fixed per-repository count from the CLI.
+generation:
+  mode: targets
+  fixed_episodes_per_repo: 2
+  max_requests_per_repo: 80
+  max_successes_per_repo: 50
+  burst_per_repo: 4
+
 generation_retries: 4
 timeout_seconds: 180
 max_mutation_attempts: 48
 probe_concurrency: 8
+probe_cache:
+  report: data/murmurations/shard-000-full-probe.json
+  eligible_catalog: data/murmurations/shard-000-eligible.jsonl
 
 code_chunk_chars: 6000
 max_files_per_repo: 1500
