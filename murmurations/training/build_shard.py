@@ -6,6 +6,7 @@ import argparse
 from collections import defaultdict, deque
 import json
 import math
+import os
 from pathlib import Path
 import shutil
 from typing import Any
@@ -191,6 +192,45 @@ def _build_imported_trajectory_shard(
         max_episodes=max_episodes,
         exclude_repositories=excluded_repositories,
     )
+    annotation_config = dict(generation_config.get("semantic_annotation") or {})
+    if bool(annotation_config.get("enabled", False)):
+        from murmurations.training.annotate_imported import annotate_file
+
+        model = str(
+            annotation_config.get("model")
+            or os.environ.get("MURMURATIONS_ANNOTATOR_MODEL")
+            or ""
+        ).strip()
+        if not model:
+            raise RuntimeError(
+                "semantic annotation is enabled but no model was configured; "
+                "set generation.semantic_annotation.model or "
+                "MURMURATIONS_ANNOTATOR_MODEL"
+            )
+        base_url = str(
+            annotation_config.get("base_url")
+            or os.environ.get("MURMURATIONS_ANNOTATOR_BASE_URL")
+            or "http://127.0.0.1:8000/v1"
+        )
+        api_key_value = (
+            annotation_config.get("api_key")
+            or os.environ.get("MURMURATIONS_ANNOTATOR_API_KEY")
+        )
+        api_key = str(api_key_value) if api_key_value else None
+        _log(f"augmenting semantic labels with model={model}")
+        generation["semantic_annotation"] = annotate_file(
+            paths["episodes"],
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+            timeout_seconds=int(annotation_config.get("timeout_seconds", 120)),
+            request_retries=int(annotation_config.get("request_retries", 3)),
+            concurrency=int(annotation_config.get("concurrency", 8)),
+            batch_events=int(annotation_config.get("batch_events", 32)),
+        )
+    else:
+        generation["semantic_annotation"] = {"enabled": False}
+
     _write_json(paths["generation_report"], generation)
 
     _log(
