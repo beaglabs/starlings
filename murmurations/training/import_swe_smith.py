@@ -486,6 +486,7 @@ def import_swe_smith(
     revision: str = DEFAULT_REVISION,
     target_rows: int = 12000,
     max_episodes: int = 1200,
+    exclude_repositories: set[str] | None = None,
 ) -> dict[str, Any]:
     if target_rows <= 0:
         raise ValueError("target_rows must be positive")
@@ -502,6 +503,7 @@ def import_swe_smith(
             revision=revision,
         )
     )
+    excluded = set(exclude_repositories or ())
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -518,6 +520,9 @@ def import_swe_smith(
             scanned += 1
             episode = convert_atif_record(raw_record)
             if episode is None:
+                skipped += 1
+                continue
+            if str(episode["repository"]["name"]) in excluded:
                 skipped += 1
                 continue
             handle.write(json.dumps(episode, sort_keys=True) + "\n")
@@ -545,9 +550,11 @@ def import_swe_smith(
         "source_split": split,
         "source_revision": revision,
         "resolved_only": True,
-        "requested": scanned,
+        "source_scanned": scanned,
+        "source_skipped": skipped,
+        "requested": written,
         "written": written,
-        "failed": skipped,
+        "failed": 0,
         "success_rate": 1.0,
         "unique_mutations": written,
         "trajectory_rows": trajectory_rows,
