@@ -31,6 +31,16 @@ def _summary(event: dict[str, Any]) -> str:
             f"ARGV[{event['id']}]: "
             + json.dumps([str(item) for item in argv], separators=(",", ":"))
         )
+    tool_name = env.get("tool_name")
+    tool_arguments = env.get("tool_arguments")
+    if isinstance(tool_name, str) and tool_name:
+        lines.append(
+            f"TOOL[{event['id']}]: {tool_name} "
+            + json.dumps(tool_arguments or {}, sort_keys=True, separators=(",", ":"))
+        )
+    command = env.get("command")
+    if isinstance(command, str) and command:
+        lines.append(f"COMMAND[{event['id']}]: {command[-1200:]}")
     output = env.get("output")
     if isinstance(output, str) and output:
         lines.append(f"RESULT[{event['id']}]: {output[-1600:]}")
