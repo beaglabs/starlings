@@ -57,6 +57,23 @@ def _assert_finite_losses(losses: dict[str, torch.Tensor], *, where: str) -> Non
         )
 
 
+_FLOAT8_BACKBONE_SUFFIXES = (
+    ".attn.qkv",
+    ".attn.out",
+    ".ffn.gate",
+    ".ffn.up",
+    ".ffn.down",
+)
+
+
+def _is_float8_backbone_linear(module: torch.nn.Module, fqn: str) -> bool:
+    if not isinstance(module, torch.nn.Linear):
+        return False
+    if not fqn.startswith("blocks.") or not fqn.endswith(_FLOAT8_BACKBONE_SUFFIXES):
+        return False
+    return module.in_features % 16 == 0 and module.out_features % 16 == 0
+
+
 def _configure_float8_backbone(model, train_cfg: dict[str, object]) -> dict[str, object]:
     if not bool(train_cfg.get("float8_backbone", False)):
         return {"enabled": False, "converted_linears": 0}
@@ -71,31 +88,20 @@ def _configure_float8_backbone(model, train_cfg: dict[str, object]) -> dict[str,
 
     recipe_name = str(train_cfg.get("float8_recipe", "tensorwise"))
     config = Float8LinearConfig.from_recipe_name(recipe_name)
-    eligible_suffixes = (
-        ".attn.qkv",
-        ".attn.out",
-        ".ffn.gate",
-        ".ffn.up",
-        ".ffn.down",
-    )
     converted: list[str] = []
 
     def module_filter_fn(module: torch.nn.Module, fqn: str) -> bool:
-        if not isinstance(module, torch.nn.Linear):
-            return False
-        if not fqn.startswith("blocks.") or not fqn.endswith(eligible_suffixes):
-            return False
-        if module.in_features % 16 or module.out_features % 16:
-            return False
-        converted.append(fqn)
-        return True
+        selected = _is_float8_backbone_linear(module, fqn)
+        if selected:
+            converted.append(fqn)
+        return selected
 
     convert_to_float8_training(
         model,
         config=config,
         module_filter_fn=module_filter_fn,
     )
-    expected = len(model.blocks) * len(eligible_suffixes)
+    expected = len(model.blocks) * len(_FLOAT8_BACKBONE_SUFFIXES)
     if len(converted) != expected:
         raise RuntimeError(
             f"expected {expected} FP8 backbone linears but converted {len(converted)}"
