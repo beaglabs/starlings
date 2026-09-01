@@ -313,6 +313,55 @@ class SweSmithImportTests(unittest.TestCase):
     def test_raw_unresolved_records_are_rejected(self) -> None:
         self.assertIsNone(convert_atif_record(_raw_record(resolved=False)))
 
+    def test_only_final_submit_becomes_accept(self) -> None:
+        record = _record()
+        record["steps"].insert(
+            4,
+            {
+                "step_id": 99,
+                "source": "agent",
+                "message": "I will try submitting the current patch.",
+                "tool_calls": [
+                    {
+                        "tool_call_id": "early_submit",
+                        "function_name": "finish",
+                        "arguments": {},
+                    }
+                ],
+                "observation": {
+                    "results": [
+                        {
+                            "source_call_id": "early_submit",
+                            "content": "Submission rejected; more work is required.",
+                        }
+                    ]
+                },
+            },
+        )
+
+        episode = convert_atif_record(record)
+        self.assertIsNotNone(episode)
+        assert episode is not None
+
+        accepts = [
+            event
+            for event in episode["events"]
+            if event["frame"]["operation"] == "ACCEPT"
+        ]
+        self.assertEqual(len(accepts), 1)
+
+        early_submit_executes = [
+            event
+            for event in episode["events"]
+            if event["frame"]["operation"] == "EXECUTE"
+            and event["environment"].get("tool_call_id") == "early_submit"
+        ]
+        self.assertEqual(len(early_submit_executes), 1)
+        self.assertIn(
+            "Submission rejected",
+            early_submit_executes[0]["environment"]["output"],
+        )
+
     def test_terminal_commands_map_to_semantic_operators(self) -> None:
         operator, _, kind = classify_tool_call(
             "terminal", {"command": "cd /testbed && pytest -q"}
