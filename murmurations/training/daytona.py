@@ -322,6 +322,7 @@ class DaytonaWorkspace:
         params = params_factory(
             snapshot=self.runner.snapshot,
             ttl_minutes=self.runner.ttl_minutes,
+            auto_stop_interval=0,
             ephemeral=True,
             public=False,
             labels={"murmurations": "corpus"},
