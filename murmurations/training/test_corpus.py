@@ -26,8 +26,8 @@ class CorpusTests(unittest.TestCase):
             episodes_per_repo=3,
             seed=17,
         )
-        self.assertEqual([item[0].name for item in scheduled], ["a", "a", "a", "b", "b", "b"])
-        self.assertEqual([item[2] for item in scheduled], [0, 1, 2, 0, 1, 2])
+        self.assertEqual([item[0].name for item in scheduled], ["a", "b", "a", "b", "a", "b"])
+        self.assertEqual([item[2] for item in scheduled], [0, 0, 1, 1, 2, 2])
 
     def test_stratified_probe_spans_languages(self) -> None:
         catalog = RepoCatalog(
