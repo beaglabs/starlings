@@ -206,6 +206,8 @@ class SweSmithImportTests(unittest.TestCase):
                 output,
                 input_jsonl=input_path,
                 target_rows=1,
+                min_episodes=1,
+                min_repositories=1,
                 max_episodes=10,
                 exclude_repositories={"external/repo"},
             )
