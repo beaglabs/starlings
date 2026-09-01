@@ -384,6 +384,9 @@ class SweSmithImportTests(unittest.TestCase):
             and event["frame"].get("operator_ref") == "repo.tests"
         )
         execute = episode["events"][execute_index]
+        exact_argument = '{"blob":"' + ("X" * 3500) + '"}'
+        execute["frame"]["argument"] = exact_argument
+        execute["grounding"] = "source-" + ("S" * 50000)
         execute["environment"]["tool_arguments"] = {"blob": "A" * 50000}
         execute["environment"]["command"] = "python -m pytest " + ("C" * 50000)
         execute["environment"]["output"] = "result-" + ("O" * 50000)
@@ -398,6 +401,7 @@ class SweSmithImportTests(unittest.TestCase):
         rows = materialize_episode(episode, max_context_chars=12000)
 
         self.assertTrue(all(len(row["context"]) <= 12000 for row in rows))
+        self.assertIn(exact_argument, rows[execute_index]["context"])
         self.assertIn(execute["id"], rows[evidence_index]["context"])
         self.assertIn("repo.tests", rows[evidence_index]["context"])
 
