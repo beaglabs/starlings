@@ -42,9 +42,58 @@ def _usable_text(text: str) -> bool:
     return True
 
 
-def _windows(text: str, chunk_chars: int) -> Iterable[tuple[str, str]]:
-    for offset in range(0, len(text), chunk_chars):
-        chunk = text[offset : offset + chunk_chars]
+def _utf8_prefix_end(
+    text: str,
+    start: int,
+    *,
+    max_chars: int,
+    max_bytes: int,
+) -> int:
+    """Return the largest character boundary that fits both limits."""
+
+    upper = min(len(text), start + max_chars)
+    if upper <= start:
+        return start
+    if len(text[start:upper].encode("utf-8")) <= max_bytes:
+        return upper
+
+    low = start + 1
+    high = upper
+    best = start
+    while low <= high:
+        mid = (low + high) // 2
+        size = len(text[start:mid].encode("utf-8"))
+        if size <= max_bytes:
+            best = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+    return best
+
+
+def _windows(
+    text: str,
+    chunk_chars: int,
+    *,
+    max_chunk_bytes: int,
+) -> Iterable[tuple[str, str]]:
+    if chunk_chars <= 0:
+        raise ValueError("chunk_chars must be positive")
+    if max_chunk_bytes <= 0:
+        raise ValueError("max_chunk_bytes must be positive")
+
+    offset = 0
+    while offset < len(text):
+        end = _utf8_prefix_end(
+            text,
+            offset,
+            max_chars=chunk_chars,
+            max_bytes=max_chunk_bytes,
+        )
+        if end <= offset:
+            break
+        chunk = text[offset:end]
+        offset = end
         if len(chunk) < 192:
             continue
         pivot = max(96, int(len(chunk) * 0.67))
@@ -61,6 +110,7 @@ def materialize_repository_code(
     cache_dir: str | Path = ".cache/murmurations/repos",
     eval_fraction: float = 0.1,
     chunk_chars: int = 6000,
+    max_example_bytes: int = 3800,
     max_files_per_repo: int = 2000,
     prune_checkouts: bool = False,
 ) -> dict[str, object]:
@@ -102,7 +152,20 @@ def materialize_repository_code(
                     skipped_unusable += 1
                     continue
                 rel = path.relative_to(root)
-                for prefix, continuation in _windows(text, chunk_chars):
+                metadata_prefix = (
+                    f"REPOSITORY: {record.name} commit={record.commit} "
+                    f"license={record.license}\nFILE: {rel}\n"
+                )
+                metadata_bytes = len(metadata_prefix.encode("utf-8"))
+                max_chunk_bytes = max_example_bytes - metadata_bytes
+                if max_chunk_bytes < 384:
+                    skipped_unusable += 1
+                    continue
+                for prefix, continuation in _windows(
+                    text,
+                    chunk_chars,
+                    max_chunk_bytes=max_chunk_bytes,
+                ):
                     content_hash = hashlib.sha256(
                         (prefix + continuation).encode("utf-8")
                     ).hexdigest()
@@ -111,10 +174,7 @@ def materialize_repository_code(
                         continue
                     seen_windows.add(content_hash)
                     row = {
-                        "context": (
-                            f"REPOSITORY: {record.name} commit={record.commit} "
-                            f"license={record.license}\nFILE: {rel}\n{prefix}"
-                        ),
+                        "context": metadata_prefix + prefix,
                         "language_target": continuation,
                         "operation": "NOOP",
                         "argument": {
@@ -153,6 +213,7 @@ def materialize_repository_code(
         "unique_windows": len(seen_windows),
         "deduplicated_windows": deduplicated,
         "skipped_unusable_files": skipped_unusable,
+        "max_example_bytes": max_example_bytes,
         "failures": failures,
     }
 
@@ -165,6 +226,7 @@ def main() -> None:
     parser.add_argument("--cache-dir", default=".cache/murmurations/repos")
     parser.add_argument("--eval-fraction", type=float, default=0.1)
     parser.add_argument("--chunk-chars", type=int, default=6000)
+    parser.add_argument("--max-example-bytes", type=int, default=3800)
     parser.add_argument("--max-files-per-repo", type=int, default=2000)
     args = parser.parse_args()
     result = materialize_repository_code(
@@ -174,6 +236,7 @@ def main() -> None:
         cache_dir=args.cache_dir,
         eval_fraction=args.eval_fraction,
         chunk_chars=args.chunk_chars,
+        max_example_bytes=args.max_example_bytes,
         max_files_per_repo=args.max_files_per_repo,
         prune_checkouts=True,
     )
