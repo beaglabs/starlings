@@ -99,6 +99,7 @@ def _full_generation_targets(quality: dict[str, Any]) -> dict[str, Any]:
             str(language)
             for language in (quality.get("required_dynamic_languages") or [])
         ],
+        "semantic_mutations": int(quality.get("min_semantic_mutations", 0)),
         "terminal_operator_events": int(quality.get("min_terminal_operator_events", 0)),
         "terminal_operator_types": int(quality.get("min_terminal_operator_types", 0)),
         "terminal_argv_events": int(quality.get("min_terminal_argv_events", 0)),
@@ -377,6 +378,7 @@ def build_shard(
             quality["min_terminal_argv_events"] = 1
 
         quality["required_dynamic_languages"] = []
+        quality["min_semantic_mutations"] = 0
 
     _log("running shard QA")
     qa = validate_corpus_shard(
