@@ -21,7 +21,14 @@ _SKIP = {".git", ".venv", "node_modules", "target", "zig-cache", ".zig-cache"}
 
 
 def _files(root: Path) -> Iterable[Path]:
-    for path in root.rglob("*"):
+    # Path.rglob() follows filesystem traversal order, which is not stable
+    # across macOS/Linux. Sort by repository-relative POSIX path before the
+    # per-repository file cap so pinned repos materialize identically.
+    paths = sorted(
+        root.rglob("*"),
+        key=lambda path: path.relative_to(root).as_posix(),
+    )
+    for path in paths:
         if not path.is_file() or path.suffix.lower() not in _EXTENSIONS:
             continue
         if any(part in _SKIP for part in path.relative_to(root).parts):
