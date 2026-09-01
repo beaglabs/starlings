@@ -38,6 +38,9 @@ def _summary(event: dict[str, Any]) -> str:
             f"TOOL[{event['id']}]: {tool_name} "
             + json.dumps(tool_arguments or {}, sort_keys=True, separators=(",", ":"))
         )
+    semantic_action = env.get("semantic_action")
+    if isinstance(semantic_action, str) and semantic_action:
+        lines.append(f"SEMANTIC_ACTION[{event['id']}]: {semantic_action}")
     command = env.get("command")
     if isinstance(command, str) and command:
         lines.append(f"COMMAND[{event['id']}]: {command[-1200:]}")
