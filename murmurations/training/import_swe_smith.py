@@ -141,7 +141,7 @@ def _as_list(value: Any) -> list[Any]:
 
 
 _FUNCTION_CALL_RE = re.compile(
-    r"<function=([^>\\s]+)>\\s*(.*?)</function>",
+    r"<function=([^>\s]+)>\s*(.*?)</function>",
     re.IGNORECASE | re.DOTALL,
 )
 _PARAMETER_RE = re.compile(
@@ -149,7 +149,7 @@ _PARAMETER_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _BACKTICK_ACTION_RE = re.compile(
-    r"```(?:bash|sh|shell)?\\s*\\n?(.*?)```",
+    r"```(?:bash|sh|shell)?\s*\n?(.*?)```",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -166,7 +166,7 @@ def _message_text(value: Any) -> str:
                     parts.append(str(text))
             elif item is not None:
                 parts.append(str(item))
-        return "\\n".join(parts)
+        return "\n".join(parts)
     return "" if value is None else str(value)
 
 
@@ -189,7 +189,7 @@ def _xml_tool_calls(
     for offset, match in enumerate(_FUNCTION_CALL_RE.finditer(content)):
         function_name = _normalize_tool_name(match.group(1))
         arguments = {
-            name.strip(): value.strip("\\n")
+            name.strip(): value.strip("\n")
             for name, value in _PARAMETER_RE.findall(match.group(2))
             if name.strip()
         }
