@@ -53,3 +53,9 @@ retry:
   max_retries: 1
   include_exceptions:
     - EnvironmentStartError
+
+# The key is routed only to A and B because C explicitly selects no secrets.
+# Export OPENAI_API_KEY in the shell that launches Harbor.
+job_secrets:
+  OPENAI_API_KEY:
+    from_env: OPENAI_API_KEY
