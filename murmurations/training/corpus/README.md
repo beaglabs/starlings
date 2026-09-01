@@ -88,8 +88,13 @@ python3 -m murmurations.training.prepare_daytona --replace
 ```
 
 The snapshot is built remotely from `corpus/daytona/Dockerfile` and includes
-the corpus toolchains for Python, Rust, Go, Node, Java, Zig, and C/C++. The
-eligibility probe uses the configured bounded concurrency (8 for shard-000),
+the corpus toolchains for Python, Rust, Go, Node, Java, Zig, and C/C++. Zig
+repositories resolve `minimum_zig_version` to pinned toolchains in
+`/opt/zig/<version>/zig` (including the shard's 0.16.0 and pinned 0.17-dev
+requirements). pnpm workspaces execute with the version declared by each
+repository, and CMake verifiers rebuild before CTest so source mutations are
+actually recompiled. The eligibility probe uses the configured bounded
+concurrency (8 for shard-000),
 with one independent Daytona client/sandbox lifecycle per worker and durable
 checkpointing after each completed repository. Eligibility planning is executed
 inside the Daytona sandbox using the same portable repository-plan module as
@@ -104,3 +109,8 @@ The model sees the stable semantic operator plus exact logical argv, exit code,
 and output. Daytona API details are provenance only and are not a learned tool
 interface. Shard QA requires every terminal-bearing episode event to be
 attributed to Daytona.
+
+The serious shard additionally hard-gates dynamic language coverage across all
+nine catalog language groups. Probe and generation resume identities include
+the repository planner digest, so changing toolchain or verifier planning
+invalidates stale eligibility/generation state automatically.
