@@ -458,17 +458,25 @@ def _iter_huggingface(
 ) -> Iterable[dict[str, Any]]:
     try:
         from datasets import load_dataset
+        from huggingface_hub import hf_hub_url
     except ImportError as exc:
         raise RuntimeError(
             "datasets is required for streamed trajectory import; "
             "install murmurations/requirements.txt"
         ) from exc
 
-    stream = load_dataset(
-        dataset,
-        config,
-        split=split,
+    if split != "std":
+        raise ValueError("SWE-smith importer currently requires the standardized std split")
+    source_url = hf_hub_url(
+        repo_id=dataset,
+        filename=f"{config}/full_std.jsonl",
+        repo_type="dataset",
         revision=revision,
+    )
+    stream = load_dataset(
+        "json",
+        data_files={"train": source_url},
+        split="train",
         streaming=True,
     )
     for row in stream:
