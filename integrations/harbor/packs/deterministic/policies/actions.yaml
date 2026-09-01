@@ -1,0 +1,3 @@
+actions:
+  default: deny
+  note: Deterministic control uses ACP terminal execution and no neural model.

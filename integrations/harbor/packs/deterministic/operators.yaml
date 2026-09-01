@@ -1,0 +1,14 @@
+operators:
+  - name: deterministic-planner
+    role: transform
+    runtime:
+      kind: python
+      target: operators/deterministic_planner.py
+    requires:
+      variables:
+        - task.b64
+        - history.b64
+    provides:
+      variables:
+        - action.b64
+        - final.b64

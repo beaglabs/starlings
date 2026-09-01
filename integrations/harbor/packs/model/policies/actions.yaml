@@ -1,0 +1,3 @@
+actions:
+  default: deny
+  note: Harbor executes proposed shell work through ACP terminal capabilities.

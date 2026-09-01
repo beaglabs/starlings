@@ -1,0 +1,14 @@
+operators:
+  - name: hosted-planner
+    role: model
+    runtime:
+      kind: python
+      target: operators/hosted_planner.py
+    requires:
+      variables:
+        - task.b64
+        - history.b64
+    provides:
+      variables:
+        - action.b64
+        - final.b64

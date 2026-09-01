@@ -1,0 +1,16 @@
+variables:
+  - name: task.b64
+    type: text
+    merge: latest
+
+  - name: history.b64
+    type: text
+    merge: latest
+
+  - name: action.b64
+    type: text
+    merge: latest
+
+  - name: final.b64
+    type: text
+    merge: latest
