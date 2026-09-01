@@ -129,6 +129,17 @@ def _package_manager_prefix(root: Path) -> list[str]:
     return ["pnpm"]
 
 
+def _is_typescript_package(root: Path) -> bool:
+    payload = _package_payload(root)
+    dependencies = dict(payload.get("dependencies") or {})
+    dependencies.update(payload.get("devDependencies") or {})
+    return (
+        "typescript" in dependencies
+        or (root / "tsconfig.json").exists()
+        or any(root.glob("tsconfig*.json"))
+    )
+
+
 def _minimum_zig_version(root: Path) -> str | None:
     zon = root / "build.zig.zon"
     if not zon.exists():
@@ -219,6 +230,8 @@ def detect_test_command(root: str | Path) -> list[str] | None:
         scripts = dict(payload.get("scripts") or {})
         if _package_manager(root) == "pnpm":
             prefix = _package_manager_prefix(root)
+            if "test:ci:unit" in scripts:
+                return prefix + ["run", "test:ci:unit"]
             if "test:unit" in scripts:
                 return prefix + ["run", "test:unit"]
             if "test-unit" in scripts:
@@ -260,10 +273,11 @@ def detect_prepare_commands(root: str | Path) -> list[list[str]]:
     if package.exists():
         manager = _package_manager(root)
         if manager == "pnpm":
-            commands.append(
-                _package_manager_prefix(root)
-                + ["install", "--frozen-lockfile"]
-            )
+            prefix = _package_manager_prefix(root)
+            commands.append(prefix + ["install", "--frozen-lockfile"])
+            scripts = dict(_package_payload(root).get("scripts") or {})
+            if _is_typescript_package(root) and "build" in scripts:
+                commands.append(prefix + ["run", "build"])
         elif (root / "package-lock.json").exists() or (root / "npm-shrinkwrap.json").exists():
             commands.append(["npm", "ci", "--no-audit", "--no-fund"])
         else:
@@ -309,9 +323,7 @@ def detect_check_command(root: str | Path) -> list[str] | None:
             payload = json.loads(package.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             payload = {}
-        dependencies = dict(payload.get("dependencies") or {})
-        dependencies.update(payload.get("devDependencies") or {})
-        if "typescript" in dependencies or (root / "tsconfig.json").exists():
+        if _is_typescript_package(root):
             manager = _package_manager(root)
             if manager == "pnpm":
                 return _package_manager_prefix(root) + ["exec", "tsc", "--noEmit"]
