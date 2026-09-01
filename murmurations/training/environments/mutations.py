@@ -201,6 +201,37 @@ def partition_mutation_candidates(
     ]
 
 
+def infer_targeted_test_argv(
+    root: str | Path,
+    candidate: MutationCandidate,
+    verifier_argv: Sequence[str],
+) -> tuple[str, ...]:
+    root_path = Path(root).resolve()
+    verifier = tuple(str(item) for item in verifier_argv)
+
+    if "pytest" in verifier:
+        source_stem = Path(candidate.relative_path).stem.lower()
+        matches: list[str] = []
+        for base in ("tests", "test"):
+            test_root = root_path / base
+            if not test_root.is_dir():
+                continue
+            for path in test_root.rglob("test*.py"):
+                if source_stem and source_stem in path.stem.lower():
+                    matches.append(str(path.relative_to(root_path)))
+        if matches:
+            executable = verifier[0]
+            prefix = [executable, "-m", "pytest"] if "-m" in verifier else [executable]
+            return tuple(prefix + ["-q", sorted(matches)[0]])
+
+    if len(verifier) >= 2 and verifier[:2] == ("go", "test"):
+        relative_dir = Path(candidate.relative_path).parent
+        if str(relative_dir) not in ("", "."):
+            return ("go", "test", f"./{relative_dir.as_posix()}")
+
+    return ()
+
+
 def reset_mutation_workspace(
     source_root: str | Path,
     workspace_root: str | Path,
@@ -281,10 +312,18 @@ def inject_verified_mutation(
         lines[index] = candidate.mutated_line
         path.write_text("".join(lines), encoding="utf-8")
 
-        if candidate.targeted_test_argv and triage_runner is not None:
+        targeted_test_argv = (
+            candidate.targeted_test_argv
+            or infer_targeted_test_argv(workspace, candidate, verifier_argv)
+        )
+        if (
+            targeted_test_argv
+            and tuple(targeted_test_argv) != tuple(verifier_argv)
+            and triage_runner is not None
+        ):
             triage = triage_runner(
                 workspace,
-                candidate.targeted_test_argv,
+                targeted_test_argv,
                 timeout_seconds,
             )
             if triage.passed:
