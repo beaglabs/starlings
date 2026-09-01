@@ -423,7 +423,7 @@ def _base_revision(instance_id: str) -> str:
 
 
 def _task_text(steps: list[dict[str, Any]]) -> str:
-    for step in steps:
+    for step_index, step in enumerate(steps):
         if str(step.get("source") or "").lower() != "user":
             continue
         message = str(step.get("message") or "").strip()
@@ -532,6 +532,19 @@ def convert_atif_record(record: dict[str, Any]) -> dict[str, Any] | None:
     tool_events = 0
     accepted = False
 
+    terminal_finish_position: tuple[int, int] | None = None
+    for step_index, step in enumerate(steps):
+        if str(step.get("source") or "").lower() != "agent":
+            continue
+        step_calls = [
+            item
+            for item in _as_list(step.get("tool_calls"))
+            if isinstance(item, dict)
+        ]
+        for call_index, call in enumerate(step_calls):
+            if str(call.get("function_name") or "").strip().lower() == "finish":
+                terminal_finish_position = (step_index, call_index)
+
     observed = builder.add(
         Operation.OBSERVE,
         ArgumentKind.TEXT,
@@ -585,11 +598,12 @@ def convert_atif_record(record: dict[str, Any]) -> dict[str, Any] | None:
                 language_target=message[-4000:],
             )
 
-        for call in calls:
+        for call_index, call in enumerate(calls):
             function_name = str(call.get("function_name") or "tool")
             arguments = _as_dict(call.get("arguments"))
             call_id = str(call.get("tool_call_id") or "")
-            if function_name.strip().lower() == "finish":
+            is_finish = function_name.strip().lower() == "finish"
+            if is_finish and (step_index, call_index) == terminal_finish_position:
                 parent = builder.add(
                     Operation.ACCEPT,
                     ArgumentKind.ACTION,
