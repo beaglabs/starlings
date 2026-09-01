@@ -77,6 +77,9 @@ def prepare_snapshot(
     name: str,
     dockerfile: str | Path,
     replace: bool,
+    cpu: int = 4,
+    memory_gib: int = 8,
+    disk_gib: int = 10,
 ) -> None:
     try:
         from daytona import (
@@ -110,10 +113,12 @@ def prepare_snapshot(
             return
 
     image = Image.from_dockerfile(str(dockerfile))
+    if cpu <= 0 or memory_gib <= 0 or disk_gib <= 0:
+        raise ValueError("snapshot cpu, memory and disk must be positive")
     params = CreateSnapshotParams(
         name=name,
         image=image,
-        resources=Resources(cpu=4, memory=8, disk=10),
+        resources=Resources(cpu=cpu, memory=memory_gib, disk=disk_gib),
     )
     snapshot = _create_snapshot_with_name_release_grace(
         daytona,
@@ -133,6 +138,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", default="murmurations-corpus-v1")
     parser.add_argument("--dockerfile", default=str(DEFAULT_DOCKERFILE))
+    parser.add_argument("--cpu", type=int, default=4)
+    parser.add_argument("--memory-gib", type=int, default=8)
+    parser.add_argument("--disk-gib", type=int, default=10)
     parser.add_argument(
         "--replace",
         action="store_true",
@@ -143,6 +151,9 @@ def main() -> None:
         name=args.name,
         dockerfile=args.dockerfile,
         replace=args.replace,
+        cpu=args.cpu,
+        memory_gib=args.memory_gib,
+        disk_gib=args.disk_gib,
     )
 
 
