@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import threading
 from typing import Any
 
 import yaml
@@ -248,6 +249,7 @@ def _generate_repo_burst(
     partition_id: int = 0,
     partition_count: int = 1,
     semantic_candidates: tuple[MutationCandidate, ...] = (),
+    stop_event: threading.Event | None = None,
 ) -> list[_GenerationOutcome]:
     outcomes: list[_GenerationOutcome] = []
     local_used = set(excluded_fingerprints)
@@ -280,6 +282,8 @@ def _generate_repo_burst(
                 )
 
             for local_index, global_index in slots:
+                if stop_event is not None and stop_event.is_set():
+                    break
                 last_error: Exception | None = None
                 for retry in range(max(1, generation_retries)):
                     attempt_seed = (
@@ -1030,29 +1034,6 @@ def generate_trajectory_corpus(
                     "workers": requested_workers,
                 }
                 worker_count = requested_workers
-            host_capacity = _host_disk_capacity(
-                work_root,
-                max_workers=worker_count,
-                reserve_gib=host_disk_reserve_gib,
-                per_worker_gib=host_disk_per_worker_gib,
-            )
-            worker_count = max(
-                1,
-                min(
-                    worker_count,
-                    int(host_capacity["workers"]),
-                    maximum_partition_workers,
-                ),
-            )
-            print(
-                f"[generation] concurrency workers={worker_count} "
-                f"partitions_per_repo={partitions_per_repo} "
-                f"daytona_source={capacity.get('source')} "
-                f"host_free_gib={host_capacity['free_gib']:.2f} "
-                f"budget_ceiling_usd={budget_plan['theoretical_max_spend_usd']:.2f}",
-                flush=True,
-            )
-
             order = _balanced_repositories(catalog)
             required_languages = {
                 str(language)
@@ -1064,7 +1045,31 @@ def generate_trajectory_corpus(
                 for repo in order:
                     source_roots[repo.name] = checkout_repository(repo, cache_dir)
 
+                host_capacity = _host_disk_capacity(
+                    work_root,
+                    max_workers=worker_count,
+                    reserve_gib=host_disk_reserve_gib,
+                    per_worker_gib=host_disk_per_worker_gib,
+                )
+                worker_count = max(
+                    1,
+                    min(
+                        worker_count,
+                        int(host_capacity["workers"]),
+                        maximum_partition_workers,
+                    ),
+                )
+                print(
+                    f"[generation] concurrency workers={worker_count} "
+                    f"partitions_per_repo={partitions_per_repo} "
+                    f"daytona_source={capacity.get('source')} "
+                    f"host_free_gib={host_capacity['free_gib']:.2f} "
+                    f"budget_ceiling_usd={budget_plan['theoretical_max_spend_usd']:.2f}",
+                    flush=True,
+                )
+
                 scheduled_requests = int(metrics["requested"])
+                stop_event = threading.Event()
                 reserved_requests: dict[str, int] = defaultdict(int)
                 in_flight_keys: set[tuple[str, int]] = set()
                 futures: dict[Any, tuple[RepoRecord, int, int]] = {}
@@ -1145,6 +1150,7 @@ def generate_trajectory_corpus(
                                         semantic_candidates=semantic_candidates.get(
                                             repo.name, ()
                                         ),
+                                        stop_event=stop_event,
                                     )
                                     futures[future] = (
                                         repo,
@@ -1168,6 +1174,8 @@ def generate_trajectory_corpus(
                                     failure_handle,
                                     outcome,
                                 )
+                            if _targets_met(metrics, targets):
+                                stop_event.set()
                             print(
                                 f"[generation] checkpoint requested={metrics['requested']} "
                                 f"written={metrics['written']} "
