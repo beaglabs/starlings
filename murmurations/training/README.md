@@ -205,7 +205,7 @@ For each persistent partition worker the generator:
 8. records actual repo/search/docs/compiler/test operator evidence;
 9. applies the known inverse source line;
 10. requires the full canonical verifier to pass again before the episode may be journaled;
-11. repeats multiple requests in the already-prepared sandbox until its burst ends or global shard targets are met.
+11. repeats up to four requests in the already-prepared sandbox until its burst ends or global shard targets are met.
 
 The LLM never supplies executable commands or trusted evidence. Failed
 mutations and failed repairs are discarded instead of mislabeled. Shard-000
