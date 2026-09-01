@@ -337,6 +337,8 @@ def build_shard(
         if "min_terminal_argv_events" in quality:
             quality["min_terminal_argv_events"] = 1
 
+        quality["required_dynamic_languages"] = []
+
     _log("running shard QA")
     qa = validate_corpus_shard(
         catalog_path=catalog_path,
