@@ -130,9 +130,7 @@ def _load_semantic_candidates(
             original_line=str(row["original_line"]),
             mutated_line=str(row["mutated_line"]),
             source=str(row.get("source") or "llm"),
-            targeted_test_argv=tuple(
-                str(item) for item in (row.get("targeted_test_argv") or [])
-            ),
+            targeted_test_argv=(),
         )
         key = (repository, candidate.fingerprint)
         if key in seen:
