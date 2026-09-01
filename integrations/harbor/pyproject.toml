@@ -1,0 +1,12 @@
+[project]
+name = "starlings-harbor"
+version = "0.1.0"
+description = "Hosted Harbor ACP integration for Starlings"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "agent-client-protocol==0.12.1",
+  "ziglang==0.16.0",
+]
+
+[tool.uv]
+package = false
