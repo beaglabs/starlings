@@ -97,6 +97,7 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
     operations: Counter[str] = Counter()
     operator_refs: Counter[str] = Counter()
     mutation_kinds: Counter[str] = Counter()
+    candidate_sources: Counter[str] = Counter()
     fingerprints: Counter[str] = Counter()
     terminal_argv_events = 0
     sandbox_backends: Counter[str] = Counter()
@@ -109,6 +110,8 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
         licenses[str(repository.get("license", "unknown"))] += 1
         mutation = episode.get("mutation") or {}
         mutation_kinds[str(mutation.get("kind", "unknown"))] += 1
+        generation = episode.get("generation") or {}
+        candidate_sources[str(generation.get("candidate_source") or "deterministic")] += 1
         fingerprint = mutation.get("fingerprint")
         if fingerprint:
             fingerprints[str(fingerprint)] += 1
@@ -140,6 +143,7 @@ def _episode_stats(path: str | Path) -> dict[str, Any]:
         "operations": dict(sorted(operations.items())),
         "operator_refs": dict(sorted(operator_refs.items())),
         "mutation_kinds": dict(sorted(mutation_kinds.items())),
+        "candidate_sources": dict(sorted(candidate_sources.items())),
         "unique_mutations": len(fingerprints),
         "duplicate_mutations": duplicates,
         "terminal_argv_events": terminal_argv_events,
@@ -216,6 +220,8 @@ def validate_corpus_shard(
         "dynamic_repositories": len(episodes["repositories"])
         >= int(quality.get("min_dynamic_repositories", 1)),
         "required_dynamic_languages": not missing_dynamic_languages,
+        "semantic_mutations": int(episodes["candidate_sources"].get("llm", 0))
+        >= int(quality.get("min_semantic_mutations", 0)),
         "unique_mutations": int(episodes["unique_mutations"])
         >= int(quality.get("min_unique_mutations", 1)),
         "code_rows": int(code_stats["rows"])
