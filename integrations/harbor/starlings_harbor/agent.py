@@ -137,7 +137,7 @@ class HarborExperimentAgent(Agent):
             command="/bin/sh",
             args=["-lc", command],
             cwd=state.cwd,
-            output_byte_limit=65536,
+            output_byte_limit=12000,
         )
         try:
             exit_status = await self._conn.wait_for_terminal_exit(
