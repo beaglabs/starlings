@@ -371,6 +371,36 @@ class SweSmithImportTests(unittest.TestCase):
         self.assertIn("pytest -q", rendered)
         self.assertIn("42 passed in 1.21s", rendered)
 
+    def test_materialization_compacts_oversized_direct_parent(self) -> None:
+        episode = convert_atif_record(_record())
+        self.assertIsNotNone(episode)
+        assert episode is not None
+
+        episode["task"] = "task-" + ("T" * 50000)
+        execute_index = next(
+            index
+            for index, event in enumerate(episode["events"])
+            if event["frame"]["operation"] == "EXECUTE"
+            and event["frame"].get("operator_ref") == "repo.tests"
+        )
+        execute = episode["events"][execute_index]
+        execute["environment"]["tool_arguments"] = {"blob": "A" * 50000}
+        execute["environment"]["command"] = "python -m pytest " + ("C" * 50000)
+        execute["environment"]["output"] = "result-" + ("O" * 50000)
+
+        evidence_index = next(
+            index
+            for index, event in enumerate(episode["events"])
+            if execute["id"] in event["frame"].get("parents", [])
+        )
+        episode["events"][evidence_index]["grounding"] = "ground-" + ("G" * 50000)
+
+        rows = materialize_episode(episode, max_context_chars=12000)
+
+        self.assertTrue(all(len(row["context"]) <= 12000 for row in rows))
+        self.assertIn(execute["id"], rows[evidence_index]["context"])
+        self.assertIn("repo.tests", rows[evidence_index]["context"])
+
     def test_semantic_annotation_cannot_change_grounded_identity(self) -> None:
         episode = convert_atif_record(_record())
         self.assertIsNotNone(episode)
