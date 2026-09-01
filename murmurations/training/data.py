@@ -126,13 +126,18 @@ class ProtocolDataset(Dataset[dict[str, Any]]):
         if eos is None:
             raise ValueError("tokenizer must define eos_token_id")
 
+        available_target_tokens = self.max_seq_len - len(control_ids) - 1
+        if available_target_tokens < 0:
+            raise ValueError(
+                "structured context length "
+                f"{len(control_ids)} exceeds max_seq_len={self.max_seq_len} "
+                "before language target; pointer-bearing context must be rematerialized"
+            )
+        if len(target_ids) > available_target_tokens:
+            target_ids = target_ids[-available_target_tokens:] if available_target_tokens else []
+
         input_ids = control_ids + target_ids + [eos]
         language_labels = [-100] * len(control_ids) + target_ids + [eos]
-        if len(input_ids) > self.max_seq_len:
-            raise ValueError(
-                f"example length {len(input_ids)} exceeds max_seq_len={self.max_seq_len}; "
-                "pre-chunk source/trajectory windows so evidence references remain intact"
-            )
 
         operation = Operation[str(row.get("operation", "NOOP")).upper()]
         argument = row.get("argument") or {}
