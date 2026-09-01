@@ -15,6 +15,7 @@ from murmurations.training.environments.mutations import (
 )
 from murmurations.training.environments.repositories import RepoRecord
 from murmurations.training.generate_trajectories import _generate_repo_burst
+from murmurations.training.propose_mutations import _validated_candidates
 
 
 class HybridMutationCandidateTests(unittest.TestCase):
@@ -50,6 +51,49 @@ class HybridMutationCandidateTests(unittest.TestCase):
         for left in range(len(fingerprints)):
             for right in range(left + 1, len(fingerprints)):
                 self.assertTrue(fingerprints[left].isdisjoint(fingerprints[right]))
+
+    def test_llm_candidate_validation_preserves_exact_source_structure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "sample.py"
+            path.write_text(
+                "def ready(value):\n"
+                "    return value == 1\n",
+                encoding="utf-8",
+            )
+
+            accepted = _validated_candidates(
+                root=root,
+                path=path,
+                payload={
+                    "candidates": [
+                        {
+                            "line": 2,
+                            "mutated_line": "    return value != 1",
+                            "kind": "wrong_condition",
+                        }
+                    ]
+                },
+            )
+            rejected = _validated_candidates(
+                root=root,
+                path=path,
+                payload={
+                    "candidates": [
+                        {
+                            "line": 2,
+                            "mutated_line": "return value != 1",
+                            "kind": "destroy_indentation",
+                        }
+                    ]
+                },
+            )
+
+            self.assertEqual(len(accepted), 1)
+            self.assertEqual(accepted[0].source, "llm")
+            self.assertEqual(accepted[0].original_line, "    return value == 1\n")
+            self.assertEqual(accepted[0].mutated_line, "    return value != 1\n")
+            self.assertEqual(rejected, [])
 
     def test_targeted_pytest_command_is_derived_not_model_supplied(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
