@@ -25,6 +25,7 @@ RUN apt-get update \
         python3-pip \
         python3-pytest \
         python3-venv \
+        redis-server \
         rustc \
         xz-utils \
     && python3 -m pip install --break-system-packages --no-cache-dir "pip>=25.1,<27" \
