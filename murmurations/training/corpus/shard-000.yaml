@@ -1,13 +1,16 @@
 name: shard-000
-catalog: murmurations/training/corpus/shard-000-repos.jsonl
 output_dir: data/murmurations/shard-000
-cache_dir: .cache/murmurations/repos
 
 seed: 17001
 eval_fraction: 0.10
+max_context_chars: 12000
 
-# Bulk trajectory supervision is imported from the execution-grounded,
-# standardized SWE-smith ATIF corpus. No Daytona sandbox is used by this path.
+# Bulk supervision is imported from successful, execution-grounded SWE-smith
+# trajectories. This catalog is read only to keep imported trajectory repos
+# disjoint from the separately-managed static code corpus; no repositories are
+# cloned or materialized by import mode.
+exclude_catalog: murmurations/training/corpus/shard-000-repos.jsonl
+
 generation:
   mode: import
   source:
@@ -20,28 +23,14 @@ generation:
     smoke_target_rows: 200
     smoke_max_episodes: 20
 
-code_chunk_chars: 6000
-max_files_per_repo: 1500
-max_context_chars: 12000
-
 quality:
-  # Static code remains intentionally multilingual across the committed
-  # 60-repository catalog. SWE-smith trajectory supervision is Python-focused.
-  min_catalog_repositories: 50
-  min_eligible_repositories: 20
   min_generation_success_rate: 1.0
+  min_episodes: 500
   min_dynamic_repositories: 20
   required_dynamic_languages:
     - Python
-  min_unique_mutations: 500
-  min_semantic_mutations: 0
-  min_code_rows: 10000
+  required_operator_refs:
+    - repo.search
+    - repo.tests
   min_trajectory_rows: 10000
-
-  # Imported EXECUTE events retain exact source tool name, arguments, command,
-  # and observation. They are execution-grounded but are not relabeled Daytona.
   min_external_execution_events: 1000
-  min_terminal_operator_events: 0
-  min_terminal_operator_types: 0
-  min_terminal_argv_events: 0
-  require_daytona_terminal_execution: false
