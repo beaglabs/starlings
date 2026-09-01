@@ -152,13 +152,25 @@ def _render_context(
             selected.append(parent)
             selected_ids.add(parent_id)
 
-    fixed_tail = [
-        (
+    frame = event.get("frame") or {}
+    argument_text = frame.get("argument")
+    grounding_text = str(event.get("grounding") or "")
+    if argument_text is not None:
+        argument_text = str(argument_text)
+        # Argument start/end supervision is a pointer into the raw context.
+        # Never truncate or rewrite the current structured argument.
+        fixed_tail = [f"OBSERVED_INPUT: {argument_text}"]
+        if grounding_text and grounding_text != argument_text:
+            fixed_tail.append(
+                "SOURCE_GROUNDING: "
+                + _clip_middle(grounding_text, min(1000, grounding_limit))
+            )
+    else:
+        fixed_tail = [
             "OBSERVED_INPUT: "
-            f"{_clip_middle(str(event['grounding']), grounding_limit)}"
-        ),
-        "</STATE>",
-    ]
+            + _clip_middle(grounding_text, grounding_limit)
+        ]
+    fixed_tail.append("</STATE>")
     fixed_chars = len("\n".join(header + fixed_tail))
     budget = max(0, max_context_chars - fixed_chars)
 
