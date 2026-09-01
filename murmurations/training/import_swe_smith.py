@@ -554,7 +554,7 @@ def convert_atif_record(record: dict[str, Any]) -> dict[str, Any] | None:
     )
     parent = observed
 
-    for step in steps:
+    for step_index, step in enumerate(steps):
         source = str(step.get("source") or "").lower()
         message = str(step.get("message") or "").strip()
         calls = [item for item in _as_list(step.get("tool_calls")) if isinstance(item, dict)]
