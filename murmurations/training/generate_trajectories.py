@@ -631,6 +631,7 @@ def _target_status(metrics: dict[str, Any], targets: dict[str, Any]) -> dict[str
     requested = int(metrics["requested"])
     written = int(metrics["written"])
     success_rate = written / max(1, requested)
+    candidate_sources = dict(metrics.get("candidate_sources") or {})
     return {
         "unique_mutations": written >= int(targets.get("unique_mutations", 0)),
         "trajectory_rows": int(metrics["trajectory_rows"])
@@ -641,7 +642,7 @@ def _target_status(metrics: dict[str, Any], targets: dict[str, Any]) -> dict[str
             str(language)
             for language in (targets.get("required_dynamic_languages") or [])
         ).issubset(metrics["dynamic_languages"]),
-        "semantic_mutations": int(metrics["candidate_sources"].get("llm", 0))
+        "semantic_mutations": int(candidate_sources.get("llm", 0))
         >= int(targets.get("semantic_mutations", 0)),
         "terminal_operator_events": int(metrics["terminal_operator_events"])
         >= int(targets.get("terminal_operator_events", 0)),
