@@ -7,6 +7,7 @@ import unittest
 
 from murmurations.training.environments.repositories import RepoCatalog, RepoRecord
 from murmurations.training.generate_trajectories import (
+    _daytona_budget_plan,
     _generation_signature,
     _load_journal,
     _prioritized_repositories,
@@ -173,6 +174,53 @@ class GenerationResumeTests(unittest.TestCase):
             self.assertEqual(processed, set())
             self.assertEqual(next_global, 0)
             self.assertEqual(metrics["requested"], 0)
+
+    def test_three_thousand_dollar_budget_keeps_full_serious_search_space(self) -> None:
+        class _Runner:
+            def provenance(self):
+                return {
+                    "ttl_minutes": 45,
+                    "snapshot_info": {
+                        "cpu": 4,
+                        "memory_gib": 8,
+                        "disk_gib": 10,
+                    },
+                }
+
+        plan = _daytona_budget_plan(
+            _Runner(),
+            requested_limit=2560,
+            generation_retries=4,
+            budget_usd=3000,
+            budget_safety_fraction=0.90,
+        )
+
+        self.assertEqual(plan["requested_limit"], 2560)
+        self.assertGreater(plan["budget_requested_limit"], 2560)
+        self.assertLess(plan["theoretical_max_spend_usd"], 2700)
+
+    def test_budget_caps_requested_generation_when_needed(self) -> None:
+        class _Runner:
+            def provenance(self):
+                return {
+                    "ttl_minutes": 45,
+                    "snapshot_info": {
+                        "cpu": 4,
+                        "memory_gib": 8,
+                        "disk_gib": 10,
+                    },
+                }
+
+        plan = _daytona_budget_plan(
+            _Runner(),
+            requested_limit=10000,
+            generation_retries=4,
+            budget_usd=100,
+            budget_safety_fraction=0.90,
+        )
+
+        self.assertLess(plan["requested_limit"], 10000)
+        self.assertLessEqual(plan["theoretical_max_spend_usd"], 90)
 
     def test_missing_languages_are_prioritized(self) -> None:
         order = [
