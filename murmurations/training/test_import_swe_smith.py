@@ -4,10 +4,10 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
 
 import yaml
 
+import murmurations.training.build_shard as build_shard_module
 from murmurations.training.build_shard import build_shard
 from murmurations.training.import_swe_smith import (
     classify_tool_call,
@@ -288,19 +288,9 @@ class ImportedShardBuildTests(unittest.TestCase):
             config_path = root / "config.yaml"
             config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
 
-            with (
-                patch(
-                    "murmurations.training.build_shard.DaytonaCorpusRunner.from_config",
-                    side_effect=AssertionError("Daytona must not be constructed"),
-                ),
-                patch(
-                    "murmurations.training.build_shard.materialize_repository_code",
-                    side_effect=AssertionError(
-                        "import mode must not materialize static repository code"
-                    ),
-                ),
-            ):
-                manifest = build_shard(config_path, smoke=True)
+            self.assertFalse(hasattr(build_shard_module, "DaytonaCorpusRunner"))
+            self.assertFalse(hasattr(build_shard_module, "materialize_repository_code"))
+            manifest = build_shard(config_path, smoke=True)
 
             self.assertTrue(manifest["qa"]["passed"])
             self.assertEqual(manifest["mode"], "import")
