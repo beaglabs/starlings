@@ -735,6 +735,95 @@ comparison.
 
 Dataset: `trials/f4-heterogeneous.tsv` plus per-run metadata sidecars.
 
+### F4 completion record — 2026-08-29
+
+The canonical 86-population live-model experiment completed successfully.
+
+Frozen identities:
+
+~~~text
+summary rows:
+  86
+
+summary bytes:
+  11284
+
+summary SHA-256:
+  d263db94aee099c9ba47aa8eae60cf0ad49258fa6f299a5a9571fe6b545d2164
+
+raw TSV SHA-256:
+  bf2d791e8f37fc75c8fb423920a5737fa7a70b56599ad49d2274300256389530
+
+GGUF SHA-256:
+  740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8
+
+byte_identical_replay: yes
+backend_errors: 0
+token_budget_violations: 0
+~~~
+
+All deterministic controls passed:
+
+~~~text
+ring: 3/3
+grid: 3/3
+~~~
+
+Primary state-aware mixed-population result:
+
+~~~text
+ring / cfg_constrained:
+  9/9 success
+  invalid=0
+
+grid / cfg_constrained:
+  9/9 success
+  invalid=0
+
+ring / typed_unconstrained:
+  6/9 success
+  invalid=30
+
+grid / typed_unconstrained:
+  3/9 success
+  invalid=65
+~~~
+
+Model-only diagnostic:
+
+~~~text
+ring / cfg_constrained: 9/9
+grid / cfg_constrained: 9/9
+ring / typed_unconstrained: 0/9
+grid / typed_unconstrained: 0/9
+~~~
+
+The trajectory-diversity condition also passed. Fixed mixed environments
+produced multiple successful semantic trajectory hashes across sampling seeds.
+
+Canonical verdict:
+
+~~~text
+F4 PASS: heterogeneous model-backed operator evidence complete
+~~~
+
+Architectural consequence:
+
+~~~text
+model-backed operators remain untrusted policy adapters;
+Starlings retains deterministic authority over parsing,
+semantic validation, topology, transitions, accounting and success.
+~~~
+
+This is recorded in ADR 0004.
+
+The strong CFG result is retained as evidence for this tested model/protocol
+pair, not generalized into a universal requirement for all future model
+adapters.
+
+Detailed evidence is frozen in
+`docs/f4-heterogeneous-model-operators.md`.
+
 ## Ordering and dependencies
 
 ~~~text
@@ -778,3 +867,22 @@ At that point the evidence table for decentralized coordination under
 contested conditions, quantified asynchrony cost, local inference control,
 and operator-neutral heterogeneous collectives is complete, and each row is
 pinned by a dataset hash in this repository.
+
+### Finalization run status
+
+As of 2026-08-29 all seven exit criteria are satisfied.
+
+~~~text
+S0   PASS
+F1a  PASS
+F1b  measured P2Panda runtime limitation
+F1c  PASS
+F2.1 PASS
+F2.2 PASS
+F3a  LIMITATION
+F3b  PASS
+F3   PASS
+F4   PASS
+~~~
+
+The finalization run is therefore **complete**.
