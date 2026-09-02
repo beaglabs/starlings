@@ -92,37 +92,24 @@ An unterminated final byte fragment is treated as a torn append and ignored on
 load. A malformed newline-terminated record is never ignored.
 
 If the last committed event is `operator_started`, replay reconstructs that
-activation as open. It does not invoke the operator or fabricate completion. The
-CLI reports the open operator ID so later recovery policy can decide what to do.
+activation as open. It does not invoke the operator or fabricate completion.
+The SDK exposes the open operator ID so host recovery policy can decide what to
+do.
 
-## Replay CLI
+## Replay SDK
 
-From the repository root:
+Replay is intentionally a library capability. Hosts open a durable run with the
+run-store APIs, reconstruct a replay-only Runner from the persisted
+configuration, and apply the validated event records without executing operator
+implementations.
 
-```sh
-starlings replay <run-id>
-```
-
-The command loads `.starlings/runs/<run-id>`, reconstructs a replay-only
-runner, validates and replays the durable event chain, and prints a compact
-summary containing:
-
-- event count;
-- logical round;
-- reconstructed outcome;
-- accepted/rejected claim counts;
-- proposed-action count;
-- pending activations;
-- open activation, if any;
-- event-chain head.
-
-Phase 2D intentionally does not add `starlings run`. Durable runs are created
-through the SDK run-store/event-sink boundary until the executable operator
-plane is added.
+The SDK exposes the reconstructed event count, logical round, outcome,
+claim/action counters, pending activations, open activation, and event-chain
+head to the embedding application.
 
 ## Bounded replay envelope
 
-The v1 durable store rejects runners that cannot fit the built-in replay CLI
+The v1 durable store rejects runners that cannot fit the built-in replay
 envelope:
 
 - 256 variables;

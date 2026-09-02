@@ -10,6 +10,7 @@ pub const execution = @import("execution.zig");
 pub const external = @import("external.zig");
 pub const process_supervisor = @import("process_supervisor.zig");
 pub const conformance = @import("conformance.zig");
+pub const agent = @import("agent.zig");
 
 test {
     _ = core;
@@ -24,4 +25,5 @@ test {
     _ = external;
     _ = process_supervisor;
     _ = conformance;
+    _ = agent;
 }

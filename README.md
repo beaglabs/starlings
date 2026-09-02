@@ -82,6 +82,42 @@ A sensor can publish a measurement, a solver can establish an invariant, a local
 
 The workflow is therefore an **outcome of coordinated local state transitions**, not a centrally authored pipeline.
 
+## SDK-first populations
+
+The supported product surface is the Zig SDK plus declarative YAML populations.
+`Population` loads an Emergence Pack and `Agent` binds its native, Python,
+subprocess, and shared-model implementations. Applications own lifecycle and
+inject observations explicitly:
+
+```zig
+var population = try starlings.Population.load(io, gpa, arena, "population");
+var agent = try starlings.Agent.init(
+    io,
+    gpa,
+    arena,
+    &population,
+    42,
+    .{ .models = model_providers, .native = native_bindings },
+);
+defer agent.deinit();
+
+_ = try agent.observe(.{
+    .name = "source.text",
+    .status = .observed,
+    .value = .{ .text = "..." },
+});
+
+while (try agent.step() == .progress) {}
+```
+
+Operators may carry semantic roles—`model`, `collector`, `tool`,
+`transform`, `validator`, or `actor`—without changing the common
+requires/provides contract. Multiple logical model operators may share one
+host-injected model provider, so operator diversity does not require duplicate
+resident weights.
+
+See [SDK-First Populations](docs/SDK_POPULATIONS.md).
+
 ## Formal model
 
 The canonical population is:
@@ -135,11 +171,8 @@ restart. Durable replay validates the configuration snapshot, event hash chain,
 operator/activation ordering, and scheduler state without invoking operator
 implementations.
 
-```bash
-starlings replay <run-id>
-```
-
-See [Durable Replay v1](docs/DURABLE_REPLAY.md) for the storage format, crash-tail
+Replay is an SDK capability rather than a command-line product surface. See
+[Durable Replay v1](docs/DURABLE_REPLAY.md) for the storage format, crash-tail
 semantics, replay envelope, and acceptance path.
 
 ## Content-addressed provenance
@@ -200,6 +233,8 @@ cd starlings
 
 zig version
 zig test src/root.zig
+zig build test
+python3 -m unittest discover -s python -p 'test_*.py'
 ```
 
 The root suite covers deterministic runtime behavior, message routing, seeded entropy, provenance validation and stress, fork/merge causal closure, replica divergence, protocol traces and workflows, CFG parsing/stress, model-evaluation records, and formal-population behavior.

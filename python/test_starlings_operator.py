@@ -18,12 +18,18 @@ class WireTests(unittest.TestCase):
             "operator=10\n"
             "round=3\n"
             "var=1,1,i:7\n"
+            "inv=4,1\n"
+            "provide_var=2\n"
+            "provide_inv=5\n"
             "END\n"
         )
         ctx = wire.decode_request(request)
         self.assertEqual(ctx["operator"], 10)
         self.assertEqual(ctx["round"], 3)
         self.assertEqual(ctx["variables"][1]["value"], 7)
+        self.assertEqual(ctx["invariants"][4], 1)
+        self.assertEqual(ctx["provides"]["variables"], [2])
+        self.assertEqual(ctx["provides"]["invariants"], [5])
 
         response = wire.encode_response(
             10,

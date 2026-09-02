@@ -11,6 +11,11 @@ pub const WireObservation = struct {
     value: ?core.Value = null,
 };
 
+pub const WireInvariant = struct {
+    invariant: core.InvariantId,
+    status: core.InvariantStatus,
+};
+
 pub const SubprocessAdapter = struct {
     argv: []const []const u8,
     timeout_ms: u32 = 30_000,
@@ -105,10 +110,39 @@ pub fn BufferedExternalOperator(
             round: u32,
             observations: []const WireObservation,
         ) !core.OperatorOutput {
-            const request = try buildRequest(
+            return self.invokeState(round, observations, &.{});
+        }
+
+        pub fn invokeState(
+            self: *Self,
+            round: u32,
+            observations: []const WireObservation,
+            invariants: []const WireInvariant,
+        ) !core.OperatorOutput {
+            return self.invokeExecution(
+                round,
+                observations,
+                invariants,
+                &.{},
+                &.{},
+            );
+        }
+
+        pub fn invokeExecution(
+            self: *Self,
+            round: u32,
+            observations: []const WireObservation,
+            invariants: []const WireInvariant,
+            provides_variables: []const core.VariableId,
+            provides_invariants: []const core.InvariantId,
+        ) !core.OperatorOutput {
+            const request = try buildRequestExecution(
                 self.operator_id,
                 round,
                 observations,
+                invariants,
+                provides_variables,
+                provides_invariants,
                 &self.request_storage,
             );
             return self.external.invoke(request, &self.response_storage);
@@ -142,6 +176,36 @@ pub fn buildRequest(
     observations: []const WireObservation,
     out: []u8,
 ) ![]const u8 {
+    return buildRequestState(operator_id, round, observations, &.{}, out);
+}
+
+pub fn buildRequestState(
+    operator_id: core.OperatorId,
+    round: u32,
+    observations: []const WireObservation,
+    invariants: []const WireInvariant,
+    out: []u8,
+) ![]const u8 {
+    return buildRequestExecution(
+        operator_id,
+        round,
+        observations,
+        invariants,
+        &.{},
+        &.{},
+        out,
+    );
+}
+
+pub fn buildRequestExecution(
+    operator_id: core.OperatorId,
+    round: u32,
+    observations: []const WireObservation,
+    invariants: []const WireInvariant,
+    provides_variables: []const core.VariableId,
+    provides_invariants: []const core.InvariantId,
+    out: []u8,
+) ![]const u8 {
     var buffer = Buffer{ .bytes = out };
     try buffer.write(wire_header_request);
     try buffer.write("\n");
@@ -158,6 +222,19 @@ pub fn buildRequest(
         );
         try writeValue(&buffer, observation.value);
         try buffer.write("\n");
+    }
+
+    for (invariants) |invariant| {
+        try buffer.print(
+            "inv={d},{d}\n",
+            .{ invariant.invariant, @intFromEnum(invariant.status) },
+        );
+    }
+    for (provides_variables) |variable_id| {
+        try buffer.print("provide_var={d}\n", .{variable_id});
+    }
+    for (provides_invariants) |invariant_id| {
+        try buffer.print("provide_inv={d}\n", .{invariant_id});
     }
 
     try buffer.write("END\n");
@@ -365,6 +442,38 @@ test "canonical request encoding is stable" {
     const request = try buildRequest(9, 3, &observations, &buffer);
     try std.testing.expectEqualStrings(
         "STARLINGS/1 REQUEST\noperator=9\nround=3\nvar=1,1,i:7\nvar=2,6,n\nEND\n",
+        request,
+    );
+}
+
+test "canonical request encoding includes invariant state" {
+    var buffer: [512]u8 = undefined;
+    const observations = [_]WireObservation{
+        .{ .variable = 1, .status = .observed, .value = .{ .integer = 7 } },
+    };
+    const invariants = [_]WireInvariant{
+        .{ .invariant = 4, .status = .satisfied },
+    };
+    const request = try buildRequestState(9, 3, &observations, &invariants, &buffer);
+    try std.testing.expectEqualStrings(
+        "STARLINGS/1 REQUEST\noperator=9\nround=3\nvar=1,1,i:7\ninv=4,1\nEND\n",
+        request,
+    );
+}
+
+test "execution request advertises authorized output ids" {
+    var buffer: [512]u8 = undefined;
+    const request = try buildRequestExecution(
+        9,
+        3,
+        &.{},
+        &.{},
+        &.{ 12, 13 },
+        &.{4},
+        &buffer,
+    );
+    try std.testing.expectEqualStrings(
+        "STARLINGS/1 REQUEST\noperator=9\nround=3\nprovide_var=12\nprovide_var=13\nprovide_inv=4\nEND\n",
         request,
     );
 }
